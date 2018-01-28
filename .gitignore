@@ -1,0 +1,9 @@
+*.d
+*.o
+*.swp
+core
+perf.data*
+libprogress64.a
+hashtable
+tags
+TAGS
