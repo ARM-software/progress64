@@ -11,7 +11,7 @@
 #include <stdlib.h>
 
 #include "p64_hazardptr.h"
-#undef hp_acquire
+#undef p64_hazptr_acquire
 #include "build_config.h"
 
 #include "arch.h"
@@ -82,7 +82,7 @@ void thread_state_init(int tidx)
 
 //Allocate a hazard pointer
 //The hazard pointer is not initialised (value should be NULL)
-static inline p64_hazardptr_t hp_alloc(void)
+static inline p64_hazardptr_t p64_hazptr_alloc(void)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     if (ha->free != 0)
@@ -90,7 +90,7 @@ static inline p64_hazardptr_t hp_alloc(void)
 	uint32_t idx = __builtin_ffsl(ha->free) - 1;
 	ha->free &= ~(1U << idx);
 	assert(IS_NULL_PTR(ha->refs[idx]));
-	//printf("hp_alloc(%u)\n", idx);
+	//printf("p64_hazptr_alloc(%u)\n", idx);
 	return &ha->refs[idx];
     }
     return P64_HAZARDPTR_NULL;
@@ -98,7 +98,7 @@ static inline p64_hazardptr_t hp_alloc(void)
 
 //Free a hazard pointer
 //The hazard pointer is not reset (write NULL pointer)
-static inline void hp_free(p64_hazardptr_t hp)
+static inline void p64_hazptr_free(p64_hazardptr_t hp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     uint32_t idx = hp - ha->refs;
@@ -106,10 +106,10 @@ static inline void hp_free(p64_hazardptr_t hp)
     assert(IS_NULL_PTR(*hp));
     assert((ha->free & (1U << idx)) == 0);
     ha->free |= 1U << idx;
-    //printf("hp_free(%u)\n", idx);
+    //printf("p64_hazptr_free(%u)\n", idx);
 }
 
-inline void hp_annotate(p64_hazardptr_t hp,
+inline void p64_hazptr_annotate(p64_hazardptr_t hp,
 			const char *file,
 			unsigned line)
 {
@@ -125,7 +125,7 @@ inline void hp_annotate(p64_hazardptr_t hp,
     }
 }
 
-unsigned hp_dump(FILE *fp)
+unsigned p64_hazptr_dump(FILE *fp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     for (uint32_t i = 0; i < HP_REFS_PER_THREAD; i++)
@@ -150,7 +150,7 @@ unsigned hp_dump(FILE *fp)
 //Re-use any existing hazard pointer
 //Allocate a new hazard pointer if necessary
 //Don't free any allocated hazard pointer even if is not used
-void *hp_acquire(void **pptr, p64_hazardptr_t *hp)
+void *p64_hazptr_acquire(void **pptr, p64_hazardptr_t *hp)
 {
     //Reset any existing hazard pointer
     if (*hp != P64_HAZARDPTR_NULL)
@@ -174,12 +174,12 @@ void *hp_acquire(void **pptr, p64_hazardptr_t *hp)
 	//Step 2a: Allocate hazard pointer if necessary
 	if (*hp == P64_HAZARDPTR_NULL)
 	{
-	    *hp = hp_alloc();
+	    *hp = p64_hazptr_alloc();
 	    if (UNLIKELY(*hp == P64_HAZARDPTR_NULL))
 	    {
 		//No more hazard pointers available => programming error
 		fprintf(stderr, "Failed to allocate hazard pointer\n");
-		hp_dump(stderr);
+		p64_hazptr_dump(stderr);
 		fflush(stderr);
 		abort();
 	    }
@@ -202,7 +202,7 @@ void *hp_acquire(void **pptr, p64_hazardptr_t *hp)
 }
 
 //Release the reference to the object, assume changes have been made
-void hp_release(p64_hazardptr_t *hp)
+void p64_hazptr_release(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
@@ -214,14 +214,14 @@ void hp_release(p64_hazardptr_t *hp)
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
 #endif
 	//Release hazard pointer
-	hp_annotate(*hp, NULL, 0);
-	hp_free(*hp);
+	p64_hazptr_annotate(*hp, NULL, 0);
+	p64_hazptr_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }
 }
 
 //Release the reference to the object, no changes have been made
-void hp_release_ro(p64_hazardptr_t *hp)
+void p64_hazptr_release_ro(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
@@ -229,8 +229,8 @@ void hp_release_ro(p64_hazardptr_t *hp)
 	//Reset hazard pointer
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
 	//Release hazard pointer
-	hp_annotate(*hp, NULL, 0);
-	hp_free(*hp);
+	p64_hazptr_annotate(*hp, NULL, 0);
+	p64_hazptr_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }
 }
@@ -324,7 +324,7 @@ static int garbage_collect(void)
 
 //Retire an object
 //Periodically perform garbage collection on retired objects
-void hp_retire(void *ptr, void (*cb)(void *ptr))
+void p64_hazptr_retire(void *ptr, void (*cb)(void *ptr))
 {
     struct thread_state *ts = TS;
     //There is always space for one extra retired object
@@ -342,7 +342,7 @@ void hp_retire(void *ptr, void (*cb)(void *ptr))
     }
 }
 
-bool hp_gc(void)
+bool p64_hazptr_gc(void)
 {
     //Ensure all removals are visible before we read hazard pointers
     SMP_WMB();

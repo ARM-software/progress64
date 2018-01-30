@@ -48,7 +48,7 @@ struct p64_hashentry *p64_hashtable_lookup(struct p64_hashtable *ht,
      p64_hazardptr_t *_f = (_e); \
      struct p64_hashentry *_g = p64_hashtable_lookup((_a), (_b), (_c), (_d), _f); \
      if (*(_f) != P64_HAZARDPTR_NULL) \
-	 hp_annotate(*(_f), __FILE__, __LINE__); \
+	 p64_hazptr_annotate(*(_f), __FILE__, __LINE__); \
      _g; \
 })
 #endif
@@ -77,7 +77,7 @@ struct p64_hashentry *p64_hashtable_remove_by_key(struct p64_hashtable *ht,
      p64_hazardptr_t *_f = (_e); \
      struct p64_hashentry *_g = p64_hashtable_remove_by_key((_a), (_b), (_c), (_d), _f); \
      if (*(_f) != P64_HAZARDPTR_NULL) \
-	 hp_annotate(*(_f), __FILE__, __LINE__); \
+	 p64_hazptr_annotate(*(_f), __FILE__, __LINE__); \
      _g; \
 })
 #endif

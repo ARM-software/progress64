@@ -128,7 +128,8 @@ bucket_lookup(struct hash_bucket *bkt,
     {
 	uint32_t i = __builtin_ffs(mask) - 1;
 	struct p64_hashentry *prnt = &bkt->entries[i];
-	struct p64_hashentry *he = hp_acquire((void**)&prnt->next, hazpp);
+	struct p64_hashentry *he = p64_hazptr_acquire((void**)&prnt->next,
+						      hazpp);
 	//The head entry pointers cannot be marked for REMOVAL
 	assert(REM_MARK(he) == he);
 	if (he != NULL)
@@ -153,17 +154,18 @@ list_lookup(struct p64_hashentry *prnt,
     p64_hazardptr_t hpprnt = P64_HAZARDPTR_NULL;
     for (;;)
     {
-	struct p64_hashentry *this = hp_acquire((void**)&prnt->next, hazpp);
+	struct p64_hashentry *this = p64_hazptr_acquire((void**)&prnt->next,
+							hazpp);
 	this = REM_MARK(this);
 	if (this == NULL)
 	{
-	    hp_release_ro(&hpprnt);
+	    p64_hazptr_release_ro(&hpprnt);
 	    return NULL;
 	}
 	if (cf(this, key) == 0)
 	{
 	    //Found our object
-	    hp_release_ro(&hpprnt);
+	    p64_hazptr_release_ro(&hpprnt);
 	    return this;
 	}
 	//Continue search
@@ -193,7 +195,7 @@ p64_hashtable_lookup(struct p64_hashtable *ht,
     {
 	return he;
     }
-    hp_release_ro(hazpp);
+    p64_hazptr_release_ro(hazpp);
     return NULL;
 }
 
@@ -298,7 +300,8 @@ list_insert(struct p64_hashentry *prnt,
     struct p64_hashentry *const org = prnt;
     for (;;)
     {
-	struct p64_hashentry *this = hp_acquire((void**)&prnt->next, &hpthis);
+	struct p64_hashentry *this = p64_hazptr_acquire((void**)&prnt->next,
+							&hpthis);
 	this = REM_MARK(this);
 	if (this == NULL)
 	{
@@ -307,8 +310,8 @@ list_insert(struct p64_hashentry *prnt,
 	    if (old == NULL)
 	    {
 		//CAS succeeded, our entry added to end of list
-		hp_release(&hpprnt);
-		hp_release_ro(&hpthis);
+		p64_hazptr_release(&hpprnt);
+		p64_hazptr_release_ro(&hpthis);
 		return;//Entry inserted
 	    }
 	    //Else CAS failed, next pointer unexpectedly changed
@@ -394,7 +397,7 @@ bucket_remove(struct hash_bucket *bkt,
     {
 	uint32_t i = __builtin_ffs(mask) - 1;
 	struct p64_hashentry *prnt = &bkt->entries[i];
-	//No need to hp_acquire(), we already have a reference
+	//No need to p64_hazptr_acquire(), we already have a reference
 	//Cannot fail due to parent marked for removal
 	(void)remove_node(prnt, he, hash, removed);
 	return true;
@@ -414,14 +417,15 @@ list_remove(struct p64_hashentry *prnt,
     struct p64_hashentry *const org = prnt;
     for (;;)
     {
-	struct p64_hashentry *this = hp_acquire((void**)&prnt->next, &hpthis);
+	struct p64_hashentry *this = p64_hazptr_acquire((void**)&prnt->next,
+							&hpthis);
 	this = REM_MARK(this);
 	if (UNLIKELY(this == NULL))
 	{
 	    //End of list
-	    hp_release(&hpprnt);
-	    hp_release(&hpthis);
-	    hp_release(&hpnext);
+	    p64_hazptr_release(&hpprnt);
+	    p64_hazptr_release(&hpthis);
+	    p64_hazptr_release(&hpnext);
 	    return false;//Object not found
 	}
 	else if (this == he)
@@ -430,9 +434,9 @@ list_remove(struct p64_hashentry *prnt,
 	    if (remove_node(prnt, this, hash, removed))
 	    {
 		//Success, 'this' node is removed
-		hp_release(&hpprnt);
-		hp_release(&hpthis);
-		hp_release(&hpnext);
+		p64_hazptr_release(&hpprnt);
+		p64_hazptr_release(&hpthis);
+		p64_hazptr_release(&hpnext);
 		return true;
 	    }
 	    //Else parent node is also marked for removal
@@ -509,7 +513,8 @@ bucket_remove_by_key(struct hash_bucket *bkt,
     {
 	uint32_t i = __builtin_ffs(mask) - 1;
 	struct p64_hashentry *prnt = &bkt->entries[i];
-	struct p64_hashentry *he = hp_acquire((void**)&prnt->next, hazpp);
+	struct p64_hashentry *he = p64_hazptr_acquire((void**)&prnt->next,
+						      hazpp);
 	//The head entry pointers cannot be marked for REMOVAL
 	assert(REM_MARK(he) == he);
 	if (he != NULL)
@@ -541,14 +546,15 @@ list_remove_by_key(struct p64_hashentry *prnt,
     struct p64_hashentry *const org = prnt;
     for (;;)
     {
-	struct p64_hashentry *this = hp_acquire((void**)&prnt->next, &hpthis);
+	struct p64_hashentry *this = p64_hazptr_acquire((void**)&prnt->next,
+							&hpthis);
 	this = REM_MARK(this);
 	if (UNLIKELY(this == NULL))
 	{
 	    //End of list
-	    hp_release(&hpprnt);
-	    hp_release(&hpthis);
-	    hp_release(&hpnext);
+	    p64_hazptr_release(&hpprnt);
+	    p64_hazptr_release(&hpthis);
+	    p64_hazptr_release(&hpnext);
 	    return NULL;//Object not found
 	}
 	else if (cf(this, key) == 0)
@@ -557,8 +563,8 @@ list_remove_by_key(struct p64_hashentry *prnt,
 	    if (remove_node(prnt, this, hash, removed))
 	    {
 		//Success, 'this' node is removed
-		hp_release(&hpprnt);
-		hp_release(&hpnext);
+		p64_hazptr_release(&hpprnt);
+		p64_hazptr_release(&hpnext);
 		*hazpp = hpthis;
 		return this;
 	    }
