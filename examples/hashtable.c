@@ -4,7 +4,6 @@
 
 #include "p64_hashtable.h"
 
-int hp_num_free(void);
 void thread_state_init(int);
 uint32_t hash_table_check(struct p64_hashtable *ht,
 			  uint64_t (*f)(struct p64_hashentry *));
@@ -87,7 +86,7 @@ int main()
 	printf("Key %u not found\n", 2);
 	assert(hp == P64_HAZARDPTR_NULL);
     }
-    printf("hp_num_free()=%u\n", hp_num_free());
+    printf("hp_num_free()=%u\n", hp_print_fileline(stdout));
 
     me = (struct my_entry *)p64_hashtable_lookup(ht, compf, &(uint32_t){8}, hash(8), &hp);
     if (me != NULL)
@@ -101,12 +100,13 @@ int main()
 	printf("Key %u not found\n", 8);
 	assert(hp == P64_HAZARDPTR_NULL);
     }
-    printf("hp_num_free()=%u\n", hp_num_free());
+    printf("hp_num_free()=%u\n", hp_print_fileline(stdout));
 
     me = (struct my_entry *)p64_hashtable_lookup(ht, compf, &(uint32_t){9}, hash(9), &hp);
     if (me != NULL)
     {
 	printf("Found key %u node %p hazp %p (%p)\n", me->key, me, hp, *hp);
+	hp_print_fileline(stdout);
 	hp_release_ro(&hp);
 	assert(hp == P64_HAZARDPTR_NULL);
     }
@@ -115,7 +115,7 @@ int main()
 	printf("Key %u not found\n", 9);
 	assert(hp == P64_HAZARDPTR_NULL);
     }
-    printf("hp_num_free()=%u\n", hp_num_free());
+    printf("hp_num_free()=%u\n", hp_print_fileline(stdout));
 
     printf("Remove 2\n");
     p64_hashtable_remove(ht, &h2->next, hash(2));
@@ -129,7 +129,7 @@ int main()
     printf("Remove 9\n");
     p64_hashtable_remove(ht, &h9->next, hash(9));
     hash_table_check(ht, keyf);
-    printf("hp_num_free()=%u\n", hp_num_free());
+    printf("hp_num_free()=%u\n", hp_print_fileline(stdout));
 
     return 0;
 }

@@ -5,8 +5,9 @@
 #ifndef _P64_HAZARDPTR_H
 #define _P64_HAZARDPTR_H
 
-#include <stddef.h>
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdio.h>
 
 #ifdef __cplusplus
 extern "C"
@@ -23,6 +24,11 @@ typedef void **p64_hazardptr_t;
 //Re-use the specified hazard pointer (if *hp != P64_HAZARDPTR_NULL)
 //Write any allocated hazard pointer to *hp
 void *hp_acquire(void **pptr, p64_hazardptr_t *hp);
+void *hp_acquire_fileline(void **pptr, p64_hazardptr_t *hp,
+			  const char *file, unsigned line);
+#ifndef NDEBUG
+#define hp_acquire(_a, _b) hp_acquire_fileline((_a), (_b), __FILE__, __LINE__)
+#endif
 
 //Release the reference, updates may have been made
 void hp_release(p64_hazardptr_t *hp);
@@ -43,6 +49,13 @@ void hp_retire(void *ptr, void (*callback)(void *ptr));
 
 //Force a (premature) garbage collection
 bool hp_gc(void);
+
+//For debugging
+//Set file & line associated with a hazard pointer (if != P64_HAZARDPTR_NULL)
+void hp_set_fileline(p64_hazardptr_t hp, const char *file, unsigned line);
+//Print file & line associated with allocated hazard pointers
+//Return number of allocated hazard pointers
+unsigned hp_print_fileline(FILE *fp);
 
 #ifdef __cplusplus
 }

@@ -11,6 +11,7 @@
 #include <stdlib.h>
 
 #include "p64_hazardptr.h"
+#undef hp_acquire
 #include "build_config.h"
 
 #include "arch.h"
@@ -42,6 +43,11 @@ struct thread_state
 	    void (*cb)(userptr_t);
 	} objs [MAXTHREADS * HP_REFS_PER_THREAD];
     } rlist;//Removed but not yet recycled objects
+    struct
+    {
+	const char *file;
+	uintptr_t line;//Unsigned the size of a pointer
+    } hp_fileline[HP_REFS_PER_THREAD];
 } ALIGNED(CACHE_LINE);
 
 static uint32_t numthreads = 0;
@@ -58,6 +64,8 @@ void thread_state_init(int tidx)
     for (uint32_t i = 0; i < HP_REFS_PER_THREAD; i++)
     {
 	hazard_areas[tidx].refs[i] = NULL;
+	ts->hp_fileline[i].file = NULL;
+	ts->hp_fileline[i].line = 0;
     }
     //Increment 'numthreads' in-order since this will release our
     //hazard_area and its hazard pointers
@@ -88,12 +96,6 @@ static inline p64_hazardptr_t hp_alloc(void)
     return P64_HAZARDPTR_NULL;
 }
 
-int hp_num_free(void)
-{
-    struct hazard_area *ha = &hazard_areas[TS->tidx];
-    return __builtin_popcount(ha->free);
-}
-
 //Free a hazard pointer
 //The hazard pointer is not reset (write NULL pointer)
 static inline void hp_free(p64_hazardptr_t hp)
@@ -105,6 +107,38 @@ static inline void hp_free(p64_hazardptr_t hp)
     assert((ha->free & (1U << idx)) == 0);
     ha->free |= 1U << idx;
     //printf("hp_free(%u)\n", idx);
+}
+
+inline void hp_set_fileline(p64_hazardptr_t hp,
+			    const char *file,
+			    unsigned line)
+{
+    if (hp != P64_HAZARDPTR_NULL)
+    {
+	struct hazard_area *ha = &hazard_areas[TS->tidx];
+	uint32_t idx = hp - ha->refs;
+	if (idx < HP_REFS_PER_THREAD)
+	{
+	    TS->hp_fileline[idx].file = file;
+	    TS->hp_fileline[idx].line = line;
+	}
+    }
+}
+
+unsigned hp_print_fileline(FILE *fp)
+{
+    struct hazard_area *ha = &hazard_areas[TS->tidx];
+    for (uint32_t i = 0; i < HP_REFS_PER_THREAD; i++)
+    {
+	if (TS->hp_fileline[i].file != NULL)
+	{
+	    fprintf(fp, "hp[%p] %s:%lu\n",
+		    &ha->refs[i],
+		    TS->hp_fileline[i].file,
+		    TS->hp_fileline[i].line);
+	}
+    }
+    return __builtin_popcount(ha->free);
 }
 
 //Safely acquire a reference to the object whose pointer is stored at the
@@ -141,6 +175,8 @@ void *hp_acquire(void **pptr, p64_hazardptr_t *hp)
 	    {
 		//No more hazard pointers available => programming error
 		fprintf(stderr, "Failed to allocate hazard pointer\n");
+		hp_print_fileline(stderr);
+		fflush(stderr);
 		abort();
 	    }
 	}
@@ -161,6 +197,17 @@ void *hp_acquire(void **pptr, p64_hazardptr_t *hp)
     }
 }
 
+void *hp_acquire_fileline(void **pptr, p64_hazardptr_t *hp,
+			  const char *file, unsigned line)
+{
+    void *ptr = hp_acquire(pptr, hp);
+    if (*hp != P64_HAZARDPTR_NULL)
+    {
+	hp_set_fileline(*hp, file, line);
+    }
+    return ptr;
+}
+
 //Release the reference to the object, assume changes have been made
 void hp_release(p64_hazardptr_t *hp)
 {
@@ -174,6 +221,7 @@ void hp_release(p64_hazardptr_t *hp)
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
 #endif
 	//Release hazard pointer
+	hp_set_fileline(*hp, NULL, 0);
 	hp_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }
@@ -188,6 +236,7 @@ void hp_release_ro(p64_hazardptr_t *hp)
 	//Reset hazard pointer
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
 	//Release hazard pointer
+	hp_set_fileline(*hp, NULL, 0);
 	hp_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }
