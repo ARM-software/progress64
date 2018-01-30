@@ -42,6 +42,17 @@ struct p64_hashentry *p64_hashtable_lookup(struct p64_hashtable *ht,
 					   p64_hashvalue_t hash,
 					   p64_hazardptr_t *hp);
 
+#ifndef NDEBUG
+#define p64_hashtable_lookup(_a, _b, _c, _d, _e) \
+({ \
+     p64_hazardptr_t *_f = (_e); \
+     struct p64_hashentry *_g = p64_hashtable_lookup((_a), (_b), (_c), (_d), _f); \
+     if (*(_f) != P64_HAZARDPTR_NULL) \
+	 hp_annotate(*(_f), __FILE__, __LINE__); \
+     _g; \
+})
+#endif
+
 void p64_hashtable_insert(struct p64_hashtable *ht,
 			  struct p64_hashentry *he,
 			  p64_hashvalue_t hash);
@@ -59,6 +70,17 @@ struct p64_hashentry *p64_hashtable_remove_by_key(struct p64_hashtable *ht,
 						  const void *key,
 						  p64_hashvalue_t hash,
 						  p64_hazardptr_t *hp);
+
+#ifndef NDEBUG
+#define p64_hashtable_remove_by_key(_a, _b, _c, _d, _e) \
+({ \
+     p64_hazardptr_t *_f = (_e); \
+     struct p64_hashentry *_g = p64_hashtable_remove_by_key((_a), (_b), (_c), (_d), _f); \
+     if (*(_f) != P64_HAZARDPTR_NULL) \
+	 hp_annotate(*(_f), __FILE__, __LINE__); \
+     _g; \
+})
+#endif
 
 #ifdef __cplusplus
 }

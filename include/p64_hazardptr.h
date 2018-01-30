@@ -23,24 +23,34 @@ typedef void **p64_hazardptr_t;
 //Return a pointer to the object or NULL (*pptr was NULL)
 //Re-use the specified hazard pointer (if *hp != P64_HAZARDPTR_NULL)
 //Write any allocated hazard pointer to *hp
+//Note that a hazard pointer may have been allocated even if NULL is returned
+//hp_acquire() has acquire memory ordering
 void *hp_acquire(void **pptr, p64_hazardptr_t *hp);
-void *hp_acquire_fileline(void **pptr, p64_hazardptr_t *hp,
-			  const char *file, unsigned line);
 #ifndef NDEBUG
-#define hp_acquire(_a, _b) hp_acquire_fileline((_a), (_b), __FILE__, __LINE__)
+#define hp_acquire(_a, _b) \
+({ \
+    p64_hazardptr_t *_c = (_b); \
+    void *_d = hp_acquire((_a), _c); \
+    if (*(_c) != P64_HAZARDPTR_NULL) \
+	hp_annotate(*(_c), __FILE__, __LINE__); \
+    _d; \
+})
 #endif
 
 //Release the reference, updates may have been made
+//hp_release() has release memory ordering
 void hp_release(p64_hazardptr_t *hp);
+
 //Release the reference, no updates have been made
+//hp_release_ro() has release memory ordering for loads only
 void hp_release_ro(p64_hazardptr_t *hp);
 
 //p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 //if ((ptr = hp_acquire(&loc, &hp)) != NULL)
 //{
 //    //Access *ptr
-//    hp_release(&hp);
 //}
+//hp_release(&hp);
 ////Else loc == NULL
 
 //Retire a removed object
@@ -50,12 +60,13 @@ void hp_retire(void *ptr, void (*callback)(void *ptr));
 //Force a (premature) garbage collection
 bool hp_gc(void);
 
-//For debugging
-//Set file & line associated with a hazard pointer (if != P64_HAZARDPTR_NULL)
-void hp_set_fileline(p64_hazardptr_t hp, const char *file, unsigned line);
-//Print file & line associated with allocated hazard pointers
+//Debugging support
+//Annotate a hazard pointer (if != P64_HAZARDPTR_NULL) with file & line
+void hp_annotate(p64_hazardptr_t hp, const char *file, unsigned line);
+
+//Print allocated hazard pointers and associated file & line
 //Return number of allocated hazard pointers
-unsigned hp_print_fileline(FILE *fp);
+unsigned hp_dump(FILE *fp);
 
 #ifdef __cplusplus
 }

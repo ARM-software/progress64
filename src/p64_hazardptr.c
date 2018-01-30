@@ -109,9 +109,9 @@ static inline void hp_free(p64_hazardptr_t hp)
     //printf("hp_free(%u)\n", idx);
 }
 
-inline void hp_set_fileline(p64_hazardptr_t hp,
-			    const char *file,
-			    unsigned line)
+inline void hp_annotate(p64_hazardptr_t hp,
+			const char *file,
+			unsigned line)
 {
     if (hp != P64_HAZARDPTR_NULL)
     {
@@ -125,17 +125,21 @@ inline void hp_set_fileline(p64_hazardptr_t hp,
     }
 }
 
-unsigned hp_print_fileline(FILE *fp)
+unsigned hp_dump(FILE *fp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     for (uint32_t i = 0; i < HP_REFS_PER_THREAD; i++)
     {
-	if (TS->hp_fileline[i].file != NULL)
+	if ((ha->free & (1U << i)) == 0)
 	{
-	    fprintf(fp, "hp[%p] %s:%lu\n",
-		    &ha->refs[i],
-		    TS->hp_fileline[i].file,
-		    TS->hp_fileline[i].line);
+	    fprintf(fp, "hp[%p]=%p", &ha->refs[i], ha->refs[i]);
+	    if (TS->hp_fileline[i].file != NULL)
+	    {
+		fprintf(fp, " @ %s:%lu",
+			TS->hp_fileline[i].file,
+			TS->hp_fileline[i].line);
+	    }
+	    fputc('\n', fp);
 	}
     }
     return __builtin_popcount(ha->free);
@@ -175,7 +179,7 @@ void *hp_acquire(void **pptr, p64_hazardptr_t *hp)
 	    {
 		//No more hazard pointers available => programming error
 		fprintf(stderr, "Failed to allocate hazard pointer\n");
-		hp_print_fileline(stderr);
+		hp_dump(stderr);
 		fflush(stderr);
 		abort();
 	    }
@@ -197,17 +201,6 @@ void *hp_acquire(void **pptr, p64_hazardptr_t *hp)
     }
 }
 
-void *hp_acquire_fileline(void **pptr, p64_hazardptr_t *hp,
-			  const char *file, unsigned line)
-{
-    void *ptr = hp_acquire(pptr, hp);
-    if (*hp != P64_HAZARDPTR_NULL)
-    {
-	hp_set_fileline(*hp, file, line);
-    }
-    return ptr;
-}
-
 //Release the reference to the object, assume changes have been made
 void hp_release(p64_hazardptr_t *hp)
 {
@@ -221,7 +214,7 @@ void hp_release(p64_hazardptr_t *hp)
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
 #endif
 	//Release hazard pointer
-	hp_set_fileline(*hp, NULL, 0);
+	hp_annotate(*hp, NULL, 0);
 	hp_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }
@@ -236,7 +229,7 @@ void hp_release_ro(p64_hazardptr_t *hp)
 	//Reset hazard pointer
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
 	//Release hazard pointer
-	hp_set_fileline(*hp, NULL, 0);
+	hp_annotate(*hp, NULL, 0);
 	hp_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }

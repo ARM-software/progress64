@@ -6,6 +6,8 @@
 #include <strings.h>
 
 #include "p64_hashtable.h"
+#undef p64_hashtable_lookup
+#undef p64_hashtable_remove_by_key
 #include "p64_hazardptr.h"
 #include "build_config.h"
 
