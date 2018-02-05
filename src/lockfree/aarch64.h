@@ -10,12 +10,16 @@
 
 #include "ldxstx.h"
 
+#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#define __ARM_FEATURE_ATOMICS
+#endif
+
 #define HAS_ACQ(mo) ((mo) != __ATOMIC_RELAXED && (mo) != __ATOMIC_RELEASE)
 #define HAS_RLS(mo) ((mo) == __ATOMIC_RELEASE || (mo) == __ATOMIC_ACQ_REL || (mo) == __ATOMIC_SEQ_CST)
 #define LDX_MO(mo) (HAS_ACQ((mo)) ? __ATOMIC_ACQUIRE : __ATOMIC_RELAXED)
 #define STX_MO(mo) (HAS_RLS((mo)) ? __ATOMIC_RELEASE : __ATOMIC_RELAXED)
 
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#ifdef __ARM_FEATURE_ATOMICS
 static inline __int128 casp(__int128 *var, __int128 old, __int128 neu, int mo)
 {
     if (mo == __ATOMIC_RELAXED)
@@ -57,7 +61,7 @@ static inline __int128 casp(__int128 *var, __int128 old, __int128 neu, int mo)
 ALWAYS_INLINE
 static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128 *exp, register __int128 neu, bool weak, int mo_success, int mo_failure)
 {
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#ifdef __ARM_FEATURE_ATOMICS
     (void)weak; (void)mo_failure;
     __int128 old, expected = *exp;
     old = casp(var, expected, neu, mo_success);
@@ -86,7 +90,7 @@ static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128
 ALWAYS_INLINE
 static inline bool lockfree_compare_exchange_16_frail(register __int128 *var, __int128 *exp, register __int128 neu, bool weak, int mo_success, int mo_failure)
 {
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#ifdef __ARM_FEATURE_ATOMICS
     (void)weak; (void)mo_failure;
     __int128 old, expected = *exp;
     old = casp(var, expected, neu, mo_success);
@@ -129,7 +133,7 @@ static inline __int128 lockfree_load_16(__int128 *var, int mo)
 ALWAYS_INLINE
 static inline void lockfree_store_16(__int128 *var, __int128 neu, int mo)
 {
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#ifdef __ARM_FEATURE_ATOMICS
     __int128 old, expected;
     do
     {
@@ -151,7 +155,7 @@ static inline void lockfree_store_16(__int128 *var, __int128 neu, int mo)
 ALWAYS_INLINE
 static inline __int128 lockfree_exchange_16(__int128 *var, __int128 neu, int mo)
 {
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#ifdef __ARM_FEATURE_ATOMICS
     __int128 old, expected;
     do
     {
@@ -176,7 +180,7 @@ static inline __int128 lockfree_exchange_16(__int128 *var, __int128 neu, int mo)
 ALWAYS_INLINE
 static inline __int128 lockfree_fetch_and_16(__int128 *var, __int128 mask, int mo)
 {
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#ifdef __ARM_FEATURE_ATOMICS
     __int128 old, expected;
     do
     {
@@ -201,7 +205,7 @@ static inline __int128 lockfree_fetch_and_16(__int128 *var, __int128 mask, int m
 ALWAYS_INLINE
 static inline __int128 lockfree_fetch_or_16(__int128 *var, __int128 mask, int mo)
 {
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
+#ifdef __ARM_FEATURE_ATOMICS
     __int128 old, expected;
     do
     {
@@ -219,6 +223,29 @@ static inline __int128 lockfree_fetch_or_16(__int128 *var, __int128 mask, int mo
 	old = ldx128(var, ldx_mo);
     }
     while (UNLIKELY(stx128(var, old | mask, stx_mo)));
+    return old;
+#endif
+}
+
+#define _ATOMIC_UMAX_4_DEFINED
+ALWAYS_INLINE
+static inline uint32_t
+lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo_load, int mo_store)
+{
+#ifdef __ARM_FEATURE_ATOMICS
+#error TODO use LDUMAX
+#else
+    uint32_t old;
+    do
+    {
+	old = ldx32(var, mo_load);
+	if (val <= old)
+	{
+	    return old;
+	}
+	//Else val > old, update
+    }
+    while (UNLIKELY(stx32(var, val, mo_store)));
     return old;
 #endif
 }

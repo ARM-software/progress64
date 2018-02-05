@@ -19,4 +19,28 @@
 
 #endif
 
+#ifndef _ATOMIC_UMAX_4_DEFINED
+#define _ATOMIC_UMAX_4_DEFINED
+ALWAYS_INLINE
+static inline uint32_t
+lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo_load, int mo_store)
+{
+    uint32_t old = __atomic_load_n(var, mo_load);
+    do
+    {
+	if (val <= old)
+	{
+	    return old;
+	}
+    }
+    while (!__atomic_compare_exchange_n(var,
+					&old,
+					val,
+					/*weak=*/true,
+					mo_store,
+					__ATOMIC_RELAXED));
+    return old;
+}
+#endif
+
 #endif

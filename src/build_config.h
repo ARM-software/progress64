@@ -26,4 +26,6 @@
 #define CACHE_LINE 64
 #define MAXTHREADS 128
 
+#define MAXTIMERS 8192
+
 #endif

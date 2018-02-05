@@ -8,6 +8,7 @@
 //Compiler hints
 #define ALWAYS_INLINE __attribute__((always_inline))
 #define UNROLL_LOOPS __attribute__((optimize("unroll-loops")))
+#define INIT_FUNCTION __attribute__((constructor))
 #define LIKELY(x)    __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)  __builtin_expect(!!(x), 0)
 
