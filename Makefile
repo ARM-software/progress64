@@ -161,7 +161,7 @@ $(OBJDIR)/%.o : %.S
 
 $(TARGETS_lib) :
 	@echo "--- Archiving $@ from $(OBJECTS_$@)"
-	$(VERB)$(AR) $(ARFLAGS) $(AROUT) $(addprefix $(OBJDIR)/,$(OBJECTS_$@)) 
+	$(VERB)$(AR) $(ARFLAGS) $(AROUT) $(addprefix $(OBJDIR)/,$(OBJECTS_$@))
 
 $(TARGETS_bin) :
 	@echo "--- Linking $@ from $(OBJECTS_$@) $(LIBS)"

@@ -17,7 +17,7 @@
 #include "arch.h"
 #include "common.h"
 
-#define MAXREFS (MAXTHREADS * HP_REFS_PER_THREAD + 1)//One extra element!
+#define MAXREFS (MAXTHREADS * MAXHPREFS + 1)//One extra element!
 
 #define IS_NULL_PTR(ptr) ((uintptr_t)(ptr) < CACHE_LINE)
 
@@ -26,7 +26,7 @@ typedef void *userptr_t;
 struct hazard_area
 {
     uint32_t free;//Which refs are free?
-    userptr_t refs[HP_REFS_PER_THREAD];
+    userptr_t refs[MAXHPREFS];
 } ALIGNED(CACHE_LINE);
 
 static struct hazard_area hazard_areas[MAXTHREADS];
@@ -41,13 +41,13 @@ struct thread_state
 	{
 	    userptr_t ptr;
 	    void (*cb)(userptr_t);
-	} objs [MAXTHREADS * HP_REFS_PER_THREAD];
+	} objs [MAXTHREADS * MAXHPREFS];
     } rlist;//Removed but not yet recycled objects
     struct
     {
 	const char *file;
 	uintptr_t line;//Unsigned the size of a pointer
-    } hp_fileline[HP_REFS_PER_THREAD];
+    } hp_fileline[MAXHPREFS];
 } ALIGNED(CACHE_LINE);
 
 static uint32_t numthreads = 0;
@@ -60,8 +60,8 @@ void thread_state_init(int tidx)
     TS = ts;
     ts->tidx = tidx;
     ts->rlist.nitems = 0;
-    hazard_areas[tidx].free = (1U << HP_REFS_PER_THREAD) - 1U;
-    for (uint32_t i = 0; i < HP_REFS_PER_THREAD; i++)
+    hazard_areas[tidx].free = (1U << MAXHPREFS) - 1U;
+    for (uint32_t i = 0; i < MAXHPREFS; i++)
     {
 	hazard_areas[tidx].refs[i] = NULL;
 	ts->hp_fileline[i].file = NULL;
@@ -78,6 +78,11 @@ void thread_state_init(int tidx)
 	}
     }
     __atomic_store_n(&numthreads, tidx + 1, __ATOMIC_RELEASE);
+}
+
+uint32_t p64_hazptr_maxrefs(void)
+{
+    return MAXHPREFS;
 }
 
 //Allocate a hazard pointer
@@ -102,7 +107,7 @@ static inline void p64_hazptr_free(p64_hazardptr_t hp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     uint32_t idx = hp - ha->refs;
-    assert(idx < HP_REFS_PER_THREAD);
+    assert(idx < MAXHPREFS);
     assert(IS_NULL_PTR(*hp));
     assert((ha->free & (1U << idx)) == 0);
     ha->free |= 1U << idx;
@@ -117,7 +122,7 @@ inline void p64_hazptr_annotate(p64_hazardptr_t hp,
     {
 	struct hazard_area *ha = &hazard_areas[TS->tidx];
 	uint32_t idx = hp - ha->refs;
-	if (idx < HP_REFS_PER_THREAD)
+	if (idx < MAXHPREFS)
 	{
 	    TS->hp_fileline[idx].file = file;
 	    TS->hp_fileline[idx].line = line;
@@ -128,7 +133,7 @@ inline void p64_hazptr_annotate(p64_hazardptr_t hp,
 unsigned p64_hazptr_dump(FILE *fp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
-    for (uint32_t i = 0; i < HP_REFS_PER_THREAD; i++)
+    for (uint32_t i = 0; i < MAXHPREFS; i++)
     {
 	if ((ha->free & (1U << i)) == 0)
 	{
@@ -250,7 +255,7 @@ static uint32_t collect_refs(userptr_t refs[MAXREFS])
     uint32_t nrefs = 0;
     for (uint32_t t = 0; t < numthreads; t++)
     {
-	for (uint32_t i = 0; i < HP_REFS_PER_THREAD; i++)
+	for (uint32_t i = 0; i < MAXHPREFS; i++)
 	{
 	    userptr_t ptr = __atomic_load_n(&hazard_areas[t].refs[i],
 					    __ATOMIC_RELAXED);
@@ -342,7 +347,7 @@ void p64_hazptr_retire(void *ptr, void (*cb)(void *ptr))
     }
 }
 
-bool p64_hazptr_gc(void)
+bool p64_hazptr_collect(void)
 {
     //Ensure all removals are visible before we read hazard pointers
     SMP_WMB();

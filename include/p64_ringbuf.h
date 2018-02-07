@@ -12,13 +12,23 @@ extern "C"
 {
 #endif
 
-typedef void *p64_element;
 struct p64_ringbuf;
+typedef struct p64_ringbuf p64_ringbuf_t;
 
-struct p64_ringbuf *p64_ringbuf_alloc(uint32_t ring_size);
-bool p64_ringbuf_free(struct p64_ringbuf *rb);
-int p64_ringbuf_enq(struct p64_ringbuf *rb, const p64_element ev[], int num);
-int p64_ringbuf_deq(struct p64_ringbuf *rb, p64_element ev[], int num);
+//Allocate a ring buffer with space for at least 'nelems' elements
+p64_ringbuf_t *p64_ringbuf_alloc(uint32_t nelems);
+
+//Free a ring buffer
+//The ring buffer must be empty
+void p64_ringbuf_free(p64_ringbuf_t *rb);
+
+//Enqueue elements on a ring buffer
+//The number of actually enqueued elements is returned
+int p64_ringbuf_enq(p64_ringbuf_t *rb, void *ev[], int num);
+
+//Dequeue elements from a ring buffer
+//The number of actually dequeued elements is returned
+int p64_ringbuf_deq(p64_ringbuf_t *rb, void *ev[], int num);
 
 #ifdef __cplusplus
 }

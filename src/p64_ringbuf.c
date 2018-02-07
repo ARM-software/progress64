@@ -42,7 +42,7 @@ struct p64_ringbuf
 {
     struct headtail prod;
     struct headtail cons;//NB head & tail are swapped for consumer metadata
-    p64_element ring[0] ALIGNED(CACHE_LINE);
+    void *ring[0] ALIGNED(CACHE_LINE);
 } ALIGNED(CACHE_LINE);
 
 struct p64_ringbuf *p64_ringbuf_alloc(uint32_t ringsz)
@@ -51,8 +51,8 @@ struct p64_ringbuf *p64_ringbuf_alloc(uint32_t ringsz)
     {
 	fprintf(stderr, "Invalid ring size %u\n", ringsz), abort();
     }
-    size_t nbytes = sizeof(struct p64_ringbuf) + ringsz * sizeof(p64_element);
-    nbytes = (nbytes + CACHE_LINE - 1) & (CACHE_LINE - 1);
+    size_t nbytes = sizeof(struct p64_ringbuf) + ringsz * sizeof(void *);
+    nbytes = ROUNDUP(nbytes, CACHE_LINE);
     struct p64_ringbuf *rb = aligned_alloc(CACHE_LINE, nbytes);
     if (rb != NULL)
     {
@@ -67,14 +67,16 @@ struct p64_ringbuf *p64_ringbuf_alloc(uint32_t ringsz)
     return NULL;
 }
 
-bool p64_ringbuf_free(struct p64_ringbuf *rb)
+void p64_ringbuf_free(struct p64_ringbuf *rb)
 {
-    if (rb->prod.head == rb->prod.tail && rb->cons.head == rb->cons.tail)
+    if (rb != NULL)
     {
+	if (rb->prod.head != rb->prod.tail || rb->cons.head != rb->cons.tail)
+	{
+	    fprintf(stderr, "Ring buffer %p is not empty\n", rb), abort();
+	}
 	free(rb);
-	return true;
     }
-    return false;
 }
 
 struct result
@@ -154,7 +156,7 @@ static inline void release_slots_blk(ringidx_t *loc,
 }
 
 int p64_ringbuf_enq(struct p64_ringbuf *rb,
-		    const p64_element ev[],
+		    void *ev[],
 		    int num)
 {
     //Step 1: acquire slots
@@ -170,7 +172,7 @@ int p64_ringbuf_enq(struct p64_ringbuf *rb,
     //Step 2: access (write elements to) ring array
     ringidx_t old_tail = r.idx;
     ringidx_t new_tail = old_tail + actual;
-    const p64_element *evp = ev;
+    void **evp = ev;
     do
     {
 	rb->ring[old_tail & mask] = *evp++;
@@ -186,7 +188,7 @@ int p64_ringbuf_enq(struct p64_ringbuf *rb,
 }
 
 int p64_ringbuf_deq(struct p64_ringbuf *rb,
-		    p64_element ev[],
+		    void *ev[],
 		    int num)
 {
     //Step 1: acquire slots
@@ -202,10 +204,10 @@ int p64_ringbuf_deq(struct p64_ringbuf *rb,
     //Step 2: access (read elements from) ring array
     ringidx_t old_head = r.idx;
     ringidx_t new_head = old_head + actual;
-    p64_element *evp = ev;
+    void **evp = ev;
     do
     {
-	p64_element elem = rb->ring[old_head & mask];
+	void *elem = rb->ring[old_head & mask];
 	PREFETCH_FOR_READ(elem);
 	*evp++ = elem;
     }

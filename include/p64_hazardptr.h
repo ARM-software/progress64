@@ -14,10 +14,11 @@ extern "C"
 {
 #endif
 
-#define HP_REFS_PER_THREAD 3
-
 typedef void **p64_hazardptr_t;
 #define P64_HAZARDPTR_NULL NULL
+
+//Return maximum number of references per thread
+uint32_t p64_hazptr_maxrefs(void);
 
 //Acquire a reference to the object which '*pptr' points to
 //Return a pointer to the object or NULL (*pptr was NULL)
@@ -58,7 +59,7 @@ void p64_hazptr_release_ro(p64_hazardptr_t *hp);
 void p64_hazptr_retire(void *ptr, void (*callback)(void *ptr));
 
 //Force a (premature) garbage collection
-bool p64_hazptr_gc(void);
+bool p64_hazptr_collect(void);
 
 //Debugging support
 //Annotate a hazard pointer (if != P64_HAZARDPTR_NULL) with file & line

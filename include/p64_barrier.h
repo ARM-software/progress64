@@ -12,13 +12,17 @@ extern "C"
 {
 #endif
 
-typedef struct
+typedef struct p64_barrier
 {
     uint32_t numthr;
     uint32_t waiting;
 } p64_barrier_t;
 
+//Initialise a synchronisation barrier
 void p64_barrier_init(p64_barrier_t *br, uint32_t numthreads);
+
+//Enter the barrier and wait until all threads have entered the barrier
+//p64_barrier_wait() has release and acquire ordering
 void p64_barrier_wait(p64_barrier_t *br);
 
 #ifdef __cplusplus

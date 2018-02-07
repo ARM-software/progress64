@@ -18,6 +18,13 @@
 
 #define ALIGNED(x) __attribute__((__aligned__(x)))
 
+#define ROUNDUP(a, b) \
+    ({                                          \
+        __typeof__ (a) tmp_a = (a);             \
+        __typeof__ (b) tmp_b = (b);             \
+        ((tmp_a + tmp_b - 1) / tmp_b) * tmp_b;  \
+    })
+
 #define MIN(a, b) \
     ({                                          \
         __typeof__ (a) tmp_a = (a);             \

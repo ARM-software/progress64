@@ -7,7 +7,7 @@
 
 void thread_state_init(int);
 uint32_t hash_table_check(struct p64_hashtable *ht,
-			  uint64_t (*f)(struct p64_hashentry *));
+			  uint64_t (*f)(struct p64_hashelem *));
 
 
 static p64_hashvalue_t hash(uint32_t k)
@@ -15,16 +15,16 @@ static p64_hashvalue_t hash(uint32_t k)
     return k;
 }
 
-struct my_entry
+struct my_elem
 {
-    struct p64_hashentry next;
+    struct p64_hashelem next;
     p64_hashvalue_t hash;
     uint32_t key;
 };
 
-static struct my_entry *he_alloc(uint32_t k)
+static struct my_elem *he_alloc(uint32_t k)
 {
-    struct my_entry *he = malloc(sizeof(struct my_entry));
+    struct my_elem *he = malloc(sizeof(struct my_elem));
     if (he == NULL)
 	perror("malloc"), exit(-1);
     he->next.hash = 0xDEADBABE;
@@ -34,16 +34,16 @@ static struct my_entry *he_alloc(uint32_t k)
     return he;
 }
 
-static uint64_t keyf(struct p64_hashentry *he)
+static uint64_t keyf(struct p64_hashelem *he)
 {
-    struct my_entry *me = (struct my_entry *)he;
+    struct my_elem *me = (struct my_elem *)he;
     return me->key;
 }
 
-static int compf(const struct p64_hashentry *he, const void *key)
+static int compf(const struct p64_hashelem *he, const void *key)
 {
     uint32_t k = *(const uint32_t*)key;
-    struct my_entry *m = (struct my_entry *)he;
+    struct my_elem *m = (struct my_elem *)he;
     return m->key < k ? -1 : m->key > k ? 1 : 0;
 }
 
@@ -54,27 +54,27 @@ int main()
     EXPECT_F(ht != NULL);
     hash_table_check(ht, keyf);
 
-    struct my_entry *h1 = he_alloc(1);
+    struct my_elem *h1 = he_alloc(1);
     p64_hashtable_insert(ht, &h1->next, h1->hash);
     EXPECT_F(hash_table_check(ht, keyf) == 1);
-    struct my_entry *h2 = he_alloc(2);
+    struct my_elem *h2 = he_alloc(2);
     p64_hashtable_insert(ht, &h2->next, h2->hash);
     EXPECT_F(hash_table_check(ht, keyf) == 2);
-    struct my_entry *h3 = he_alloc(3);
+    struct my_elem *h3 = he_alloc(3);
     p64_hashtable_insert(ht, &h3->next, h3->hash);
     EXPECT_F(hash_table_check(ht, keyf) == 3);
-    struct my_entry *h4 = he_alloc(4);
+    struct my_elem *h4 = he_alloc(4);
     p64_hashtable_insert(ht, &h4->next, h4->hash);
     EXPECT_F(hash_table_check(ht, keyf) == 4);
-    struct my_entry *h5 = he_alloc(5);
+    struct my_elem *h5 = he_alloc(5);
     p64_hashtable_insert(ht, &h5->next, h5->hash);
     EXPECT_F(hash_table_check(ht, keyf) == 5);
-    struct my_entry *h9 = he_alloc(9);
+    struct my_elem *h9 = he_alloc(9);
     p64_hashtable_insert(ht, &h9->next, h9->hash);
     EXPECT_F(hash_table_check(ht, keyf) == 6);
 
     p64_hazardptr_t hp;
-    struct my_entry *me = (struct my_entry *)p64_hashtable_lookup(ht, compf, &(uint32_t){2}, hash(2), &hp);
+    struct my_elem *me = (struct my_elem *)p64_hashtable_lookup(ht, compf, &(uint32_t){2}, hash(2), &hp);
     EXPECT_W(me != NULL);
     if (me != NULL)
     {
@@ -89,7 +89,7 @@ int main()
     }
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
-    me = (struct my_entry *)p64_hashtable_lookup(ht, compf, &(uint32_t){8}, hash(8), &hp);
+    me = (struct my_elem *)p64_hashtable_lookup(ht, compf, &(uint32_t){8}, hash(8), &hp);
     EXPECT_W(me == NULL);
     if (me != NULL)
     {
@@ -104,7 +104,7 @@ int main()
     }
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
-    me = (struct my_entry *)p64_hashtable_lookup(ht, compf, &(uint32_t){9}, hash(9), &hp);
+    me = (struct my_elem *)p64_hashtable_lookup(ht, compf, &(uint32_t){9}, hash(9), &hp);
     EXPECT_W(me != NULL);
     if (me != NULL)
     {
