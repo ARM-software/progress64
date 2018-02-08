@@ -9,7 +9,8 @@
 
 #include "arch.h"
 
-void p64_barrier_init(p64_barrier_t *br, uint32_t numthreads)
+void
+p64_barrier_init(p64_barrier_t *br, uint32_t numthreads)
 {
     br->numthr = numthreads;
     br->waiting = 0;
@@ -21,7 +22,8 @@ void p64_barrier_init(p64_barrier_t *br, uint32_t numthreads)
 //The barrier counts from 0 to 2N-1 and then wraps back to 0
 //Intermittently values from 2N to 3N-1 may exist but these are equivalent to
 //values 0 to N-1
-void p64_barrier_wait(p64_barrier_t *br)
+void
+p64_barrier_wait(p64_barrier_t *br)
 {
     uint32_t before = __atomic_fetch_add(&br->waiting, 1, __ATOMIC_ACQ_REL);
     if (before + 1 == 2 * br->numthr)

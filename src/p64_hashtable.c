@@ -24,7 +24,7 @@
 
 struct hash_bucket
 {
-    struct p64_hashelem elems[BKT_SIZE];
+    p64_hashelem_t elems[BKT_SIZE];
 } ALIGNED(CACHE_LINE);
 
 #if __SIZEOF_POINTER__ == 8
@@ -34,7 +34,7 @@ typedef __int128 uintptr_pair_t;
 
 union heui
 {
-    struct p64_hashelem he;
+    p64_hashelem_t he;
     uintptr_pair_t ui;
 };
 
@@ -45,12 +45,11 @@ struct p64_hashtable
     struct hash_bucket buckets[0];
 };
 
-#ifndef NDEBUG
 static uint32_t
-list_check(struct p64_hashelem *prnt, uint64_t (*f)(struct p64_hashelem *))
+list_check(p64_hashelem_t *prnt, uint64_t (*f)(p64_hashelem_t *))
 {
     uint32_t num = 0;
-    struct p64_hashelem *he;
+    p64_hashelem_t *he;
     while ((he = REM_MARK(prnt->next)) != NULL)
     {
 	printf(" <h=%lx,k=%lu>", prnt->hash, f(he));
@@ -63,7 +62,7 @@ list_check(struct p64_hashelem *prnt, uint64_t (*f)(struct p64_hashelem *))
 static uint32_t
 bucket_check(uint32_t bix,
 	     struct hash_bucket *bkt,
-	     uint64_t (*f)(struct p64_hashelem *))
+	     uint64_t (*f)(p64_hashelem_t *))
 {
     uint32_t num = 0;
     for (uint32_t i = 0; i < BKT_SIZE; i++)
@@ -74,31 +73,28 @@ bucket_check(uint32_t bix,
     }
     return num;
 }
-#endif
 
 uint32_t
-hash_table_check(struct p64_hashtable *ht,
-		 uint64_t (*f)(struct p64_hashelem *))
+p64_hashtable_check(p64_hashtable_t *ht,
+		    uint64_t (*f)(p64_hashelem_t *))
 {
     uint32_t num = 0;
-#ifndef NDEBUG
     for (uint32_t i = 0; i < ht->nbkts; i++)
     {
 	num += bucket_check(i, &ht->buckets[i], f);
     }
     printf("Found %u elements (%u)\n", num, ht->nused);
-#endif
     return num;
 }
 
-struct p64_hashtable *
+p64_hashtable_t *
 p64_hashtable_alloc(uint32_t nelems)
 {
     size_t nbkts = (nelems + BKT_SIZE - 1) / BKT_SIZE;
-    size_t sz = sizeof(struct p64_hashtable) +
+    size_t sz = sizeof(p64_hashtable_t) +
 		sizeof(struct hash_bucket) * nbkts;
     sz = ROUNDUP(sz, CACHE_LINE);
-    struct p64_hashtable *ht = aligned_alloc(CACHE_LINE, sz);
+    p64_hashtable_t *ht = aligned_alloc(CACHE_LINE, sz);
     if (ht != NULL)
     {
 	memset(ht, 0, sz);
@@ -110,7 +106,7 @@ p64_hashtable_alloc(uint32_t nelems)
 }
 
 void
-p64_hashtable_free(struct p64_hashtable *ht)
+p64_hashtable_free(p64_hashtable_t *ht)
 {
     if (ht != NULL)
     {
@@ -125,7 +121,7 @@ p64_hashtable_free(struct p64_hashtable *ht)
 }
 
 UNROLL_LOOPS ALWAYS_INLINE
-static inline struct p64_hashelem *
+static inline p64_hashelem_t *
 bucket_lookup(struct hash_bucket *bkt,
 	      p64_hashtable_compare cf,
 	      const void *key,
@@ -144,9 +140,8 @@ bucket_lookup(struct hash_bucket *bkt,
     while (mask != 0)
     {
 	uint32_t i = __builtin_ffs(mask) - 1;
-	struct p64_hashelem *prnt = &bkt->elems[i];
-	struct p64_hashelem *he = p64_hazptr_acquire((void**)&prnt->next,
-						      hazpp);
+	p64_hashelem_t *prnt = &bkt->elems[i];
+	p64_hashelem_t *he = p64_hazptr_acquire((void**)&prnt->next, hazpp);
 	//The head element pointers cannot be marked for REMOVAL
 	assert(REM_MARK(he) == he);
 	if (he != NULL)
@@ -162,8 +157,8 @@ bucket_lookup(struct hash_bucket *bkt,
     return NULL;
 }
 
-static struct p64_hashelem *
-list_lookup(struct p64_hashelem *prnt,
+static p64_hashelem_t *
+list_lookup(p64_hashelem_t *prnt,
 	    p64_hashtable_compare cf,
 	    const void *key,
 	    p64_hazardptr_t *hazpp)
@@ -171,8 +166,7 @@ list_lookup(struct p64_hashelem *prnt,
     p64_hazardptr_t hpprnt = P64_HAZARDPTR_NULL;
     for (;;)
     {
-	struct p64_hashelem *this = p64_hazptr_acquire((void**)&prnt->next,
-							hazpp);
+	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, hazpp);
 	this = REM_MARK(this);
 	if (this == NULL)
 	{
@@ -191,8 +185,8 @@ list_lookup(struct p64_hashelem *prnt,
     }
 }
 
-struct p64_hashelem *
-p64_hashtable_lookup(struct p64_hashtable *ht,
+p64_hashelem_t *
+p64_hashtable_lookup(p64_hashtable_t *ht,
 		     p64_hashtable_compare cf,
 		     const void *key,
 		     p64_hashvalue_t hash,
@@ -200,7 +194,7 @@ p64_hashtable_lookup(struct p64_hashtable *ht,
 {
     uint32_t bix = (hash / BKT_SIZE) % ht->nbkts;
     struct hash_bucket *bkt = &ht->buckets[bix];
-    struct p64_hashelem *he;
+    p64_hashelem_t *he;
     *hazpp = P64_HAZARDPTR_NULL;
     he = bucket_lookup(bkt, cf, key, hash, hazpp);
     if (he != NULL)
@@ -219,8 +213,8 @@ p64_hashtable_lookup(struct p64_hashtable *ht,
 //Remove node, return true if element removed by us or some other thread
 //Returns fails if element cannot be removed due to parent marked for removal
 static inline bool
-remove_node(struct p64_hashelem *prnt,
-	    struct p64_hashelem *this,
+remove_node(p64_hashelem_t *prnt,
+	    p64_hashelem_t *this,
 	    p64_hashvalue_t hash,
 	    int32_t *removed)
 {
@@ -255,9 +249,9 @@ remove_node(struct p64_hashelem *prnt,
     return false;
 }
 
-static inline struct p64_hashelem *
-insert_node(struct p64_hashelem *prnt,
-	    struct p64_hashelem *he,
+static inline p64_hashelem_t *
+insert_node(p64_hashelem_t *prnt,
+	    p64_hashelem_t *he,
 	    p64_hashvalue_t hash)
 {
     assert(he->hash == 0);
@@ -281,7 +275,7 @@ insert_node(struct p64_hashelem *prnt,
 UNROLL_LOOPS ALWAYS_INLINE
 static inline bool
 bucket_insert(struct hash_bucket *bkt,
-	      struct p64_hashelem *he,
+	      p64_hashelem_t *he,
 	      p64_hashvalue_t hash)
 {
     uint32_t mask = 0;
@@ -307,23 +301,22 @@ bucket_insert(struct hash_bucket *bkt,
 }
 
 static void
-list_insert(struct p64_hashelem *prnt,
-	    struct p64_hashelem *he,
+list_insert(p64_hashelem_t *prnt,
+	    p64_hashelem_t *he,
 	    p64_hashvalue_t hash,
 	    int32_t *removed)
 {
     p64_hazardptr_t hpprnt = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hpthis = P64_HAZARDPTR_NULL;
-    struct p64_hashelem *const org = prnt;
+    p64_hashelem_t *const org = prnt;
     for (;;)
     {
-	struct p64_hashelem *this = p64_hazptr_acquire((void**)&prnt->next,
-							&hpthis);
+	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, &hpthis);
 	this = REM_MARK(this);
 	if (this == NULL)
 	{
 	    //Next pointer is NULL => end of list, try to swap in our element
-	    struct p64_hashelem *old = insert_node(prnt, he, hash);
+	    p64_hashelem_t *old = insert_node(prnt, he, hash);
 	    if (old == NULL)
 	    {
 		//CAS succeeded, our element added to end of list
@@ -371,8 +364,8 @@ list_insert(struct p64_hashelem *prnt,
 }
 
 void
-p64_hashtable_insert(struct p64_hashtable *ht,
-		     struct p64_hashelem *he,
+p64_hashtable_insert(p64_hashtable_t *ht,
+		     p64_hashelem_t *he,
 		     p64_hashvalue_t hash)
 {
     int32_t removed = -1;//Assume one node inserted
@@ -383,7 +376,7 @@ p64_hashtable_insert(struct p64_hashtable *ht,
     bool success = bucket_insert(bkt, he, hash);
     if (!success)
     {
-	struct p64_hashelem *prnt = &bkt->elems[hash % BKT_SIZE];
+	p64_hashelem_t *prnt = &bkt->elems[hash % BKT_SIZE];
 	list_insert(prnt, he, hash, &removed);
     }
 #ifndef NDEBUG
@@ -397,7 +390,7 @@ p64_hashtable_insert(struct p64_hashtable *ht,
 UNROLL_LOOPS ALWAYS_INLINE
 static inline bool
 bucket_remove(struct hash_bucket *bkt,
-	      struct p64_hashelem *he,
+	      p64_hashelem_t *he,
 	      p64_hashvalue_t hash,
 	      int32_t *removed)
 {
@@ -413,7 +406,7 @@ bucket_remove(struct hash_bucket *bkt,
     if (mask != 0)
     {
 	uint32_t i = __builtin_ffs(mask) - 1;
-	struct p64_hashelem *prnt = &bkt->elems[i];
+	p64_hashelem_t *prnt = &bkt->elems[i];
 	//No need to p64_hazptr_acquire(), we already have a reference
 	//Cannot fail due to parent marked for removal
 	(void)remove_node(prnt, he, hash, removed);
@@ -423,19 +416,18 @@ bucket_remove(struct hash_bucket *bkt,
 }
 
 static bool
-list_remove(struct p64_hashelem *prnt,
-	    struct p64_hashelem *he,
+list_remove(p64_hashelem_t *prnt,
+	    p64_hashelem_t *he,
 	    p64_hashvalue_t hash,
 	    int32_t *removed)
 {
     p64_hazardptr_t hpprnt = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hpthis = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hpnext = P64_HAZARDPTR_NULL;
-    struct p64_hashelem *const org = prnt;
+    p64_hashelem_t *const org = prnt;
     for (;;)
     {
-	struct p64_hashelem *this = p64_hazptr_acquire((void**)&prnt->next,
-							&hpthis);
+	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, &hpthis);
 	this = REM_MARK(this);
 	if (UNLIKELY(this == NULL))
 	{
@@ -486,8 +478,8 @@ list_remove(struct p64_hashelem *prnt,
 }
 
 bool
-p64_hashtable_remove(struct p64_hashtable *ht,
-		     struct p64_hashelem *he,
+p64_hashtable_remove(p64_hashtable_t *ht,
+		     p64_hashelem_t *he,
 		     p64_hashvalue_t hash)
 {
     int32_t removed = 0;
@@ -496,7 +488,7 @@ p64_hashtable_remove(struct p64_hashtable *ht,
     bool success = bucket_remove(bkt, he, hash, &removed);
     if (!success)
     {
-	struct p64_hashelem *prnt = &bkt->elems[hash % BKT_SIZE];
+	p64_hashelem_t *prnt = &bkt->elems[hash % BKT_SIZE];
 	success = list_remove(prnt, he, hash, &removed);
     }
 #ifndef NDEBUG
@@ -509,7 +501,7 @@ p64_hashtable_remove(struct p64_hashtable *ht,
 }
 
 UNROLL_LOOPS ALWAYS_INLINE
-static inline struct p64_hashelem *
+static inline p64_hashelem_t *
 bucket_remove_by_key(struct hash_bucket *bkt,
 		     p64_hashtable_compare cf,
 		     const void *key,
@@ -529,9 +521,8 @@ bucket_remove_by_key(struct hash_bucket *bkt,
     while (mask != 0)
     {
 	uint32_t i = __builtin_ffs(mask) - 1;
-	struct p64_hashelem *prnt = &bkt->elems[i];
-	struct p64_hashelem *he = p64_hazptr_acquire((void**)&prnt->next,
-						      hazpp);
+	p64_hashelem_t *prnt = &bkt->elems[i];
+	p64_hashelem_t *he = p64_hazptr_acquire((void**)&prnt->next, hazpp);
 	//The head element pointers cannot be marked for REMOVAL
 	assert(REM_MARK(he) == he);
 	if (he != NULL)
@@ -549,8 +540,8 @@ bucket_remove_by_key(struct hash_bucket *bkt,
     return NULL;
 }
 
-static struct p64_hashelem *
-list_remove_by_key(struct p64_hashelem *prnt,
+static p64_hashelem_t *
+list_remove_by_key(p64_hashelem_t *prnt,
 		   p64_hashtable_compare cf,
 		   const void *key,
 		   p64_hashvalue_t hash,
@@ -560,11 +551,10 @@ list_remove_by_key(struct p64_hashelem *prnt,
     p64_hazardptr_t hpprnt = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hpthis = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hpnext = P64_HAZARDPTR_NULL;
-    struct p64_hashelem *const org = prnt;
+    p64_hashelem_t *const org = prnt;
     for (;;)
     {
-	struct p64_hashelem *this = p64_hazptr_acquire((void**)&prnt->next,
-							&hpthis);
+	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, &hpthis);
 	this = REM_MARK(this);
 	if (UNLIKELY(this == NULL))
 	{
@@ -614,8 +604,8 @@ list_remove_by_key(struct p64_hashelem *prnt,
     }
 }
 
-struct p64_hashelem *
-p64_hashtable_remove_by_key(struct p64_hashtable *ht,
+p64_hashelem_t *
+p64_hashtable_remove_by_key(p64_hashtable_t *ht,
 			    p64_hashtable_compare cf,
 			    const void *key,
 			    p64_hashvalue_t hash,
@@ -624,11 +614,11 @@ p64_hashtable_remove_by_key(struct p64_hashtable *ht,
     int32_t removed = 0;
     uint32_t bix = (hash / BKT_SIZE) % ht->nbkts;
     struct hash_bucket *bkt = &ht->buckets[bix];
-    struct p64_hashelem *he = bucket_remove_by_key(bkt, cf, key, hash,
-						    hazpp, &removed);
+    p64_hashelem_t *he = bucket_remove_by_key(bkt, cf, key, hash,
+					      hazpp, &removed);
     if (he == NULL)
     {
-	struct p64_hashelem *prnt = &bkt->elems[hash % BKT_SIZE];
+	p64_hashelem_t *prnt = &bkt->elems[hash % BKT_SIZE];
 	he = list_remove_by_key(prnt, cf, key, hash, hazpp, &removed);
     }
 #ifndef NDEBUG

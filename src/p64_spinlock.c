@@ -9,12 +9,14 @@
 
 #include "arch.h"
 
-void p64_spin_init(p64_spinlock_t *lock)
+void
+p64_spin_init(p64_spinlock_t *lock)
 {
     *lock = 0;
 }
 
-static inline int try_lock(p64_spinlock_t *lock)
+static inline int
+try_lock(p64_spinlock_t *lock)
 {
     p64_spinlock_t old = 0;
     //Weak is normally better when using exclusives and retrying
@@ -22,7 +24,8 @@ static inline int try_lock(p64_spinlock_t *lock)
 				       __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
 }
 
-void p64_spin_lock(p64_spinlock_t *lock)
+void
+p64_spin_lock(p64_spinlock_t *lock)
 {
     do
     {
@@ -39,7 +42,8 @@ void p64_spin_lock(p64_spinlock_t *lock)
     while (!try_lock(lock));
 }
 
-void p64_spin_unlock(p64_spinlock_t *lock)
+void
+p64_spin_unlock(p64_spinlock_t *lock)
 {
     //Order both loads and stores
 #ifdef USE_DMB
@@ -50,7 +54,8 @@ void p64_spin_unlock(p64_spinlock_t *lock)
 #endif
 }
 
-void p64_spin_unlock_ro(p64_spinlock_t *lock)
+void
+p64_spin_unlock_ro(p64_spinlock_t *lock)
 {
     //Order only loads
     SMP_RMB();

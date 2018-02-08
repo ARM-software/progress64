@@ -40,7 +40,8 @@ static struct
 } g_timer;
 
 INIT_FUNCTION
-static void init_timers(void)
+static void
+init_timers(void)
 {
     g_timer.earliest = P64_TIMER_TICK_INVALID;
     g_timer.current = 0;
@@ -67,7 +68,9 @@ static void init_timers(void)
 //(e.g. accessed through the user-defined argument to the call-back)
 //Set (and reset) a timer has release semantics wrt this data
 //Expire a timer thus needs acquire semantics
-static void expire_one_timer(p64_tick_t now, p64_tick_t *ptr)
+static void
+expire_one_timer(p64_tick_t now,
+		 p64_tick_t *ptr)
 {
     p64_tick_t exp;
     do
@@ -98,7 +101,10 @@ static void expire_one_timer(p64_tick_t now, p64_tick_t *ptr)
 #endif
 
 //__attribute_noinline__
-static p64_tick_t scan_timers(p64_tick_t now, p64_tick_t *cur, p64_tick_t *top)
+static p64_tick_t
+scan_timers(p64_tick_t now,
+	    p64_tick_t *cur,
+	    p64_tick_t *top)
 {
     p64_tick_t earliest = P64_TIMER_TICK_INVALID;
     __int128 *ptr = (__int128 *)cur;
@@ -194,7 +200,8 @@ update_earliest(p64_tick_t exp)
 						 __ATOMIC_RELAXED)));
 }
 
-void p64_timer_expire(void)
+void
+p64_timer_expire(void)
 {
     p64_tick_t now = __atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
     p64_tick_t earliest = __atomic_load_n(&g_timer.earliest, __ATOMIC_RELAXED);
@@ -216,7 +223,8 @@ void p64_timer_expire(void)
     //Else no timers due for expiration
 }
 
-void p64_timer_tick_set(p64_tick_t tck)
+void
+p64_timer_tick_set(p64_tick_t tck)
 {
     if (tck == P64_TIMER_TICK_INVALID)
     {
@@ -239,12 +247,15 @@ void p64_timer_tick_set(p64_tick_t tck)
 						 __ATOMIC_RELAXED)));
 }
 
-p64_tick_t p64_timer_tick_get(void)
+p64_tick_t
+p64_timer_tick_get(void)
 {
     return __atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
 }
 
-p64_timer_t p64_timer_alloc(p64_timer_cb cb, void *arg)
+p64_timer_t
+p64_timer_alloc(p64_timer_cb cb,
+		void *arg)
 {
     union
     {
@@ -279,7 +290,8 @@ p64_timer_t p64_timer_alloc(p64_timer_cb cb, void *arg)
     return idx;
 }
 
-void p64_timer_free(p64_timer_t idx)
+void
+p64_timer_free(p64_timer_t idx)
 {
     if (__atomic_load_n(&g_timer.expirations[idx], __ATOMIC_ACQUIRE) !=
 	P64_TIMER_TICK_INVALID)
@@ -309,7 +321,10 @@ void p64_timer_free(p64_timer_t idx)
 }
 
 static inline bool
-update_expiration(p64_timer_t idx, p64_tick_t exp, bool active, int mo)
+update_expiration(p64_timer_t idx,
+		  p64_tick_t exp,
+		  bool active,
+		  int mo)
 {
     p64_tick_t old;
     do
@@ -337,7 +352,9 @@ update_expiration(p64_timer_t idx, p64_tick_t exp, bool active, int mo)
 
 //Setting a timer has release order (with regards to user-defined data
 //associated with the timer)
-bool p64_timer_set(p64_timer_t idx, p64_tick_t exp)
+bool
+p64_timer_set(p64_timer_t idx,
+	      p64_tick_t exp)
 {
     if (exp == P64_TIMER_TICK_INVALID)
     {
@@ -348,7 +365,9 @@ bool p64_timer_set(p64_timer_t idx, p64_tick_t exp)
     return update_expiration(idx, exp, false, __ATOMIC_RELEASE);
 }
 
-bool p64_timer_reset(p64_timer_t idx, p64_tick_t exp)
+bool
+p64_timer_reset(p64_timer_t idx,
+		p64_tick_t exp)
 {
     if (exp == P64_TIMER_TICK_INVALID)
     {
@@ -359,7 +378,8 @@ bool p64_timer_reset(p64_timer_t idx, p64_tick_t exp)
     return update_expiration(idx, exp, true, __ATOMIC_RELEASE);
 }
 
-bool p64_timer_cancel(p64_timer_t idx)
+bool
+p64_timer_cancel(p64_timer_t idx)
 {
     return update_expiration(idx, P64_TIMER_TICK_INVALID, true, __ATOMIC_RELAXED);
 }

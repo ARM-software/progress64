@@ -16,14 +16,16 @@
 #define RWLOCK_WRITER (1U << 31)
 #define RWLOCK_READERS (~RWLOCK_WRITER)
 
-void p64_rwlock_init(p64_rwlock_t *lock)
+void
+p64_rwlock_init(p64_rwlock_t *lock)
 {
     *lock = 0;
 }
 
-static inline p64_rwlock_t wait_for_no(p64_rwlock_t *lock,
-				       p64_rwlock_t mask,
-				       int mo)
+static inline
+p64_rwlock_t wait_for_no(p64_rwlock_t *lock,
+			 p64_rwlock_t mask,
+			 int mo)
 {
     p64_rwlock_t l;
     if (((l = __atomic_load_n(lock, mo)) & mask) != 0)
@@ -39,7 +41,8 @@ static inline p64_rwlock_t wait_for_no(p64_rwlock_t *lock,
     return l;
 }
 
-void p64_rwlock_acquire_rd(p64_rwlock_t *lock)
+void
+p64_rwlock_acquire_rd(p64_rwlock_t *lock)
 {
     p64_rwlock_t l;
     do
@@ -54,7 +57,8 @@ void p64_rwlock_acquire_rd(p64_rwlock_t *lock)
 					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
 }
 
-void p64_rwlock_release_rd(p64_rwlock_t *lock)
+void
+p64_rwlock_release_rd(p64_rwlock_t *lock)
 {
     p64_rwlock_t prevl;
     SMP_RMB();//Load-only barrier due to reader-lock
@@ -65,7 +69,8 @@ void p64_rwlock_release_rd(p64_rwlock_t *lock)
     (void)prevl;
 }
 
-void p64_rwlock_acquire_wr(p64_rwlock_t *lock)
+void
+p64_rwlock_acquire_wr(p64_rwlock_t *lock)
 {
     p64_rwlock_t l;
     do
@@ -83,7 +88,8 @@ void p64_rwlock_acquire_wr(p64_rwlock_t *lock)
     (void)wait_for_no(lock, RWLOCK_READERS, __ATOMIC_RELAXED);
 }
 
-void p64_rwlock_release_wr(p64_rwlock_t *lock)
+void
+p64_rwlock_release_wr(p64_rwlock_t *lock)
 {
     assert(*lock == RWLOCK_WRITER);
     //Clear writer flag

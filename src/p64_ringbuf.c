@@ -45,29 +45,31 @@ struct p64_ringbuf
     void *ring[0] ALIGNED(CACHE_LINE);
 } ALIGNED(CACHE_LINE);
 
-struct p64_ringbuf *p64_ringbuf_alloc(uint32_t ringsz)
+p64_ringbuf_t *
+p64_ringbuf_alloc(uint32_t nelems)
 {
-    if (!IS_POWER_OF_TWO(ringsz))
+    if (!IS_POWER_OF_TWO(nelems))
     {
-	fprintf(stderr, "Invalid ring size %u\n", ringsz), abort();
+	fprintf(stderr, "Invalid ring size %u\n", nelems), abort();
     }
-    size_t nbytes = sizeof(struct p64_ringbuf) + ringsz * sizeof(void *);
+    size_t nbytes = sizeof(p64_ringbuf_t) + nelems * sizeof(void *);
     nbytes = ROUNDUP(nbytes, CACHE_LINE);
-    struct p64_ringbuf *rb = aligned_alloc(CACHE_LINE, nbytes);
+    p64_ringbuf_t *rb = aligned_alloc(CACHE_LINE, nbytes);
     if (rb != NULL)
     {
 	rb->prod.head = 0;
 	rb->prod.tail = 0;
-	rb->prod.mask = ringsz - 1;
+	rb->prod.mask = nelems - 1;
 	rb->cons.head = 0;
 	rb->cons.tail = 0;
-	rb->cons.mask = ringsz - 1;
+	rb->cons.mask = nelems - 1;
 	return rb;
     }
     return NULL;
 }
 
-void p64_ringbuf_free(struct p64_ringbuf *rb)
+void
+p64_ringbuf_free(p64_ringbuf_t *rb)
 {
     if (rb != NULL)
     {
@@ -85,11 +87,12 @@ struct result
     ringidx_t idx;
 };
 
-static inline struct result atomic_rb_acquire(struct headtail *rb,
-					      int n,
-					      bool enqueue,
-					      int mo_load,
-					      int mo_store)
+static inline struct result
+atomic_rb_acquire(struct headtail *rb,
+		  int n,
+		  bool enqueue,
+		  int mo_load,
+		  int mo_store)
 {
     ringidx_t old_top;
     ringidx_t ring_size = enqueue ? /*enqueue*/rb->mask + 1 : /*dequeue*/0;
@@ -106,7 +109,7 @@ static inline struct result atomic_rb_acquire(struct headtail *rb,
 	actual = MIN(n, (int)(ring_size + bottom - old_top));
 	if (UNLIKELY(actual <= 0))
 	{
-	    return (struct result){ .idx = 0, .n = 0};
+	    return (struct result){ .idx = 0, .n = 0 };
 	}
     }
 #ifdef USE_LDXSTX
@@ -116,16 +119,17 @@ static inline struct result atomic_rb_acquire(struct headtail *rb,
 					&old_top,//Updated on failure
 					old_top + actual,
 					/*weak=*/true,
-				        mo_store,
-				        __ATOMIC_RELAXED));
+					mo_store,
+					__ATOMIC_RELAXED));
 #endif
-    return (struct result){ .idx = old_top, .n = actual};
+    return (struct result){ .idx = old_top, .n = actual };
 }
 
-static inline void release_slots_blk(ringidx_t *loc,
-				     ringidx_t idx,
-				     int n,
-				     bool loads_only)
+static inline void
+release_slots_blk(ringidx_t *loc,
+		  ringidx_t idx,
+		  int n,
+		  bool loads_only)
 {
     //Wait for our turn to signal consumers (producers)
     if (UNLIKELY(__atomic_load_n(loc, __ATOMIC_RELAXED) != idx))
@@ -155,9 +159,10 @@ static inline void release_slots_blk(ringidx_t *loc,
     }
 }
 
-int p64_ringbuf_enq(struct p64_ringbuf *rb,
+uint32_t
+p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 		    void *ev[],
-		    int num)
+		    uint32_t num)
 {
     //Step 1: acquire slots
     uint32_t mask = rb->prod.mask;
@@ -187,9 +192,10 @@ int p64_ringbuf_enq(struct p64_ringbuf *rb,
     return actual;
 }
 
-int p64_ringbuf_deq(struct p64_ringbuf *rb,
+uint32_t
+p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 		    void *ev[],
-		    int num)
+		    uint32_t num)
 {
     //Step 1: acquire slots
     uint32_t mask = rb->cons.mask;

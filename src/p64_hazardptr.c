@@ -54,7 +54,8 @@ static uint32_t numthreads = 0;
 static struct thread_state thread_state[MAXTHREADS];
 static __thread struct thread_state *TS;
 
-void thread_state_init(int tidx)
+void
+thread_state_init(int tidx)
 {
     struct thread_state *ts = &thread_state[tidx];
     TS = ts;
@@ -80,14 +81,16 @@ void thread_state_init(int tidx)
     __atomic_store_n(&numthreads, tidx + 1, __ATOMIC_RELEASE);
 }
 
-uint32_t p64_hazptr_maxrefs(void)
+uint32_t
+p64_hazptr_maxrefs(void)
 {
     return MAXHPREFS;
 }
 
 //Allocate a hazard pointer
 //The hazard pointer is not initialised (value should be NULL)
-static inline p64_hazardptr_t p64_hazptr_alloc(void)
+static inline p64_hazardptr_t
+p64_hazptr_alloc(void)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     if (ha->free != 0)
@@ -103,7 +106,8 @@ static inline p64_hazardptr_t p64_hazptr_alloc(void)
 
 //Free a hazard pointer
 //The hazard pointer is not reset (write NULL pointer)
-static inline void p64_hazptr_free(p64_hazardptr_t hp)
+static inline void
+p64_hazptr_free(p64_hazardptr_t hp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     uint32_t idx = hp - ha->refs;
@@ -114,9 +118,10 @@ static inline void p64_hazptr_free(p64_hazardptr_t hp)
     //printf("p64_hazptr_free(%u)\n", idx);
 }
 
-inline void p64_hazptr_annotate(p64_hazardptr_t hp,
-			const char *file,
-			unsigned line)
+inline void
+p64_hazptr_annotate(p64_hazardptr_t hp,
+		    const char *file,
+		    unsigned line)
 {
     if (hp != P64_HAZARDPTR_NULL)
     {
@@ -130,7 +135,8 @@ inline void p64_hazptr_annotate(p64_hazardptr_t hp,
     }
 }
 
-unsigned p64_hazptr_dump(FILE *fp)
+unsigned
+p64_hazptr_dump(FILE *fp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     for (uint32_t i = 0; i < MAXHPREFS; i++)
@@ -155,7 +161,9 @@ unsigned p64_hazptr_dump(FILE *fp)
 //Re-use any existing hazard pointer
 //Allocate a new hazard pointer if necessary
 //Don't free any allocated hazard pointer even if is not used
-void *p64_hazptr_acquire(void **pptr, p64_hazardptr_t *hp)
+void *
+p64_hazptr_acquire(void **pptr,
+		   p64_hazardptr_t *hp)
 {
     //Reset any existing hazard pointer
     if (*hp != P64_HAZARDPTR_NULL)
@@ -207,7 +215,8 @@ void *p64_hazptr_acquire(void **pptr, p64_hazardptr_t *hp)
 }
 
 //Release the reference to the object, assume changes have been made
-void p64_hazptr_release(p64_hazardptr_t *hp)
+void
+p64_hazptr_release(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
@@ -226,7 +235,8 @@ void p64_hazptr_release(p64_hazardptr_t *hp)
 }
 
 //Release the reference to the object, no changes have been made
-void p64_hazptr_release_ro(p64_hazardptr_t *hp)
+void
+p64_hazptr_release_ro(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
@@ -241,7 +251,9 @@ void p64_hazptr_release_ro(p64_hazardptr_t *hp)
 }
 
 //Qsort call-back: compare two pointers
-static int compare_ptr(const void *ppa, const void *ppb)
+static int
+compare_ptr(const void *ppa,
+	    const void *ppb)
 {
     const void *pa = *(const void **)ppa;
     const void *pb = *(const void **)ppb;
@@ -250,7 +262,8 @@ static int compare_ptr(const void *ppa, const void *ppb)
 }
 
 //Collect active references from all threads
-static uint32_t collect_refs(userptr_t refs[MAXREFS])
+static uint32_t
+collect_refs(userptr_t refs[MAXREFS])
 {
     uint32_t nrefs = 0;
     for (uint32_t t = 0; t < numthreads; t++)
@@ -273,7 +286,10 @@ static uint32_t collect_refs(userptr_t refs[MAXREFS])
 }
 
 //Check if a specific reference exists in the array
-static bool find_ptr(userptr_t refs[], int nrefs, userptr_t ptr)
+static bool
+find_ptr(userptr_t refs[],
+	 int nrefs,
+	 userptr_t ptr)
 {
     if (nrefs > 0)
     {
@@ -296,7 +312,8 @@ static bool find_ptr(userptr_t refs[], int nrefs, userptr_t ptr)
 
 //Traverse over all retired objects and reclaim those that have no active
 //references
-static int garbage_collect(void)
+static int
+garbage_collect(void)
 {
     struct thread_state *ts = TS;
     uint32_t nreclaimed = 0;
@@ -329,7 +346,9 @@ static int garbage_collect(void)
 
 //Retire an object
 //Periodically perform garbage collection on retired objects
-void p64_hazptr_retire(void *ptr, void (*cb)(void *ptr))
+void
+p64_hazptr_retire(void *ptr,
+		  void (*cb)(void *ptr))
 {
     struct thread_state *ts = TS;
     //There is always space for one extra retired object
@@ -347,7 +366,8 @@ void p64_hazptr_retire(void *ptr, void (*cb)(void *ptr))
     }
 }
 
-bool p64_hazptr_collect(void)
+bool
+p64_hazptr_collect(void)
 {
     //Ensure all removals are visible before we read hazard pointers
     SMP_WMB();
