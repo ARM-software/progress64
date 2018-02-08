@@ -14,16 +14,18 @@ extern "C"
 
 typedef uint32_t p64_rwlock_t;
 
-//Initialise a reader/writer lock
+//Initialise a read/write lock
 void p64_rwlock_init(p64_rwlock_t *lock);
 
 //Acquire a read lock
+//Block until no write is in progress
 void p64_rwlock_acquire_rd(p64_rwlock_t *lock);
 
-//Rekease a read lock
+//Release a read lock
 void p64_rwlock_release_rd(p64_rwlock_t *lock);
 
 //Acquire a write lock
+//Block until earlier reads & writes have completed
 void p64_rwlock_acquire_wr(p64_rwlock_t *lock);
 
 //Release a write lock
