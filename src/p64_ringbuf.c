@@ -48,21 +48,22 @@ struct p64_ringbuf
 p64_ringbuf_t *
 p64_ringbuf_alloc(uint32_t nelems)
 {
-    if (!IS_POWER_OF_TWO(nelems))
+    unsigned long ringsz = ROUNDUP_POW2(nelems);
+    if (nelems == 0 || ringsz == 0 || ringsz > 0x80000000)
     {
-	fprintf(stderr, "Invalid ring size %u\n", nelems), abort();
+	fprintf(stderr, "Invalid number of elements %u\n", nelems), abort();
     }
-    size_t nbytes = sizeof(p64_ringbuf_t) + nelems * sizeof(void *);
-    nbytes = ROUNDUP(nbytes, CACHE_LINE);
+    size_t nbytes = ROUNDUP(sizeof(p64_ringbuf_t) + ringsz * sizeof(void *),
+			    CACHE_LINE);
     p64_ringbuf_t *rb = aligned_alloc(CACHE_LINE, nbytes);
     if (rb != NULL)
     {
 	rb->prod.head = 0;
 	rb->prod.tail = 0;
-	rb->prod.mask = nelems - 1;
+	rb->prod.mask = ringsz - 1;
 	rb->cons.head = 0;
 	rb->cons.tail = 0;
-	rb->cons.mask = nelems - 1;
+	rb->cons.mask = ringsz - 1;
 	return rb;
     }
     return NULL;

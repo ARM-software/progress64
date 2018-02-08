@@ -18,6 +18,11 @@
 
 #define ALIGNED(x) __attribute__((__aligned__(x)))
 
+#ifndef __LONG_WIDTH__
+#error __LONG_WIDTH__ undefined
+#endif
+#define ROUNDUP_POW2(x) (1UL << (__LONG_WIDTH__ - __builtin_clzl((x) - 1UL)))
+
 #define ROUNDUP(a, b) \
     ({                                          \
         __typeof__ (a) tmp_a = (a);             \

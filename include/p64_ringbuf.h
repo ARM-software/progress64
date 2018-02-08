@@ -16,6 +16,7 @@ struct p64_ringbuf;
 typedef struct p64_ringbuf p64_ringbuf_t;
 
 //Allocate a ring buffer with space for at least 'nelems' elements
+//'nelems' != 0 and 'nelems' <= 0x80000000
 p64_ringbuf_t *p64_ringbuf_alloc(uint32_t nelems);
 
 //Free a ring buffer
