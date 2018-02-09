@@ -6,11 +6,13 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 
 #include "p64_rwsync.h"
 #include "build_config.h"
 
+#include "common.h"
 #include "arch.h"
 
 #define RWSYNC_WRITER 1U
@@ -72,7 +74,11 @@ void
 p64_rwsync_release_wr(p64_rwsync_t *sync)
 {
     p64_rwsync_t cur = *sync;
-    assert((cur & RWSYNC_WRITER) != 0);
+    if (UNLIKELY(cur & RWSYNC_WRITER) == 0)
+    {
+	fprintf(stderr, "Invalid write release of RW sync %p\n", sync), abort();
+    }
+
     //Clear writer flag
 #ifdef USE_DMB
     SMP_MB();//Load/store barrier due to writer-sync

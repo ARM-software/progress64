@@ -46,5 +46,6 @@ int main(void)
     p64_timer_expire();
     EXPECT(exp_a == 0xFFFFFFFFFFFFFFFEULL);
 
+    printf("timer tests complete\n");
     return 0;
 }

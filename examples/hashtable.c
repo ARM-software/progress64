@@ -139,5 +139,6 @@ int main(void)
     EXPECT(p64_hashtable_check(ht, keyf) == 2);
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
+    printf("hashtable test complete\n");
     return 0;
 }

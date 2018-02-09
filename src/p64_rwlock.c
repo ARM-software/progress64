@@ -2,16 +2,17 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_rwlock.h"
 #include "build_config.h"
 
 #include "arch.h"
+#include "common.h"
 
 #define RWLOCK_WRITER (1U << 31)
 #define RWLOCK_READERS (~RWLOCK_WRITER)
@@ -65,8 +66,10 @@ p64_rwlock_release_rd(p64_rwlock_t *lock)
     //Decrement number of readers
     prevl = __atomic_fetch_sub(lock, 1, __ATOMIC_RELAXED);
     //Check after lock is released but use pre-release lock value
-    assert((prevl & RWLOCK_WRITER) == 0 && prevl != 0);
-    (void)prevl;
+    if (UNLIKELY((prevl & RWLOCK_WRITER) != 0 || prevl == 0))
+    {
+	fprintf(stderr, "Invalid read release of RW lock %p\n", lock), abort();
+    }
 }
 
 void
@@ -91,7 +94,10 @@ p64_rwlock_acquire_wr(p64_rwlock_t *lock)
 void
 p64_rwlock_release_wr(p64_rwlock_t *lock)
 {
-    assert(*lock == RWLOCK_WRITER);
+    if (UNLIKELY(*lock != RWLOCK_WRITER))
+    {
+	fprintf(stderr, "Invalid write release of RW lock %p\n", lock), abort();
+    }
     //Clear writer flag
 #ifdef USE_DMB
     SMP_MB();//Load/store barrier due to writer-lock

@@ -58,8 +58,8 @@ void p64_hazptr_release_ro(p64_hazardptr_t *hp);
 //Call 'callback' when object is no longer referenced and can be destroyed
 void p64_hazptr_retire(void *ptr, void (*callback)(void *ptr));
 
-//Force a (premature) garbage collection
-bool p64_hazptr_collect(void);
+//Force garbage reclamation
+bool p64_hazptr_reclaim(void);
 
 //Debugging support
 //Annotate a hazard pointer (if != P64_HAZARDPTR_NULL) with file & line

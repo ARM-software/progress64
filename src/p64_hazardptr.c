@@ -111,9 +111,15 @@ p64_hazptr_free(p64_hazardptr_t hp)
 {
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     uint32_t idx = hp - ha->refs;
-    assert(idx < MAXHPREFS);
+    if (UNLIKELY(idx >= MAXHPREFS))
+    {
+	fprintf(stderr, "Invalid hazard pointer %p\n", hp), abort();
+    }
     assert(IS_NULL_PTR(*hp));
-    assert((ha->free & (1U << idx)) == 0);
+    if (UNLIKELY((ha->free & (1U << idx)) != 0))
+    {
+	fprintf(stderr, "Hazard pointer %p already free\n", hp), abort();
+    }
     ha->free |= 1U << idx;
     //printf("p64_hazptr_free(%u)\n", idx);
 }
@@ -367,7 +373,7 @@ p64_hazptr_retire(void *ptr,
 }
 
 bool
-p64_hazptr_collect(void)
+p64_hazptr_reclaim(void)
 {
     //Ensure all removals are visible before we read hazard pointers
     SMP_WMB();

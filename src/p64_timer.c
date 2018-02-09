@@ -3,7 +3,6 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 
-#include <assert.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -293,6 +292,10 @@ p64_timer_alloc(p64_timer_cb cb,
 void
 p64_timer_free(p64_timer_t idx)
 {
+    if (UNLIKELY((uint32_t)idx >= g_timer.hiwmark))
+    {
+	fprintf(stderr, "Invalid timer %d\n", idx), abort();
+    }
     if (__atomic_load_n(&g_timer.expirations[idx], __ATOMIC_ACQUIRE) !=
 	P64_TIMER_TICK_INVALID)
     {
@@ -327,6 +330,10 @@ update_expiration(p64_timer_t idx,
 		  int mo)
 {
     p64_tick_t old;
+    if (UNLIKELY((uint32_t)idx >= g_timer.hiwmark))
+    {
+	fprintf(stderr, "Invalid timer %d\n", idx), abort();
+    }
     do
     {
 	//Explicit reloading => smaller code
@@ -356,10 +363,10 @@ bool
 p64_timer_set(p64_timer_t idx,
 	      p64_tick_t exp)
 {
-    if (exp == P64_TIMER_TICK_INVALID)
+    if (UNLIKELY(exp == P64_TIMER_TICK_INVALID))
     {
-	fprintf(stderr, "p64_timer_set: invalid expiration time %"PRIu64"\n",
-		exp);
+	fprintf(stderr, "Invalid expiration time %"PRIu64" for timer %d\n",
+		exp, idx);
 	abort();
     }
     return update_expiration(idx, exp, false, __ATOMIC_RELEASE);
@@ -369,10 +376,10 @@ bool
 p64_timer_reset(p64_timer_t idx,
 		p64_tick_t exp)
 {
-    if (exp == P64_TIMER_TICK_INVALID)
+    if (UNLIKELY(exp == P64_TIMER_TICK_INVALID))
     {
-	fprintf(stderr, "p64_timer_reset: invalid expiration time %"PRIu64"\n",
-		exp);
+	fprintf(stderr, "Invalid expiration time %"PRIu64" for timer %d\n",
+		exp, idx);
 	abort();
     }
     return update_expiration(idx, exp, true, __ATOMIC_RELEASE);

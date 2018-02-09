@@ -11,11 +11,12 @@
 ################################################################################
 
 #List of executable files to build
-TARGETS = libprogress64.a hashtable timer
+TARGETS = libprogress64.a hashtable timer rwlock
 #List object files for each target
 OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o
 OBJECTS_hashtable = p64_hazardptr.o p64_hashtable.o hashtable.o
 OBJECTS_timer = p64_timer.o timer.o
+OBJECTS_rwlock = p64_rwlock.o rwlock.o
 
 DEBUG ?= 0
 ASSERT ?= 0
@@ -30,6 +31,7 @@ DEFINE += -DNDEBUG#disable assertions
 endif
 DEFINE += -D_GNU_SOURCE
 CCFLAGS += -std=c99
+#CCFLAGS += -march=armv8.1-a
 CCFLAGS += -g -ggdb -Wall
 CCFLAGS += -fomit-frame-pointer
 CCFLAGS += -fstrict-aliasing -fno-stack-check -fno-stack-protector
