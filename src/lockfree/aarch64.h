@@ -20,35 +20,36 @@
 #define STX_MO(mo) (HAS_RLS((mo)) ? __ATOMIC_RELEASE : __ATOMIC_RELAXED)
 
 #ifdef __ARM_FEATURE_ATOMICS
+ALWAYS_INLINE
 static inline __int128 casp(__int128 *var, __int128 old, __int128 neu, int mo)
 {
     if (mo == __ATOMIC_RELAXED)
     {
 	__asm __volatile("casp %0, %H0, %1, %H1, [%2]"
-		: "+r" (old)
-		: "r" (neu), "r" (var)
-		: "memory");
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
     }
     else if (mo == __ATOMIC_ACQUIRE)
     {
 	__asm __volatile("caspa %0, %H0, %1, %H1, [%2]"
-		: "+r" (old)
-		: "r" (neu), "r" (var)
-		: "memory");
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
     }
     else if (mo == __ATOMIC_ACQ_REL)
     {
 	__asm __volatile("caspal %0, %H0, %1, %H1, [%2]"
-		: "+r" (old)
-		: "r" (neu), "r" (var)
-		: "memory");
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
     }
     else if (mo == __ATOMIC_RELEASE)
     {
 	__asm __volatile("caspl %0, %H0, %1, %H1, [%2]"
-		: "+r" (old)
-		: "r" (neu), "r" (var)
-		: "memory");
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
     }
     else
     {
@@ -58,7 +59,8 @@ static inline __int128 casp(__int128 *var, __int128 old, __int128 neu, int mo)
 }
 #endif
 
-ALWAYS_INLINE
+//ALWAYS_INLINE//Too much inlining cause excessive register pressure and
+//makes GCC use an invalid register pair for the CASP instruction
 static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128 *exp, register __int128 neu, bool weak, int mo_success, int mo_failure)
 {
 #ifdef __ARM_FEATURE_ATOMICS
@@ -232,10 +234,13 @@ ALWAYS_INLINE
 static inline uint32_t
 lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo_load, int mo_store)
 {
-#ifdef __ARM_FEATURE_ATOMICS
-#error TODO use LDUMAX
-#else
     uint32_t old;
+#ifdef __ARM_FEATURE_ATOMICS
+    __asm __volatile("ldumax %w1, %w0, [%x2]"
+		    :"=&r"(old)
+		    :"r"(val), "r"(var)
+		    :"memory");
+#else
     do
     {
 	old = ldx32(var, mo_load);
@@ -246,8 +251,34 @@ lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo_load, int mo_store)
 	//Else val > old, update
     }
     while (UNLIKELY(stx32(var, val, mo_store)));
-    return old;
 #endif
+    return old;
+}
+
+#define _ATOMIC_UMAX_8_DEFINED
+ALWAYS_INLINE
+static inline uint64_t
+lockfree_fetch_umax_8(uint64_t *var, uint64_t val, int mo_load, int mo_store)
+{
+    uint64_t old;
+#ifdef __ARM_FEATURE_ATOMICS
+    __asm __volatile("ldumax %x1, %x0, [%x2]"
+		    :"=&r"(old)
+		    :"r"(val), "r"(var)
+		    :"memory");
+#else
+    do
+    {
+	old = ldx64(var, mo_load);
+	if (val <= old)
+	{
+	    return old;
+	}
+	//Else val > old, update
+    }
+    while (UNLIKELY(stx64(var, val, mo_store)));
+#endif
+    return old;
 }
 
 #endif
