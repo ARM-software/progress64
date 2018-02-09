@@ -11,12 +11,13 @@
 ################################################################################
 
 #List of executable files to build
-TARGETS = libprogress64.a hashtable timer rwlock
+TARGETS = libprogress64.a hashtable timer rwlock reorder
 #List object files for each target
-OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o
+OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o
 OBJECTS_hashtable = p64_hazardptr.o p64_hashtable.o hashtable.o
 OBJECTS_timer = p64_timer.o timer.o
 OBJECTS_rwlock = p64_rwlock.o rwlock.o
+OBJECTS_reorder = p64_reorder.o reorder.o
 
 DEBUG ?= 0
 ASSERT ?= 0

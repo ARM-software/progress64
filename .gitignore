@@ -5,6 +5,8 @@ core
 perf.data*
 libprogress64.a
 hashtable
+reorder
+rwlock
 timer
 tags
 TAGS
