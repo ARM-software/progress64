@@ -15,16 +15,16 @@ extern "C"
 typedef uint8_t p64_spinlock_t;
 
 //Initialise a spin lock
-void p64_spin_init(p64_spinlock_t *lock);
+void p64_spinlock_init(p64_spinlock_t *lock);
 
 //Acquire a spin lock
-void p64_spin_lock(p64_spinlock_t *lock);
+void p64_spinlock_acquire(p64_spinlock_t *lock);
 
 //Release a spin lock
-void p64_spin_unlock(p64_spinlock_t *lock);
+void p64_spinlock_release(p64_spinlock_t *lock);
 
 //Release a spin lock when no writes to shared data have been made
-void p64_spin_unlock_ro(p64_spinlock_t *lock);
+void p64_spinlock_release_ro(p64_spinlock_t *lock);
 
 #ifdef __cplusplus
 }

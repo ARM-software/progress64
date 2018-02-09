@@ -3,14 +3,16 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 #include <stdbool.h>
+#include <stdio.h>
 
 #include "p64_spinlock.h"
 #include "build_config.h"
 
+#include "common.h"
 #include "arch.h"
 
 void
-p64_spin_init(p64_spinlock_t *lock)
+p64_spinlock_init(p64_spinlock_t *lock)
 {
     *lock = 0;
 }
@@ -25,7 +27,7 @@ try_lock(p64_spinlock_t *lock)
 }
 
 void
-p64_spin_lock(p64_spinlock_t *lock)
+p64_spinlock_acquire(p64_spinlock_t *lock)
 {
     do
     {
@@ -43,8 +45,12 @@ p64_spin_lock(p64_spinlock_t *lock)
 }
 
 void
-p64_spin_unlock(p64_spinlock_t *lock)
+p64_spinlock_release(p64_spinlock_t *lock)
 {
+    if (UNLIKELY(*lock != 1))
+    {
+	fprintf(stderr, "Invalid release of spinlock %p\n", lock), abort();
+    }
     //Order both loads and stores
 #ifdef USE_DMB
     SMP_MB();
@@ -55,8 +61,12 @@ p64_spin_unlock(p64_spinlock_t *lock)
 }
 
 void
-p64_spin_unlock_ro(p64_spinlock_t *lock)
+p64_spinlock_release_ro(p64_spinlock_t *lock)
 {
+    if (UNLIKELY(*lock != 1))
+    {
+	fprintf(stderr, "Invalid release of spinlock %p\n", lock), abort();
+    }
     //Order only loads
     SMP_RMB();
     __atomic_store_n(lock, 0, __ATOMIC_RELAXED);
