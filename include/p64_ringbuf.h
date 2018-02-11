@@ -12,7 +12,6 @@ extern "C"
 {
 #endif
 
-struct p64_ringbuf;
 typedef struct p64_ringbuf p64_ringbuf_t;
 
 //Allocate a ring buffer with space for at least 'nelems' elements

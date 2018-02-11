@@ -20,7 +20,6 @@ typedef enum
     pass, replay, stale
 } p64_antireplay_result_t;
 
-struct p64_antireplay;
 typedef struct p64_antireplay p64_antireplay_t;
 
 p64_antireplay_t *

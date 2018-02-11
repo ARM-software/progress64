@@ -27,7 +27,6 @@ typedef struct p64_hashelem
     struct p64_hashelem *next;
 } p64_hashelem_t;
 
-struct p64_hashtable;
 typedef struct p64_hashtable p64_hashtable_t;
 
 typedef int (*p64_hashtable_compare)(const p64_hashelem_t *,
