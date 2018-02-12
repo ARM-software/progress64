@@ -77,6 +77,8 @@ expire_one_timer(p64_tick_t now,
 	exp = __atomic_load_n(ptr, __ATOMIC_ACQUIRE);
 	if (!(exp <= now))//exp > now
 	{
+	    //If timer does not expire anymore it means some thread has
+	    //(re-)set the timer and then also updated g_timer.earliest
 	    return;
 	}
     }
@@ -124,6 +126,9 @@ scan_timers(p64_tick_t now,
 		break;
 	    }
 	    expire_one_timer(now, pw0);
+	    //If timer didn't actually expire, it was reset by some thread and
+	    //g_timer.earliest updated which means we don't have to include it
+	    //in our update of earliest
 	}
 	else//'w0' > 'now'
 	{
@@ -175,6 +180,7 @@ scan_timers(p64_tick_t now,
     return earliest;
 }
 
+//Perform an atomic-min operation on g_timer.earliest
 static inline void
 update_earliest(p64_tick_t exp)
 {
@@ -213,6 +219,9 @@ p64_timer_expire(void)
 	//Reset 'earliest'
 	__atomic_store_n(&g_timer.earliest, P64_TIMER_TICK_INVALID,
 			 __ATOMIC_RELAXED);
+	//We need our g_timer.earliest reset to be visible before we start to
+	//scan the timer array
+	SMP_WMB();
 	//Scan expiration ticks looking for expired timers
 	earliest = scan_timers(now, &g_timer.expirations[0],
 			       &g_timer.expirations[g_timer.hiwmark]);
