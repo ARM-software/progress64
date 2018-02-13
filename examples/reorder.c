@@ -24,9 +24,14 @@ int main(void)
     EXPECT(sn == 3);
     EXPECT(p64_reorder_reserve(rb, 1, &sn) == 0);
     p64_reorder_insert(rb, 1, &(void *){(void*)103}, 3);
+    EXPECT(p64_reorder_reserve(rb, 1, &sn) == 0);
     p64_reorder_insert(rb, 1, &(void *){(void*)100}, 0);
+    EXPECT(p64_reorder_reserve(rb, 1, &sn) == 1);
+    EXPECT(sn == 4);
+    EXPECT(p64_reorder_reserve(rb, 1, &sn) == 0);
     p64_reorder_insert(rb, 1, &(void *){(void*)102}, 2);
     p64_reorder_insert(rb, 1, &(void *){(void*)101}, 1);
+    p64_reorder_insert(rb, 1, &(void *){(void*)104}, 4);
     p64_reorder_free(rb);
 
     printf("reorder tests complete\n");

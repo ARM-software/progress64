@@ -113,11 +113,11 @@ p64_reorder_insert(p64_reorder_t *rb,
 		   void *elems[],
 		   uint32_t sn)
 {
-    if (UNLIKELY(BEFORE(sn, rb->hi.head) || AFTER(sn + nelems, rb->tail)))
+    if (UNLIKELY(AFTER(sn + nelems, rb->tail)))
     {
 	fprintf(stderr, "Invalid sequence number)\n"), abort();
     }
-    //Store put elements in reorder buffer
+    //Store our elements in reorder buffer
     uint32_t mask = rb->mask;
     SMP_MB();//Explicit memory barrier so we can use store-relaxed below
     for (uint32_t i = 0; i < nelems; i++)
@@ -133,36 +133,32 @@ p64_reorder_insert(p64_reorder_t *rb,
 
     struct hi old;
     __atomic_load(&rb->hi, &old, __ATOMIC_ACQUIRE);
-    if (old.head != sn)
+    while (BEFORE(sn, old.head) || AFTER(sn + nelems - 1, old.head))
     {
 	//We are out-of-order
 	//Update chgi to indicate presence of new elements
-	do
+	struct hi new;
+	new.head = old.head;
+	new.chgi = old.chgi + 1;//Unique value
+	//Update head&chgi, fail if any has changed
+	if (__atomic_compare_exchange(&rb->hi,
+				      &old,//Updated on failure
+				      &new,
+				      /*weak=*/false,
+				      __ATOMIC_RELEASE,
+				      __ATOMIC_RELAXED))
 	{
-	    struct hi new;
-	    new.head = old.head;
-	    new.chgi = old.chgi + 1;//Unique value
-	    //Update head&chgi, fail if any has changed
-	    if (__atomic_compare_exchange(&rb->hi,
-					  &old,//Updated on failure
-					  &new,
-					  /*weak=*/false,
-					  __ATOMIC_RELEASE,
-					  __ATOMIC_RELAXED))
-	    {
-		//CAS succeeded => head same (we are not in-order), chgi updated
-		return;
-	    }
-	    //CAS failed => head and/or chgi changed
-	    //We might not be out-of-order anymore
+	    //CAS succeeded => head same (we are not in-order), chgi updated
+	    return;
 	}
-	while (old.head != sn);
-	//old.head == sn => we are now in-order!
+	//CAS failed => head and/or chgi changed
+	//We might not be out-of-order anymore
     }
 
-    assert(old.head == sn);
+    assert(!BEFORE(sn, old.head) && !AFTER(sn + nelems - 1, old.head));
     //We are in-order so our responsibility to retire elements
     struct hi new;
+    new.head = old.head;
     mask = rb->mask;
     p64_reorder_cb cb = rb->cb;
     void *arg = rb->arg;
@@ -170,16 +166,15 @@ p64_reorder_insert(p64_reorder_t *rb,
     do
     {
 	void *elem;
-	while ((elem = __atomic_load_n(&rb->ring[sn & mask],
+	while ((elem = __atomic_load_n(&rb->ring[new.head & mask],
 				       __ATOMIC_ACQUIRE)) != NULL)
 	{
-	    rb->ring[sn & mask] = NULL;
+	    rb->ring[new.head & mask] = NULL;
 	    cb(arg, elem);
-	    sn++;
+	    new.head++;
 	}
-	new.head = sn;
-	new.chgi = old.chgi;
 	assert(new.head != old.head);
+	new.chgi = old.chgi;
     }
     //Update head&chgi, fail if chgi has changed (head cannot change)
     while (!__atomic_compare_exchange(&rb->hi,
