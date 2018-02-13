@@ -16,7 +16,7 @@ struct p64_antireplay
 {
     uint32_t winmask;
     bool swizzle;
-    p64_antireplay_sn_t snv[0] ALIGNED(CACHE_LINE);
+    p64_antireplay_sn_t snv[] ALIGNED(CACHE_LINE);
 };
 
 p64_antireplay_t *

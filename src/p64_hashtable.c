@@ -46,7 +46,7 @@ struct p64_hashtable
 {
     uint32_t nbkts;
     uint32_t nused;//elements
-    struct hash_bucket buckets[0];
+    struct hash_bucket buckets[];
 };
 
 static uint32_t

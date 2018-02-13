@@ -196,7 +196,7 @@ struct p64_reassemble
     p64_reassemble_cb stale_cb;
     void *arg;
     uint32_t nentries;
-    union fraglist fragtbl[0] ALIGNED(CACHE_LINE);
+    union fraglist fragtbl[] ALIGNED(CACHE_LINE);
 };
 
 p64_reassemble_t *

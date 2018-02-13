@@ -42,7 +42,7 @@ struct p64_ringbuf
 {
     struct headtail prod;
     struct headtail cons;//NB head & tail are swapped for consumer metadata
-    void *ring[0] ALIGNED(CACHE_LINE);
+    void *ring[] ALIGNED(CACHE_LINE);
 } ALIGNED(CACHE_LINE);
 
 p64_ringbuf_t *

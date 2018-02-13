@@ -31,7 +31,7 @@ struct p64_reorder
     p64_reorder_cb cb;
     void *arg;
     uint32_t tail ALIGNED(CACHE_LINE);
-    void *ring[0] ALIGNED(CACHE_LINE);
+    void *ring[] ALIGNED(CACHE_LINE);
 };
 
 p64_reorder_t *
