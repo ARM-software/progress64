@@ -103,7 +103,7 @@ sort_frags(p64_fragment_t *frag)
 //Check if datagram is complete
 //If true, return ptr to first fragment in list else return NULL
 static p64_fragment_t *
-dg_is_complete(p64_fragment_t **prev)
+is_complete(p64_fragment_t **prev)
 {
 restart: (void)0;
     p64_fragment_t *frag = *prev;
@@ -248,12 +248,13 @@ p64_reassemble_free(p64_reassemble_t *fl)
 }
 
 static uint32_t
-reassemble_dg(p64_reassemble_t *fl, p64_fragment_t **head)
+reassemble(p64_reassemble_t *fl,
+	   p64_fragment_t **head)
 {
     uint32_t numdg = 0;
     while (*head != NULL)
     {
-	p64_fragment_t *dg = dg_is_complete(head);
+	p64_fragment_t *dg = is_complete(head);
 	if (dg == NULL)
 	{
 	    break;
@@ -276,22 +277,42 @@ min_earliest(uint32_t a, uint32_t b, uint32_t now)
     return min((int32_t)(a - now), (int32_t)(b - now)) + now;
 }
 
-void
-p64_reassemble_insert(p64_reassemble_t *re,
-		      p64_fragment_t *frag)
+static inline p64_fragment_t **
+recompute(p64_fragment_t **head,
+	  uint16_t *fragsize,
+	  uint16_t *totsize,
+	  uint32_t *earliest,
+	  uint32_t now)
 {
-    union fraglist *fl = &re->fragtbl[frag->hashval % re->nentries];
+    p64_fragment_t **last = head;
+    *fragsize = 0;
+    *totsize = OCT_SIZEMAX;
+    *earliest = now;
+    //Find the last fragment in the list
+    //Compute accumulated size of fragments and expected total size
+    while (*last != NULL)
+    {
+	*fragsize = min(OCT_SIZEMAX, *fragsize + LEN2OCT((*last)->len));
+	*totsize = min(*totsize, TOTSIZE_OCT(*last));
+	*earliest = min_earliest(*earliest, (*last)->arrival, now);
+	last = &(*last)->nextfrag;
+    }
+    return last;
+}
 
-    //Initialise some local state
-    uint16_t fragsize = LEN2OCT(frag->len);
-    uint16_t totsize = TOTSIZE_OCT(frag);
-    uint32_t earliest = frag->arrival;
-    uint32_t now = earliest;
+static void
+insert_fraglist(p64_reassemble_t *re,
+		union fraglist *fl,
+		p64_fragment_t *frag)
+{
+    uint32_t now = frag->arrival;
     bool false_positive = false;
-
+    uint16_t fragsize;
+    uint16_t totsize;
+    uint32_t earliest;
     //Where to insert existing fragment list
-    p64_fragment_t **last = &frag->nextfrag;
-    frag->nextfrag = NULL;
+    p64_fragment_t **last;
+    last = recompute(&frag, &fragsize, &totsize, &earliest, now);
 
     union fraglist old, neu;
 restart:
@@ -351,31 +372,95 @@ restart:
 	}
 
 	//Sort the fragments
-	p64_fragment_t *head = sort_frags(frag);//Includes old.st.head fraglist
+	frag = sort_frags(frag);//Includes old.st.head fraglist
 	//Attempt to reassemble fragments into complete datagrams
-	false_positive = reassemble_dg(re, &head) == 0;
+	false_positive = reassemble(re, &frag) == 0;
 	//Check if there are fragments left (for different datagram)
-	if (head != NULL)
+	if (frag != NULL)
 	{
-	    assert(reassemble_dg(re, &head) == 0);
-	    last = &head;
-	    fragsize = 0;
-	    totsize = OCT_SIZEMAX;
-	    earliest = now;
+	    assert(reassemble(re, &frag) == 0);
 	    //Find the last fragment in the list
 	    //Compute accumulated size of fragments and expected total size
-	    while (*last != NULL)
-	    {
-		fragsize = min(OCT_SIZEMAX, fragsize + LEN2OCT((*last)->len));
-		totsize = min(totsize, TOTSIZE_OCT(*last));
-		earliest = min_earliest(earliest, (*last)->arrival, now);
-		last = &(*last)->nextfrag;
-	    }
-	    //frag is the first fragment in the list of remaining fragments
-	    frag = head;
+	    last = recompute(&frag, &fragsize, &totsize, &earliest, now);
 	    //Update fraglist again
 	    goto restart;
 	}
+	//Else no fragments left, nothing to do
+    }
+}
+
+void
+p64_reassemble_insert(p64_reassemble_t *re,
+		      p64_fragment_t *frag)
+{
+    union fraglist *fl = &re->fragtbl[frag->hashval % re->nentries];
+    frag->nextfrag = NULL;
+    insert_fraglist(re, fl, frag);
+}
+
+static inline p64_fragment_t *
+find_stale(p64_fragment_t **pfrag,
+	   uint32_t time)
+{
+    p64_fragment_t *stale = NULL;
+    while (*pfrag != NULL)
+    {
+	p64_fragment_t *frag = *pfrag;
+	if ((int32_t)frag->arrival - (int32_t)time < 0)
+	{
+	    //Found stale fragment
+	    //Remove it from linked list
+	    *pfrag = frag->nextfrag;
+	    frag->nextfrag = NULL;
+	    //Insert it in stale list
+	    frag->nextfrag = stale;
+	    stale = frag;
+	}
+	pfrag = &(*pfrag)->nextfrag;
+    }
+    return stale;
+}
+
+static inline void
+expire_one(p64_reassemble_t *re,
+	   union fraglist *fl,
+	   uint32_t time)
+{
+    union fraglist old, neu;
+    old.ui = fl->ui;
+    do
+    {
+	if (old.st.head == NULL ||
+		(int32_t)old.st.earliest - (int32_t)time >= 0)
+	{
+	    //Null fraglist or no stale fragments
+	    return;
+	}
+	//Found fraglist with at least one stale fragment
+	//Swap in a null fraglist in its place
+	neu.st.head = NULL;
+	neu.st.accsize = 0;
+	neu.st.totsize = OCT_SIZEMAX;
+	neu.st.earliest = 0;
+    }
+    while (!lockfree_compare_exchange_16(&fl->ui,
+					 &old.ui,//Updated on failure
+					 neu.ui,
+					 /*weak=*/false,
+					 __ATOMIC_ACQUIRE,
+					 __ATOMIC_RELAXED));
+    //CAS succeeded, we own the fraglist
+    //Find the stale fragments
+    p64_fragment_t *stale = find_stale(&old.st.head, time);
+    if (old.st.head != NULL)
+    {
+	//Fresh fragments remain, insert back into table
+	insert_fraglist(re, fl, old.st.head);
+    }
+    if (stale != NULL)
+    {
+	//Return list with stale fragments to user
+	re->stale_cb(re->arg, stale);
     }
 }
 
@@ -383,4 +468,9 @@ void
 p64_reassemble_expire(p64_reassemble_t *re,
 		      uint32_t time)
 {
+    for (uint32_t i = 0; i < re->nentries; i++)
+    {
+	union fraglist *fl = &re->fragtbl[i];
+	expire_one(re, fl, time);
+    }
 }

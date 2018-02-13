@@ -26,7 +26,7 @@ typedef struct p64_reassemble p64_reassemble_t;
 typedef void (*p64_reassemble_cb)(void *arg, p64_fragment_t *frag);
 
 //Allocate a fragment table of size 'nentries'
-//Specify callbacks for complete datagrams and stale fragments
+//Specify callbacks for complete datagrams and stale fragment lists
 p64_reassemble_t *p64_reassemble_alloc(uint32_t nentries,
 				       p64_reassemble_cb complete_cb,
 				       p64_reassemble_cb stale_cb,
@@ -44,7 +44,8 @@ void p64_reassemble_insert(p64_reassemble_t *re,
 
 //Expire all fragments that arrived earlier than 'time'
 //Any expired fragments will be passed to the stale callback
-//Time comparion performed using "serial number arithmetic"
+//Reassembly may also occur due to recombination with fresh fragments
+//Time comparison performed using "serial number arithmetic"
 void p64_reassemble_expire(p64_reassemble_t *re,
 			   uint32_t time);
 
