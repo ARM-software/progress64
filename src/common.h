@@ -7,7 +7,11 @@
 
 //Compiler hints
 #define ALWAYS_INLINE __attribute__((always_inline))
+#ifdef __clang__
+#define UNROLL_LOOPS __attribute__((opencl_unroll_hint(8)))
+#else
 #define UNROLL_LOOPS __attribute__((optimize("unroll-loops")))
+#endif
 #define INIT_FUNCTION __attribute__((constructor))
 #define LIKELY(x)    __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)  __builtin_expect(!!(x), 0)

@@ -224,7 +224,7 @@ remove_node(p64_hashelem_t *prnt,
 {
     assert(this == REM_MARK(this));
     //Set our REMOVE mark (it may already be set)
-    __atomic_fetch_or(&this->next, MARK_REMOVE, __ATOMIC_RELAXED);
+    __atomic_fetch_or((uintptr_t *)&this->next, MARK_REMOVE, __ATOMIC_RELAXED);
     //Now nobody may update our next pointer
     //And other threads may help to remove us
     //Swing our parent's next pointer
