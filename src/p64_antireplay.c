@@ -29,26 +29,26 @@ p64_antireplay_alloc(uint32_t winsize, bool swizzle)
     size_t nbytes = ROUNDUP(sizeof(p64_antireplay_t) +
 			    winsize * sizeof(p64_antireplay_sn_t),
 			    CACHE_LINE);
-    p64_antireplay_t *arwin = aligned_alloc(CACHE_LINE, nbytes);
-    if (arwin != NULL)
+    p64_antireplay_t *ar = aligned_alloc(CACHE_LINE, nbytes);
+    if (ar != NULL)
     {
 	//Clear all sequence numbers
-	memset(arwin, 0, nbytes);
-	arwin->winmask = winsize - 1;
-	arwin->swizzle = swizzle;
-	return arwin;
+	memset(ar, 0, nbytes);
+	ar->winmask = winsize - 1;
+	ar->swizzle = swizzle;
+	return ar;
     }
     return NULL;
 }
 
 void
-p64_antireplay_free(p64_antireplay_t *arwin)
+p64_antireplay_free(p64_antireplay_t *ar)
 {
-    free(arwin);
+    free(ar);
 }
 
 static inline uint32_t
-extrat_bits(uint32_t v, uint32_t msb, uint32_t lsb)
+extract_bits(uint32_t v, uint32_t msb, uint32_t lsb)
 {
     uint32_t width = msb - lsb + 1;
     uint32_t mask = (1U << width) - 1U;
@@ -56,62 +56,62 @@ extrat_bits(uint32_t v, uint32_t msb, uint32_t lsb)
 }
 
 static inline uint32_t
-sn_to_index(p64_antireplay_t *arwin, p64_antireplay_sn_t sn)
+sn_to_index(p64_antireplay_t *ar, p64_antireplay_sn_t sn)
 {
-    if (arwin->swizzle)
+    if (ar->swizzle)
     {
 	//Compute index to sequence number array but consecutive sequence
 	//numbers will be located in different cache lines
-	return (extrat_bits(sn, 31, 6) |
-		extrat_bits(sn, 5, 3) >> 3 |
-		extrat_bits(sn, 2, 0) << 3) & arwin->winmask;
+	return (extract_bits(sn, 31, 6) |
+		extract_bits(sn, 5, 3) >> 3 |
+		extract_bits(sn, 2, 0) << 3) & ar->winmask;
     }
     else
     {
-	return sn & arwin->winmask;
+	return sn & ar->winmask;
     }
 }
 
 p64_antireplay_result_t
-p64_antireplay_test(p64_antireplay_t *arwin,
+p64_antireplay_test(p64_antireplay_t *ar,
 		    p64_antireplay_sn_t sn)
 {
-    uint32_t index = sn_to_index(arwin, sn);
-    p64_antireplay_sn_t old = __atomic_load_n(&arwin->snv[index],
+    uint32_t index = sn_to_index(ar, sn);
+    p64_antireplay_sn_t old = __atomic_load_n(&ar->snv[index],
 					      __ATOMIC_RELAXED);
     if (sn > old)
     {
-	return pass;
+	return p64_ar_pass;
     }
     else if (sn == old)
     {
-	return replay;
+	return p64_ar_replay;
     }
     else
     {
-	return stale;
+	return p64_ar_stale;
     }
 }
 
 p64_antireplay_result_t
-p64_antireplay_test_and_set(p64_antireplay_t *arwin,
+p64_antireplay_test_and_set(p64_antireplay_t *ar,
 			    p64_antireplay_sn_t sn)
 {
-    uint32_t index = sn_to_index(arwin, sn);
-    p64_antireplay_sn_t old = lockfree_fetch_umax_8(&arwin->snv[index],
+    uint32_t index = sn_to_index(ar, sn);
+    p64_antireplay_sn_t old = lockfree_fetch_umax_8(&ar->snv[index],
 						    sn,
 						    __ATOMIC_RELAXED,
 						    __ATOMIC_RELAXED);
     if (sn > old)
     {
-	return pass;
+	return p64_ar_pass;
     }
     else if (sn == old)
     {
-	return replay;
+	return p64_ar_replay;
     }
     else
     {
-	return stale;
+	return p64_ar_stale;
     }
 }

@@ -17,7 +17,7 @@ typedef uint64_t p64_antireplay_sn_t;
 
 typedef enum
 {
-    pass, replay, stale
+    p64_ar_pass, p64_ar_replay, p64_ar_stale
 } p64_antireplay_result_t;
 
 typedef struct p64_antireplay p64_antireplay_t;
