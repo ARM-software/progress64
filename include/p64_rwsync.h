@@ -5,6 +5,7 @@
 #ifndef _P64_RWSYNC_H
 #define _P64_RWSYNC_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 

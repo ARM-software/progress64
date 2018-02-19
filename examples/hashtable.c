@@ -1,3 +1,7 @@
+//Copyright (c) 2018, ARM Limited. All rights reserved.
+//
+//SPDX-License-Identifier:        BSD-3-Clause
+
 #include <assert.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -138,6 +142,7 @@ int main(void)
     EXPECT(p64_hashtable_remove(ht, &h9->next, hash(9)));
     EXPECT(p64_hashtable_check(ht, keyf) == 2);
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
+    p64_hashtable_free(ht);
 
     printf("hashtable test complete\n");
     return 0;

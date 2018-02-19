@@ -1,3 +1,7 @@
+//Copyright (c) 2018, ARM Limited. All rights reserved.
+//
+//SPDX-License-Identifier:        BSD-3-Clause
+
 #include <stdio.h>
 #include "p64_rwlock.h"
 #include "expect.h"

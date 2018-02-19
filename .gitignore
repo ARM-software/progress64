@@ -1,12 +1,14 @@
 *.d
 *.o
 *.swp
+antireplay
 core
 perf.data*
 libprogress64.a
 hashtable
 reorder
 rwlock
+rwsync
 timer
 tags
 TAGS

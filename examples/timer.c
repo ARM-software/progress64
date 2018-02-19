@@ -1,3 +1,7 @@
+//Copyright (c) 2018, ARM Limited. All rights reserved.
+//
+//SPDX-License-Identifier:        BSD-3-Clause
+
 #include <inttypes.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -45,6 +49,7 @@ int main(void)
     p64_timer_tick_set(0xFFFFFFFFFFFFFFFEULL);
     p64_timer_expire();
     EXPECT(exp_a == 0xFFFFFFFFFFFFFFFEULL);
+    p64_timer_free(tim_a);
 
     printf("timer tests complete\n");
     return 0;
