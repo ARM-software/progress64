@@ -73,8 +73,8 @@ sort_frags(p64_fragment_t *frag)
 	p64_fragment_t **prev = &head;
 	p64_fragment_t *seg = head;
 	while (seg != NULL &&
-	       (seg->hashval < frag->hashval ||
-	       (seg->hashval == frag->hashval &&
+	       (seg->hash < frag->hash ||
+	       (seg->hash == frag->hash &&
 		FI2OFF(seg->fraginfo) < FI2OFF(frag->fraginfo))))
 	{
 	    prev = &seg->nextfrag;
@@ -90,8 +90,8 @@ sort_frags(p64_fragment_t *frag)
     frag = head;
     while (frag->nextfrag != NULL)
     {
-	assert(frag->hashval < frag->nextfrag->hashval ||
-	       (frag->hashval == frag->nextfrag->hashval &&
+	assert(frag->hash < frag->nextfrag->hash ||
+	       (frag->hash == frag->nextfrag->hash &&
 		FI2OFF(frag->fraginfo) <= FI2OFF(frag->nextfrag->fraginfo)));
 	frag = frag->nextfrag;
     }
@@ -115,7 +115,7 @@ restart: (void)0;
 	    //Missing fragment
 	    return NULL;
 	}
-	if (frag->nextfrag == NULL || frag->nextfrag->hashval != frag->hashval)
+	if (frag->nextfrag == NULL || frag->nextfrag->hash != frag->hash)
 	{
 	    //Last segment should have MORE flag cleared
 	    if (FI2MORE(frag->fraginfo))
@@ -134,8 +134,8 @@ restart: (void)0;
 	else //Not last fragment of this datagram
 	{
 	    assert(frag->nextfrag != NULL &&
-		   frag->nextfrag->hashval == frag->hashval);
-	    //TODO same hashval check whole key
+		   frag->nextfrag->hash == frag->hash);
+	    //TODO same hash, check whole key
 	    //Non-last fragment should have MORE flag set
 	    //TODO beware of duplicated last fragment
 	    //TODO check MORE flag after de-duplication?
@@ -165,13 +165,13 @@ restart: (void)0;
     if (frag != NULL)
     {
 	//There is a discontinuity between frag and frag->nextfrag
-	//Find first fragment of next datagram (as identified by hashval)
-	uint32_t hashval = frag->hashval;
-	while (frag->nextfrag != NULL && frag->nextfrag->hashval == hashval)
+	//Find first fragment of next datagram (as identified by hash)
+	uint32_t hash = frag->hash;
+	while (frag->nextfrag != NULL && frag->nextfrag->hash == hash)
 	{
 	    frag = frag->nextfrag;
 	}
-	assert(frag->nextfrag == NULL || frag->nextfrag->hashval != hashval);
+	assert(frag->nextfrag == NULL || frag->nextfrag->hash != hash);
 	prev = &frag->nextfrag;
 	goto restart;
     }
@@ -266,7 +266,13 @@ reassemble(p64_reassemble_t *fl,
 }
 
 static inline uint32_t
-min(uint32_t a, uint32_t b)
+umin(uint32_t a, uint32_t b)
+{
+    return a < b ? a : b;
+}
+
+static inline int32_t
+smin(int32_t a, int32_t b)
 {
     return a < b ? a : b;
 }
@@ -274,7 +280,7 @@ min(uint32_t a, uint32_t b)
 static inline uint32_t
 min_earliest(uint32_t a, uint32_t b, uint32_t now)
 {
-    return min((int32_t)(a - now), (int32_t)(b - now)) + now;
+    return smin((int32_t)(a - now), (int32_t)(b - now)) + now;
 }
 
 static inline p64_fragment_t **
@@ -292,8 +298,8 @@ recompute(p64_fragment_t **head,
     //Compute accumulated size of fragments and expected total size
     while (*last != NULL)
     {
-	*fragsize = min(OCT_SIZEMAX, *fragsize + LEN2OCT((*last)->len));
-	*totsize = min(*totsize, TOTSIZE_OCT(*last));
+	*fragsize = umin(OCT_SIZEMAX, *fragsize + LEN2OCT((*last)->len));
+	*totsize = umin(*totsize, TOTSIZE_OCT(*last));
 	*earliest = min_earliest(*earliest, (*last)->arrival, now);
 	last = &(*last)->nextfrag;
     }
@@ -325,9 +331,9 @@ restart:
     *last = old.st.head;
     neu.st.head = frag;
     //Use min to implement saturating add, don't overflow the allocated bits
-    neu.st.accsize = min(OCT_SIZEMAX, old.st.accsize + fragsize);
+    neu.st.accsize = umin(OCT_SIZEMAX, old.st.accsize + fragsize);
     //Replace previous totsize if smaller
-    neu.st.totsize = min(old.st.totsize, totsize);
+    neu.st.totsize = umin(old.st.totsize, totsize);
     //Check if we have all fragments
     if (neu.st.accsize < neu.st.totsize || false_positive)
     {
@@ -393,7 +399,7 @@ void
 p64_reassemble_insert(p64_reassemble_t *re,
 		      p64_fragment_t *frag)
 {
-    union fraglist *fl = &re->fragtbl[frag->hashval % re->nentries];
+    union fraglist *fl = &re->fragtbl[frag->hash % re->nentries];
     frag->nextfrag = NULL;
     insert_fraglist(re, fl, frag);
 }
@@ -411,10 +417,11 @@ find_stale(p64_fragment_t **pfrag,
 	    //Found stale fragment
 	    //Remove it from linked list
 	    *pfrag = frag->nextfrag;
-	    frag->nextfrag = NULL;
-	    //Insert it in stale list
+	    //Insert it first in stale list
 	    frag->nextfrag = stale;
 	    stale = frag;
+	    //We have already updated pfrag so continue directly to loop check
+	    continue;
 	}
 	pfrag = &(*pfrag)->nextfrag;
     }

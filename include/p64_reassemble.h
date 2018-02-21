@@ -15,10 +15,10 @@ extern "C"
 typedef struct p64_fragment
 {
     struct p64_fragment *nextfrag;
-    uint64_t hashval;//Hash of <IP src, IP dst addr, IP proto, IP id>
+    uint64_t hash;//Hash of <IP src, IP dst addr, IP proto, IP id>
     uint32_t arrival;//Arrival time
     uint16_t fraginfo;//Fragment info from IPv4 header (host endian)
-    uint16_t len;//Length of IPv4 payload (host endian)
+    uint16_t len;//Length in bytes of IPv4 payload (host endian)
 } p64_fragment_t;
 
 typedef struct p64_reassemble p64_reassemble_t;
