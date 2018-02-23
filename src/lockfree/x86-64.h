@@ -53,6 +53,7 @@ static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128
 ALWAYS_INLINE
 static inline __int128 lockfree_load_16(__int128 *var, int mo)
 {
+    (void)mo;
     __int128 old = *var;
     do
     {
@@ -64,6 +65,7 @@ static inline __int128 lockfree_load_16(__int128 *var, int mo)
 ALWAYS_INLINE
 static inline void lockfree_store_16(__int128 *var, __int128 neu, int mo)
 {
+    (void)mo;
     __int128 old = *var;
     do
     {
@@ -74,6 +76,7 @@ static inline void lockfree_store_16(__int128 *var, __int128 neu, int mo)
 ALWAYS_INLINE
 static inline __int128 lockfree_exchange_16(__int128 *var, __int128 neu, int mo)
 {
+    (void)mo;
     __int128 old = *var;
     do
     {
@@ -85,6 +88,7 @@ static inline __int128 lockfree_exchange_16(__int128 *var, __int128 neu, int mo)
 ALWAYS_INLINE
 static inline __int128 lockfree_fetch_and_16(__int128 *var, __int128 mask, int mo)
 {
+    (void)mo;
     __int128 old = *var;
     do
     {
@@ -96,6 +100,7 @@ static inline __int128 lockfree_fetch_and_16(__int128 *var, __int128 mask, int m
 ALWAYS_INLINE
 static inline __int128 lockfree_fetch_or_16(__int128 *var, __int128 mask, int mo)
 {
+    (void)mo;
     __int128 old = *var;
     do
     {

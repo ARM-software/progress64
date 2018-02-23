@@ -86,6 +86,11 @@ p64_hashelem_t *p64_hashtable_remove_by_key(p64_hashtable_t *ht,
 })
 #endif
 
+//Traverse hash table, printing information and invoking callback function
+uint32_t
+p64_hashtable_check(p64_hashtable_t *ht,
+		    uint64_t (*f)(p64_hashelem_t *));
+
 #ifdef __cplusplus
 }
 #endif

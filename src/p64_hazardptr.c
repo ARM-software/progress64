@@ -54,8 +54,10 @@ static uint32_t numthreads = 0;
 static struct thread_state thread_state[MAXTHREADS];
 static __thread struct thread_state *TS;
 
+void thread_state_init(uint32_t tidx);
+
 void
-thread_state_init(int tidx)
+thread_state_init(uint32_t tidx)
 {
     struct thread_state *ts = &thread_state[tidx];
     TS = ts;
@@ -261,8 +263,8 @@ static int
 compare_ptr(const void *ppa,
 	    const void *ppb)
 {
-    const void *pa = *(const void **)ppa;
-    const void *pb = *(const void **)ppb;
+    const void *pa = *(const void * const *)ppa;
+    const void *pb = *(const void * const *)ppb;
     //Can't use pointer subtraction because difference might not fit into an int
     return pa < pb ? -1 : pa > pb ? 1 : 0;
 }

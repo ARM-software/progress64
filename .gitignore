@@ -6,6 +6,7 @@ core
 perf.data*
 libprogress64.a
 hashtable
+reassemble
 reorder
 rwlock
 rwsync
