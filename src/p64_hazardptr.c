@@ -50,15 +50,15 @@ struct thread_state
     } hp_fileline[MAXHPREFS];
 } ALIGNED(CACHE_LINE);
 
+static uint32_t tidx_counter = 0;
 static uint32_t numthreads = 0;
 static struct thread_state thread_state[MAXTHREADS];
 static __thread struct thread_state *TS;
 
-void thread_state_init(uint32_t tidx);
-
-void
-thread_state_init(uint32_t tidx)
+static void
+p64_hazardptr_init(void)
 {
+    uint32_t tidx = __atomic_fetch_add(&tidx_counter, 1, __ATOMIC_RELAXED);
     struct thread_state *ts = &thread_state[tidx];
     TS = ts;
     ts->tidx = tidx;
@@ -94,6 +94,10 @@ p64_hazptr_maxrefs(void)
 static inline p64_hazardptr_t
 p64_hazptr_alloc(void)
 {
+    if (UNLIKELY(TS == NULL))
+    {
+	p64_hazardptr_init();
+    }
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     if (ha->free != 0)
     {
@@ -146,6 +150,10 @@ p64_hazptr_annotate(p64_hazardptr_t hp,
 unsigned
 p64_hazptr_dump(FILE *fp)
 {
+    if (UNLIKELY(TS == NULL))
+    {
+	p64_hazardptr_init();
+    }
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     for (uint32_t i = 0; i < MAXHPREFS; i++)
     {
@@ -323,6 +331,10 @@ find_ptr(userptr_t refs[],
 static int
 garbage_collect(void)
 {
+    if (UNLIKELY(TS == NULL))
+    {
+	p64_hazardptr_init();
+    }
     struct thread_state *ts = TS;
     uint32_t nreclaimed = 0;
     userptr_t refs[MAXREFS];

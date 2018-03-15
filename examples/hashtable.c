@@ -9,7 +9,6 @@
 #include "p64_hashtable.h"
 #include "expect.h"
 
-void thread_state_init(int);
 uint32_t p64_hashtable_check(p64_hashtable_t *ht,
 			     uint64_t (*f)(p64_hashelem_t *));
 
@@ -58,7 +57,6 @@ compf(const p64_hashelem_t *he,
 
 int main(void)
 {
-    thread_state_init(0);
     p64_hashtable_t *ht = p64_hashtable_alloc(1);
     EXPECT(ht != NULL);
     p64_hashtable_check(ht, keyf);
