@@ -23,7 +23,7 @@ p64_rwsync_init(p64_rwsync_t *sync)
 }
 
 static inline p64_rwsync_t
-wait_for_no_writer(p64_rwsync_t *sync, int mo)
+wait_for_no_writer(const p64_rwsync_t *sync, int mo)
 {
     p64_rwsync_t l;
     if (((l = __atomic_load_n(sync, mo)) & RWSYNC_WRITER) != 0)
@@ -40,14 +40,14 @@ wait_for_no_writer(p64_rwsync_t *sync, int mo)
 }
 
 p64_rwsync_t
-p64_rwsync_acquire_rd(p64_rwsync_t *sync)
+p64_rwsync_acquire_rd(const p64_rwsync_t *sync)
 {
     //Wait for any present writer to go away
     return wait_for_no_writer(sync, __ATOMIC_ACQUIRE);
 }
 
 bool
-p64_rwsync_release_rd(p64_rwsync_t *sync, p64_rwsync_t prv)
+p64_rwsync_release_rd(const p64_rwsync_t *sync, p64_rwsync_t prv)
 {
     SMP_RMB();//Load-only barrier due to reader-sync
     //Test if sync is unchanged => success

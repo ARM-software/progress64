@@ -21,13 +21,13 @@ void p64_rwsync_init(p64_rwsync_t *sync);
 
 //Acquire a synchroniser for reading
 //Block until no write is in progress
-p64_rwsync_t p64_rwsync_acquire_rd(p64_rwsync_t *sync);
+p64_rwsync_t p64_rwsync_acquire_rd(const p64_rwsync_t *sync);
 
 //Release a read synchroniser
 //Return false if a write has occured or is in progress
 //This means any read data may be inconsistent and the operation should be
 //restarted
-bool p64_rwsync_release_rd(p64_rwsync_t *sync, p64_rwsync_t prv);
+bool p64_rwsync_release_rd(const p64_rwsync_t *sync, p64_rwsync_t prv);
 
 //Acquire a synchroniser for writing
 //Block until earlier writes have completed
