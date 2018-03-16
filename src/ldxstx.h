@@ -16,7 +16,7 @@
  * ARMv8/A64 load/store exclusive primitives
  *****************************************************************************/
 
-static inline uint8_t ldx8(uint8_t *var, int mm)
+static inline uint8_t ldx8(const uint8_t *var, int mm)
 {
     uint8_t old;
     if (mm == __ATOMIC_ACQUIRE)
@@ -34,7 +34,7 @@ static inline uint8_t ldx8(uint8_t *var, int mm)
     return old;
 }
 
-static inline uint16_t ldx16(uint16_t *var, int mm)
+static inline uint16_t ldx16(const uint16_t *var, int mm)
 {
     uint16_t old;
     if (mm == __ATOMIC_ACQUIRE)
@@ -52,7 +52,7 @@ static inline uint16_t ldx16(uint16_t *var, int mm)
     return old;
 }
 
-static inline uint32_t ldx32(uint32_t *var, int mm)
+static inline uint32_t ldx32(const uint32_t *var, int mm)
 {
     uint32_t old;
     if (mm == __ATOMIC_ACQUIRE)
@@ -89,7 +89,7 @@ static inline uint32_t stx32(uint32_t *var, uint32_t neu, int mm)
     return ret;
 }
 
-static inline uint64_t ldx64(uint64_t *var, int mm)
+static inline uint64_t ldx64(const uint64_t *var, int mm)
 {
     uint64_t old;
     if (mm == __ATOMIC_ACQUIRE)
@@ -126,7 +126,7 @@ static inline uint32_t stx64(uint64_t *var, uint64_t neu, int mm)
     return ret;
 }
 
-static inline __int128 ldx128(__int128 *var, int mm)
+static inline __int128 ldx128(const __int128 *var, int mm)
 {
     __int128 old;
     if (mm == __ATOMIC_ACQUIRE)

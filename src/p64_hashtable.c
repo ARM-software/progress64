@@ -230,9 +230,9 @@ remove_node(p64_hashelem_t *prnt,
     //Swing our parent's next pointer
 
     //Expect prnt->this to be unmarked or parent is also marked for removal
-    union heui old = {.he.hash = hash, .he.next = this };
+    union heui old = {.he.next = this, .he.hash = hash };
     //New prnt->next should not have REMOVAL mark
-    union heui neu = {.he.hash = this->hash, .he.next = REM_MARK(this->next) };
+    union heui neu = {.he.next = REM_MARK(this->next), .he.hash = this->hash };
     if (lockfree_compare_exchange_pair((uintptr_pair_t *)prnt,
 				       &old.ui,
 				       neu.ui,
@@ -260,8 +260,8 @@ insert_node(p64_hashelem_t *prnt,
 {
     assert(he->hash == 0);
     assert(he->next == NULL);
-    union heui old = {.he.hash = 0, .he.next = NULL };
-    union heui neu = {.he.hash = hash, .he.next = he };
+    union heui old = {.he.next = NULL, .he.hash = 0 };
+    union heui neu = {.he.next = he, .he.hash = hash };
     if (lockfree_compare_exchange_pair((uintptr_pair_t *)prnt,
 				       &old.ui,
 				       neu.ui,
