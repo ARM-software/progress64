@@ -322,6 +322,8 @@ insert_fraglist(p64_reassemble_t *re,
 
     union fraglist old, neu;
 restart:
+    //Prefetch-for-store before we read the line to update
+    __builtin_prefetch(&fl->ui, 1, 0);
     old.ui = fl->ui;
     if (old.st.head != NULL)
     {
@@ -399,7 +401,7 @@ void
 p64_reassemble_insert(p64_reassemble_t *re,
 		      p64_fragment_t *frag)
 {
-    union fraglist *fl = &re->fragtbl[frag->hash % re->nentries];
+    union fraglist *fl = &re->fragtbl[(uint32_t)frag->hash % re->nentries];
     frag->nextfrag = NULL;
     insert_fraglist(re, fl, frag);
 }

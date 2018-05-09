@@ -99,9 +99,7 @@ p64_antireplay_test_and_set(p64_antireplay_t *ar,
 {
     uint32_t index = sn_to_index(ar, sn);
     p64_antireplay_sn_t old = lockfree_fetch_umax_8(&ar->snv[index],
-						    sn,
-						    __ATOMIC_RELAXED,
-						    __ATOMIC_RELAXED);
+						    sn, __ATOMIC_RELAXED);
     if (sn > old)
     {
 	return p64_ar_pass;

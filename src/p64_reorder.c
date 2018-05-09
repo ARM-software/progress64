@@ -26,7 +26,7 @@ struct hi
 //p64_reorder_insert() writes head & chgi
 struct p64_reorder
 {
-    struct hi hi;//head and chgi
+    struct hi hi ALIGNED(CACHE_LINE);//head and chgi
     uint32_t mask;
     p64_reorder_cb cb;
     void *arg;
@@ -113,13 +113,15 @@ p64_reorder_insert(p64_reorder_t *rb,
 		   void *elems[],
 		   uint32_t sn)
 {
+    uint32_t mask = rb->mask;
+    p64_reorder_cb cb = rb->cb;
+    void *arg = rb->arg;
     if (UNLIKELY(AFTER(sn + nelems, rb->tail)))
     {
 	fprintf(stderr, "Invalid sequence number)\n"), abort();
     }
     //Store our elements in reorder buffer
-    uint32_t mask = rb->mask;
-    SMP_MB();//Explicit memory barrier so we can use store-relaxed below
+    SMP_WMB();//Explicit memory barrier so we can use store-relaxed below
     for (uint32_t i = 0; i < nelems; i++)
     {
 	if (UNLIKELY(elems[i] == NULL))
@@ -132,6 +134,7 @@ p64_reorder_insert(p64_reorder_t *rb,
     }
 
     struct hi old;
+    __builtin_prefetch(&rb->hi, 1, 0);
     __atomic_load(&rb->hi, &old, __ATOMIC_ACQUIRE);
     while (BEFORE(sn, old.head) || AFTER(sn + nelems - 1, old.head))
     {
@@ -159,9 +162,6 @@ p64_reorder_insert(p64_reorder_t *rb,
     //We are in-order so our responsibility to retire elements
     struct hi new;
     new.head = old.head;
-    mask = rb->mask;
-    p64_reorder_cb cb = rb->cb;
-    void *arg = rb->arg;
     //Scan ring to find consecutive in-order elements and retire them
     do
     {
@@ -175,6 +175,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 	}
 	assert(new.head != old.head);
 	new.chgi = old.chgi;
+	__builtin_prefetch(&rb->hi, 1, 0);
     }
     //Update head&chgi, fail if chgi has changed (head cannot change)
     while (!__atomic_compare_exchange(&rb->hi,

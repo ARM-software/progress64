@@ -292,8 +292,7 @@ p64_timer_alloc(p64_timer_cb cb,
     g_timer.timers[idx].cb = cb;
     g_timer.timers[idx].arg = arg;
     //Update high watermark of allocated timers
-    lockfree_fetch_umax_4(&g_timer.hiwmark, idx + 1,
-			  __ATOMIC_RELAXED,__ATOMIC_RELEASE);
+    lockfree_fetch_umax_4(&g_timer.hiwmark, idx + 1, __ATOMIC_RELEASE);
     return idx;
 }
 
