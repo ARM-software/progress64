@@ -127,6 +127,8 @@ p64_hazptr_free(p64_hazardptr_t hp)
 	fprintf(stderr, "Hazard pointer %p already free\n", hp), abort();
     }
     ha->free |= 1U << idx;
+    TS->hp_fileline[idx].file = NULL;
+    TS->hp_fileline[idx].line = 0;
     //printf("p64_hazptr_free(%u)\n", idx);
 }
 
@@ -244,7 +246,6 @@ p64_hazptr_release(p64_hazardptr_t *hp)
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
 #endif
 	//Release hazard pointer
-	p64_hazptr_annotate(*hp, NULL, 0);
 	p64_hazptr_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }
@@ -260,7 +261,6 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
 	//Reset hazard pointer
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
 	//Release hazard pointer
-	p64_hazptr_annotate(*hp, NULL, 0);
 	p64_hazptr_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
     }
