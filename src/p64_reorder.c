@@ -113,6 +113,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 		   void *elems[],
 		   uint32_t sn)
 {
+    __builtin_prefetch(&rb->hi, 1, 0);
     uint32_t mask = rb->mask;
     p64_reorder_cb cb = rb->cb;
     void *arg = rb->arg;
@@ -134,7 +135,6 @@ p64_reorder_insert(p64_reorder_t *rb,
     }
 
     struct hi old;
-    __builtin_prefetch(&rb->hi, 1, 0);
     __atomic_load(&rb->hi, &old, __ATOMIC_ACQUIRE);
     while (BEFORE(sn, old.head) || AFTER(sn + nelems - 1, old.head))
     {
