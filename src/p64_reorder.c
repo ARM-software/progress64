@@ -80,7 +80,8 @@ p64_reorder_reserve(p64_reorder_t *rb,
 		    uint32_t requested,
 		    uint32_t *sn)
 {
-    uint32_t head, tail, actual;
+    uint32_t head, tail;
+    int32_t actual;
     do
     {
 	head = __atomic_load_n(&rb->hi.head, __ATOMIC_RELAXED);
