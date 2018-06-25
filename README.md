@@ -14,8 +14,9 @@ antireplay - wait-free replay protection
 barrier - thread barrier
 hashtable - lock-free hash table
 hazardptr - hazard pointers
+laxrob - lax non-blocking reorder buffer
 reassemble - lock-free IP reassembly
-reorder - non-blocking order restoration
+reorder - strict non-blocking reorder buffer
 ringbuf - ring buffers
 rwlock - reader/writer lock
 rwsync - lightweight reader/writer synchronisation
