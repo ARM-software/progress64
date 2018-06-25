@@ -311,6 +311,7 @@ insert_fraglist(p64_reassemble_t *re,
 		union fraglist *fl,
 		p64_fragment_t *frag)
 {
+    __builtin_prefetch(&fl->ui, 1, 0);
     uint32_t now = frag->arrival;
     bool false_positive = false;
     uint16_t fragsize;
@@ -323,7 +324,6 @@ insert_fraglist(p64_reassemble_t *re,
     union fraglist old, neu;
 restart:
     //Prefetch-for-store before we read the line to update
-    __builtin_prefetch(&fl->ui, 1, 0);
     old.ui = fl->ui;
     if (old.st.head != NULL)
     {
@@ -356,6 +356,7 @@ restart:
 					  __ATOMIC_RELAXED))
 	{
 	    //CAS failed, restart from beginning
+	    __builtin_prefetch(&fl->ui, 1, 0);
 	    goto restart;
 	}
 	//Fragment(s) inserted
@@ -376,6 +377,7 @@ restart:
 					  __ATOMIC_RELAXED))
 	{
 	    //CAS failed, restart from beginning
+	    __builtin_prefetch(&fl->ui, 1, 0);
 	    goto restart;
 	}
 
@@ -391,6 +393,7 @@ restart:
 	    //Compute accumulated size of fragments and expected total size
 	    last = recompute(&frag, &fragsize, &totsize, &earliest, now);
 	    //Update fraglist again
+	    __builtin_prefetch(&fl->ui, 1, 0);
 	    goto restart;
 	}
 	//Else no fragments left, nothing to do
