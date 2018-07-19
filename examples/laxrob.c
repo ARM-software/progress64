@@ -9,24 +9,17 @@
 static uint32_t nretired = 0;
 static uint32_t last_sn = 0;
 
-static void callback(void *arg, p64_laxrob_elem_t *elem)
+static void
+callback(void *arg, p64_laxrob_elem_t **vec, uint32_t nitems)
 {
-    if (elem != NULL)
+    for (uint32_t i = 0; i < nitems; i++)
     {
-	do
-	{
-	    p64_laxrob_elem_t *next = elem->next;
-	    printf("Element %u retired\n", elem->sn);
-	    nretired++;
-	    last_sn = elem->sn;
-	    free(elem);
-	    elem = next;
-	}
-	while (elem != NULL);
-    }
-    else
-    {
-	printf("Flush buffered\n");
+	p64_laxrob_elem_t *elem = vec[i];
+	EXPECT(elem->next == NULL);
+	printf("Element %u retired\n", elem->sn);
+	nretired++;
+	last_sn = elem->sn;
+	free(elem);
     }
 }
 
@@ -45,7 +38,7 @@ alloc_elem(uint32_t sn)
 
 int main(void)
 {
-    p64_laxrob_t *rb = p64_laxrob_alloc(4, callback, NULL);
+    p64_laxrob_t *rb = p64_laxrob_alloc(4, 1, callback, NULL);
     EXPECT(rb != NULL);
     printf("Insert 0\n");
     p64_laxrob_insert(rb, alloc_elem(0));

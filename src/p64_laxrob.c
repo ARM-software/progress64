@@ -19,13 +19,18 @@
 struct p64_laxrob
 {
     p64_laxrob_elem_t *pending;
+    p64_laxrob_cb cb;
+    void *arg;
     uint32_t oldest;
     uint32_t size;
     uint32_t mask;
-    p64_laxrob_cb cb;
-    void *arg;
-    void *ring[] ALIGNED(CACHE_LINE);
+    uint32_t nvec;//Number of elems buffered in output vector
+    uint32_t vecsz;//Size of output vector
+    p64_laxrob_elem_t *ring[];//ROB ring buffer followed by output vector
 };
+
+//Address of output vector
+#define ROB_VEC(rob) ((rob)->ring + (rob)->size)
 
 #define IDLE 1
 #define BUSY NULL
@@ -34,20 +39,26 @@ struct p64_laxrob
 #define PEND_PTR(x) (p64_rob_elem_t *)((uintptr_t)(x) & ~IDLE)
 
 p64_laxrob_t *
-p64_laxrob_alloc(uint32_t nelems,
-	      p64_laxrob_cb cb,
-	      void *arg)
+p64_laxrob_alloc(uint32_t nslots,
+		 uint32_t vecsz,
+		 p64_laxrob_cb cb,
+		 void *arg)
 {
     assert(IS_IDLE(IDLE));
     assert(!IS_IDLE(BUSY));
     assert(IS_BUSY(BUSY));
     assert(!IS_BUSY(IDLE));
-    if (nelems < 1 || nelems > 0x80000000)
+    if (nslots < 1 || nslots > 0x80000000)
     {
-	fprintf(stderr, "Invalid reorder buffer size %u\n", nelems), abort();
+	fprintf(stderr, "Invalid laxrob size %u\n", nslots), abort();
     }
-    unsigned long ringsize = ROUNDUP_POW2(nelems);
-    size_t nbytes = ROUNDUP(sizeof(p64_laxrob_t) + ringsize * sizeof(void *),
+    if (vecsz < 1 || vecsz > 0x80000000)
+    {
+	fprintf(stderr, "Invalid laxrob output vector size %u\n", vecsz), abort();
+    }
+    unsigned long ringsize = ROUNDUP_POW2(nslots);
+    size_t nbytes = ROUNDUP(sizeof(p64_laxrob_t) +
+			    (ringsize + vecsz) * sizeof(p64_laxrob_elem_t *),
 			    CACHE_LINE);
     p64_laxrob_t *rob = aligned_alloc(CACHE_LINE, nbytes);
     if (rob != NULL)
@@ -58,6 +69,8 @@ p64_laxrob_alloc(uint32_t nelems,
 	rob->mask = ringsize - 1;
 	rob->cb = cb;
 	rob->arg = arg;
+	rob->nvec = 0;
+	rob->vecsz = vecsz;
 	for (uint32_t i = 0; i < ringsize; i++)
 	{
 	    rob->ring[i] = NULL;
@@ -87,52 +100,72 @@ p64_laxrob_free(p64_laxrob_t *rob)
     }
 }
 
-//Return number of (non-empty) slots retired
-static uint32_t
-retire_elems(p64_laxrob_t *rob, uint32_t nelems)
+static inline void
+retire_list(p64_laxrob_t *rob, p64_laxrob_elem_t *list)
 {
-    uint32_t retired = 0;
+    do
+    {
+	assert(list->sn == rob->oldest);
+	p64_laxrob_elem_t *elem = list;
+	p64_laxrob_elem_t *next = list->next;
+	list->next = NULL;
+	//'elem' is single node
+	assert(rob->nvec < rob->vecsz);
+	ROB_VEC(rob)[rob->nvec++] = elem;
+	if (rob->nvec == rob->vecsz)
+	{
+	    rob->cb(rob->arg, ROB_VEC(rob), rob->nvec);
+	    rob->nvec = 0;
+	}
+	list = next;
+    }
+    while (list != NULL);
+}
+
+//Return number of elements retired
+static inline void
+retire_slots(p64_laxrob_t *rob, uint32_t nslots)
+{
     //We only have to make one pass over the ring
-    uint32_t nretire = nelems > rob->size ? rob->size : nelems;
+    uint32_t nretire = nslots > rob->size ? rob->size : nslots;
     for (uint32_t i = 0; i < nretire; i++)
     {
-	p64_laxrob_elem_t *elem = rob->ring[(rob->oldest + i) & rob->mask];
-	if (elem != NULL)
+	p64_laxrob_elem_t *list = rob->ring[rob->oldest & rob->mask];
+	if (list != NULL)
 	{
-	    assert(elem->sn == rob->oldest + i);
-	    rob->cb(rob->arg, elem);
-	    retired++;
-	    rob->ring[(rob->oldest + i) & rob->mask] = NULL;
+	    rob->ring[rob->oldest & rob->mask] = NULL;
+	    retire_list(rob, list);
 	}
+	rob->oldest++;
     }
-    rob->oldest += nelems;
-    return retired;
+    //Update 'oldest' with the skipped slots
+    rob->oldest += nslots - nretire;
 }
 
 #define BEFORE(sn, h) ((int32_t)(sn) - (int32_t)(h) < 0)
 #define AFTER(sn, t) ((int32_t)(sn) - (int32_t)(t) >= 0)
 
 static void
-insert_elems(p64_laxrob_t *rob, p64_laxrob_elem_t *elem)
+insert_elems(p64_laxrob_t *rob, p64_laxrob_elem_t *list)
 {
-    //Process 'elem' list of elements
-    uint32_t retired = 0;
-    while (elem != NULL)
+    //Process 'list' list of elements
+    while (list != NULL)
     {
-	p64_laxrob_elem_t *next = elem->next;
-	elem->next = NULL;
+	p64_laxrob_elem_t *elem = list;
+	p64_laxrob_elem_t *next = list->next;
+	list->next = NULL;
+	//'elem' is single node
 	if (UNLIKELY(BEFORE(elem->sn, rob->oldest)))
 	{
 	    //Element before oldest => straggler
-	    rob->cb(rob->arg, elem);
-	    retired++;
+	    retire_list(rob, elem);
 	}
 	else if (AFTER(elem->sn, rob->oldest + rob->size))
 	{
 	    //Element beyond newest element
 	    //Move buffer to accomodate new element
 	    uint32_t delta = elem->sn - (rob->oldest + rob->size - 1);
-	    retired += retire_elems(rob, delta);
+	    retire_slots(rob, delta);
 	    assert(!BEFORE(elem->sn, rob->oldest));
 	    assert(!AFTER(elem->sn, rob->oldest + rob->size));
 	    //Insert element into ring
@@ -143,29 +176,24 @@ insert_elems(p64_laxrob_t *rob, p64_laxrob_elem_t *elem)
 	{
 	    //Element inside buffer
 	    //Insert element at head of list at ROB slot
-	    __builtin_prefetch(&rob->ring[elem->sn & rob->mask], 1, 0);
 	    elem->next = rob->ring[elem->sn & rob->mask];
 	    rob->ring[elem->sn & rob->mask] = elem;
 	}
-	elem = next;
+	list = next;
     }
-    if (retired != 0)
+    if (rob->nvec != 0)
     {
-	//Notify all done for now (flush any buffered output)
-	rob->cb(rob->arg, NULL);
+	//Flush any buffered output
+	rob->cb(rob->arg, ROB_VEC(rob), rob->nvec);
+	rob->nvec = 0;
     }
 }
 
 static inline p64_laxrob_elem_t *
-acquire_rob_or_enqueue(p64_laxrob_t *rob, p64_laxrob_elem_t *elem)
+acquire_rob_or_enqueue(p64_laxrob_t *rob,
+		       p64_laxrob_elem_t *list,
+		       p64_laxrob_elem_t **last)
 {
-    //Find last element in list
-    p64_laxrob_elem_t *last = elem;
-    while (last->next != NULL)
-    {
-	last = last->next;
-    }
-
     int ret;
     p64_laxrob_elem_t *old, *neu;
     do
@@ -174,8 +202,8 @@ acquire_rob_or_enqueue(p64_laxrob_t *rob, p64_laxrob_elem_t *elem)
 	if (IS_BUSY(old))
 	{
 	    //ROB is busy, enqueue our elements
-	    last->next = old;
-	    neu = elem;
+	    *last = old;//Join lists
+	    neu = list;
 	    assert(IS_BUSY(neu));
 	    ret = __atomic_compare_exchange_n(&rob->pending,
 					      &old,
@@ -183,7 +211,6 @@ acquire_rob_or_enqueue(p64_laxrob_t *rob, p64_laxrob_elem_t *elem)
 					      /*weak=*/true,
 					      __ATOMIC_RELEASE,
 					      __ATOMIC_RELAXED);
-					    
 	}
 	else
 	{
@@ -196,17 +223,19 @@ acquire_rob_or_enqueue(p64_laxrob_t *rob, p64_laxrob_elem_t *elem)
 					      /*weak=*/true,
 					      __ATOMIC_RELAXED,
 					      __ATOMIC_RELAXED);
-	    //Possibly we executed 'last->next = old' earlier in a failed CAS
-	    last->next = NULL;
+	    //Undo any spurious join (whose CAS failed)
+	    *last = NULL;
 	}
     }
     while (UNLIKELY(!ret));
-    return IS_BUSY(old) ? NULL /*enqueued*/: elem /*acquired*/;
+    assert(rob->nvec == 0);
+    return IS_BUSY(old) ? NULL /*enqueued*/: list /*acquired*/;
 }
 
 static inline p64_laxrob_elem_t *
 release_rob_or_dequeue(p64_laxrob_t *rob)
 {
+    assert(rob->nvec == 0);
     int ret;
     p64_laxrob_elem_t *old, *neu;
     do
@@ -277,10 +306,17 @@ void
 p64_laxrob_insert(p64_laxrob_t *rob,
 		  p64_laxrob_elem_t *list)
 {
+    //Find last element in list
+    p64_laxrob_elem_t **last = &list;
+    while (*last != NULL)
+    {
+	last = &(*last)->next;
+    }
+
     //Acquire ROB or enqueue elements
-    list = acquire_rob_or_enqueue(rob, list);
-    //Elem == NULL => we enqueued our elements for processing by current robber
-    //Elem != NULL => we acquired ROB, insert our elements
+    list = acquire_rob_or_enqueue(rob, list, last);
+    //'list' == NULL: we enqueued our elements for processing by current robber
+    //'list' != NULL: we acquired ROB, now insert all elements
     while (list != NULL)
     {
 	//Insert list of elements into ROB
@@ -288,29 +324,31 @@ p64_laxrob_insert(p64_laxrob_t *rob,
 
 	//Release ROB or dequeue new elements
 	list = release_rob_or_dequeue(rob);
-	//list != NULL => new elements dequeued, insert them
+	//list != NULL: new elements dequeued, insert them
     }
 }
 
 void
 p64_laxrob_flush(p64_laxrob_t *rob,
-		 uint32_t nelems)
+		 uint32_t nslots)
 {
     //Acquire ROB (may block)
     acquire_rob(rob);
 
-    if (retire_elems(rob, nelems) != 0)
+    retire_slots(rob, nslots);
+    //Flush any buffered output
+    if (rob->nvec != 0)
     {
-	//Notify all done for now (flush any buffered output)
-	rob->cb(rob->arg, NULL);
+	rob->cb(rob->arg, ROB_VEC(rob), rob->nvec);
+	rob->nvec = 0;
     }
 
-    //Release ROB
     for (;;)
     {
 	//Release ROB or dequeue new elements
 	p64_laxrob_elem_t *list = release_rob_or_dequeue(rob);
-	//list != NULL => new elements dequeued, insert them
+	//list == NULL: ROB released
+	//list != NULL: new elements dequeued, now insert them
 	if (list == NULL)
 	{
 	    return;
@@ -318,3 +356,6 @@ p64_laxrob_flush(p64_laxrob_t *rob,
 	insert_elems(rob, list);
     }
 }
+
+#undef BEFORE
+#undef AFTER
