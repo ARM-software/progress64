@@ -96,8 +96,8 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
 
 struct result
 {
-    int n;//First (LSW) as this will be used to test for success
-    ringidx_t idx;
+    int actual;//First (LSW) as this will be used to test for success
+    ringidx_t index;
 };
 
 static inline struct result
@@ -116,10 +116,10 @@ acquire_slots(struct headtail *rb,
 	actual = MIN(n, (int)(ring_size + bottom - old_top));
 	if (UNLIKELY(actual <= 0))
 	{
-	    return (struct result){ .idx = 0, .n = 0 };
+	    return (struct result){ .index = 0, .actual = 0 };
 	}
 	rb->tail = old_top + actual;
-	return (struct result){ .idx = old_top, .n = actual };
+	return (struct result){ .index = old_top, .actual = actual };
     }
     //MT-safe multi producer/consumer code
 #ifndef USE_LDXSTX
@@ -134,7 +134,7 @@ acquire_slots(struct headtail *rb,
 	actual = MIN(n, (int)(ring_size + bottom - old_top));
 	if (UNLIKELY(actual <= 0))
 	{
-	    return (struct result){ .idx = 0, .n = 0 };
+	    return (struct result){ .index = 0, .actual = 0 };
 	}
     }
 #ifdef USE_LDXSTX
@@ -147,7 +147,7 @@ acquire_slots(struct headtail *rb,
 					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
 #endif
-    return (struct result){ .idx = old_top, .n = actual };
+    return (struct result){ .index = old_top, .actual = actual };
 }
 
 static inline void
@@ -196,29 +196,27 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     //Step 1: acquire slots
     uint32_t mask = rb->prod.mask;
     uint32_t prod_flags = rb->prod.flags;
-    struct result r = acquire_slots(&rb->prod, num, true);
-    int actual = r.n;
-    if (UNLIKELY(actual <= 0))
+    const struct result r = acquire_slots(&rb->prod, num, true);
+    if (UNLIKELY(r.actual <= 0))
     {
 	return 0;
     }
 
-    //Step 2: access (write elements to) ring array
-    ringidx_t old_tail = r.idx;
-    ringidx_t new_tail = old_tail + actual;
+    //Step 2: write slots
+    ringidx_t idx = r.index;
+    ringidx_t end = r.index + r.actual;
     void **evp = ev;
     do
     {
-	rb->ring[old_tail & mask] = *evp++;
+	rb->ring[idx & mask] = *evp++;
     }
-    while (++old_tail != new_tail);
-    old_tail -= actual;
+    while (++idx != end);
 
-    //Step 3: release slots
-    release_slots_blk(&rb->cons.head/*cons_tail*/, old_tail, actual,
+    //Step 3: release slots to consumer
+    release_slots_blk(&rb->cons.head/*cons_tail*/, r.index, r.actual,
 		      /*loads_only=*/false, prod_flags);
 
-    return actual;
+    return r.actual;
 }
 
 uint32_t
@@ -229,29 +227,27 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     //Step 1: acquire slots
     uint32_t mask = rb->cons.mask;
     uint32_t cons_flags = rb->cons.flags;
-    struct result r = acquire_slots(&rb->cons, num, false);
-    int actual = r.n;
-    if (UNLIKELY(actual <= 0))
+    const struct result r = acquire_slots(&rb->cons, num, false);
+    if (UNLIKELY(r.actual <= 0))
     {
 	return 0;
     }
 
-    //Step 2: access (read elements from) ring array
-    ringidx_t old_head = r.idx;
-    ringidx_t new_head = old_head + actual;
+    //Step 2: read slots
+    ringidx_t idx = r.index;
+    ringidx_t end = r.index + r.actual;
     void **evp = ev;
     do
     {
-	void *elem = rb->ring[old_head & mask];
+	void *elem = rb->ring[idx & mask];
 	PREFETCH_FOR_READ(elem);
 	*evp++ = elem;
     }
-    while (++old_head != new_head);
-    old_head -= actual;
+    while (++idx != end);
 
-    //Step 3: release slots
-    release_slots_blk(&rb->prod.head, old_head, actual,
+    //Step 3: release slots to producer
+    release_slots_blk(&rb->prod.head, r.index, r.actual,
 		      /*loads_only=*/true, cons_flags);
 
-    return actual;
+    return r.actual;
 }
