@@ -101,11 +101,9 @@ struct result
 };
 
 static inline struct result
-atomic_rb_acquire(struct headtail *rb,
-		  int n,
-		  bool enqueue,
-		  int mo_load,
-		  int mo_store)
+acquire_slots(struct headtail *rb,
+	      int n,
+	      bool enqueue)
 {
     ringidx_t old_top;
     ringidx_t ring_size = enqueue ? /*enqueue*/rb->mask + 1 : /*dequeue*/0;
@@ -114,7 +112,7 @@ atomic_rb_acquire(struct headtail *rb,
     {
 	//MT-unsafe single producer/consumer code
 	old_top = rb->tail;
-	ringidx_t bottom = __atomic_load_n(&rb->head, mo_load);
+	ringidx_t bottom = __atomic_load_n(&rb->head, __ATOMIC_ACQUIRE);
 	actual = MIN(n, (int)(ring_size + bottom - old_top));
 	if (UNLIKELY(actual <= 0))
 	{
@@ -129,7 +127,7 @@ atomic_rb_acquire(struct headtail *rb,
 #endif
     do
     {
-	ringidx_t bottom = __atomic_load_n(&rb->head, mo_load);
+	ringidx_t bottom = __atomic_load_n(&rb->head, __ATOMIC_ACQUIRE);
 #ifdef USE_LDXSTX
 	old_top = ldx32(&rb->tail, __ATOMIC_RELAXED);
 #endif
@@ -140,13 +138,13 @@ atomic_rb_acquire(struct headtail *rb,
 	}
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx32(&rb->tail, old_top + actual, mo_store)));
+    while (UNLIKELY(stx32(&rb->tail, old_top + actual, __ATOMIC_RELAXED)));
 #else
     while (!__atomic_compare_exchange_n(&rb->tail,
 					&old_top,//Updated on failure
 					old_top + actual,
 					/*weak=*/true,
-					mo_store,
+					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
 #endif
     return (struct result){ .idx = old_top, .n = actual };
@@ -198,8 +196,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     //Step 1: acquire slots
     uint32_t mask = rb->prod.mask;
     uint32_t prod_flags = rb->prod.flags;
-    struct result r = atomic_rb_acquire(&rb->prod, num, true,
-					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+    struct result r = acquire_slots(&rb->prod, num, true);
     int actual = r.n;
     if (UNLIKELY(actual <= 0))
     {
@@ -232,8 +229,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     //Step 1: acquire slots
     uint32_t mask = rb->cons.mask;
     uint32_t cons_flags = rb->cons.flags;
-    struct result r = atomic_rb_acquire(&rb->cons, num, false,
-					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
+    struct result r = acquire_slots(&rb->cons, num, false);
     int actual = r.n;
     if (UNLIKELY(actual <= 0))
     {
