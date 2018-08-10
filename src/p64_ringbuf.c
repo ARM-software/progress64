@@ -21,6 +21,11 @@
 #error USE_SPLIT_HEADTAIL not supported without USE_SPLIT_PRODCONS
 #endif
 
+#define SUPPORTED_FLAGS (P64_RINGBUF_FLAG_SP | P64_RINGBUF_FLAG_MP | \
+			 P64_RINGBUF_FLAG_SC | P64_RINGBUF_FLAG_MC)
+
+#define FLAG_MTSAFE 0x0001
+
 typedef uint32_t ringidx_t;
 
 struct headtail
@@ -36,6 +41,7 @@ struct headtail
     ringidx_t tail;//head for consumer
 #endif
     ringidx_t mask;
+    uint32_t flags;
 };
 
 struct p64_ringbuf
@@ -46,12 +52,16 @@ struct p64_ringbuf
 } ALIGNED(CACHE_LINE);
 
 p64_ringbuf_t *
-p64_ringbuf_alloc(uint32_t nelems)
+p64_ringbuf_alloc(uint32_t nelems, uint32_t flags)
 {
     unsigned long ringsz = ROUNDUP_POW2(nelems);
     if (nelems == 0 || ringsz == 0 || ringsz > 0x80000000)
     {
 	fprintf(stderr, "Invalid number of elements %u\n", nelems), abort();
+    }
+    if ((flags & ~SUPPORTED_FLAGS) != 0)
+    {
+	fprintf(stderr, "Invalid flags %x\n", flags), abort();
     }
     size_t nbytes = ROUNDUP(sizeof(p64_ringbuf_t) + ringsz * sizeof(void *),
 			    CACHE_LINE);
@@ -61,9 +71,11 @@ p64_ringbuf_alloc(uint32_t nelems)
 	rb->prod.head = 0;
 	rb->prod.tail = 0;
 	rb->prod.mask = ringsz - 1;
+	rb->prod.flags = (flags & P64_RINGBUF_FLAG_SP) ? 0 : FLAG_MTSAFE;
 	rb->cons.head = 0;
 	rb->cons.tail = 0;
 	rb->cons.mask = ringsz - 1;
+	rb->cons.flags = (flags & P64_RINGBUF_FLAG_SC) ? 0 : FLAG_MTSAFE;
 	return rb;
     }
     return NULL;
@@ -98,6 +110,20 @@ atomic_rb_acquire(struct headtail *rb,
     ringidx_t old_top;
     ringidx_t ring_size = enqueue ? /*enqueue*/rb->mask + 1 : /*dequeue*/0;
     int actual;
+    if (!(rb->flags & FLAG_MTSAFE))
+    {
+	//MT-unsafe single producer/consumer code
+	old_top = rb->tail;
+	ringidx_t bottom = __atomic_load_n(&rb->head, mo_load);
+	actual = MIN(n, (int)(ring_size + bottom - old_top));
+	if (UNLIKELY(actual <= 0))
+	{
+	    return (struct result){ .idx = 0, .n = 0 };
+	}
+	rb->tail = old_top + actual;
+	return (struct result){ .idx = old_top, .n = actual };
+    }
+    //MT-safe multi producer/consumer code
 #ifndef USE_LDXSTX
     old_top = rb->tail;
 #endif
@@ -130,15 +156,19 @@ static inline void
 release_slots_blk(ringidx_t *loc,
 		  ringidx_t idx,
 		  int n,
-		  bool loads_only)
+		  bool loads_only,
+		  uint32_t flags)
 {
-    //Wait for our turn to signal consumers (producers)
-    if (UNLIKELY(__atomic_load_n(loc, __ATOMIC_RELAXED) != idx))
+    if (flags & FLAG_MTSAFE)
     {
-	SEVL();
-	while (WFE() && LDXR32(loc, __ATOMIC_RELAXED) != idx)
+	//Wait for our turn to signal consumers (producers)
+	if (UNLIKELY(__atomic_load_n(loc, __ATOMIC_RELAXED) != idx))
 	{
-	    DOZE();
+	    SEVL();
+	    while (WFE() && LDXR32(loc, __ATOMIC_RELAXED) != idx)
+	    {
+		DOZE();
+	    }
 	}
     }
 
@@ -167,6 +197,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 {
     //Step 1: acquire slots
     uint32_t mask = rb->prod.mask;
+    uint32_t prod_flags = rb->prod.flags;
     struct result r = atomic_rb_acquire(&rb->prod, num, true,
 					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
     int actual = r.n;
@@ -188,7 +219,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 
     //Step 3: release slots
     release_slots_blk(&rb->cons.head/*cons_tail*/, old_tail, actual,
-		      /*loads_only=*/false);
+		      /*loads_only=*/false, prod_flags);
 
     return actual;
 }
@@ -200,6 +231,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 {
     //Step 1: acquire slots
     uint32_t mask = rb->cons.mask;
+    uint32_t cons_flags = rb->cons.flags;
     struct result r = atomic_rb_acquire(&rb->cons, num, false,
 					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
     int actual = r.n;
@@ -222,7 +254,8 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     old_head -= actual;
 
     //Step 3: release slots
-    release_slots_blk(&rb->prod.head, old_head, actual, /*loads_only=*/true);
+    release_slots_blk(&rb->prod.head, old_head, actual,
+		      /*loads_only=*/true, cons_flags);
 
     return actual;
 }

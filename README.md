@@ -17,7 +17,7 @@ hazardptr - hazard pointers
 laxrob - lax non-blocking reorder buffer
 reassemble - lock-free IP reassembly
 reorder - strict non-blocking reorder buffer
-ringbuf - ring buffers
+ringbuf - SP/MP and SC/MC ring buffers
 rwlock - reader/writer lock
 rwsync - lightweight reader/writer synchronisation
 spinlock - basic spin lock

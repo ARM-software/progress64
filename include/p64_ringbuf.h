@@ -12,11 +12,16 @@ extern "C"
 {
 #endif
 
+#define P64_RINGBUF_FLAG_MP      0x0000 //Multi producer
+#define P64_RINGBUF_FLAG_SP      0x0001 //Single producer
+#define P64_RINGBUF_FLAG_MC      0x0000 //Multi consumer
+#define P64_RINGBUF_FLAG_SC      0x0002 //Single consumer
+
 typedef struct p64_ringbuf p64_ringbuf_t;
 
 //Allocate a ring buffer with space for at least 'nelems' elements
 //'nelems' != 0 and 'nelems' <= 0x80000000
-p64_ringbuf_t *p64_ringbuf_alloc(uint32_t nelems);
+p64_ringbuf_t *p64_ringbuf_alloc(uint32_t nelems, uint32_t flags);
 
 //Free a ring buffer
 //The ring buffer must be empty
