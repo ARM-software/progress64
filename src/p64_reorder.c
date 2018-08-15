@@ -120,7 +120,7 @@ p64_reorder_insert(p64_reorder_t *rb,
     void *arg = rb->arg;
     if (UNLIKELY(AFTER(sn + nelems, rb->tail)))
     {
-	fprintf(stderr, "Invalid sequence number)\n"), abort();
+	fprintf(stderr, "Invalid sequence number %u\n", sn + nelems), abort();
     }
     //Store our elements in reorder buffer
     SMP_WMB();//Explicit memory barrier so we can use store-relaxed below
