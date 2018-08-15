@@ -101,7 +101,7 @@ p64_hazptr_alloc(void)
     struct hazard_area *ha = &hazard_areas[TS->tidx];
     if (ha->free != 0)
     {
-	uint32_t idx = __builtin_ffsl(ha->free) - 1;
+	uint32_t idx = __builtin_ctz(ha->free);
 	ha->free &= ~(1U << idx);
 	assert(IS_NULL_PTR(ha->refs[idx]));
 	//printf("p64_hazptr_alloc(%u)\n", idx);

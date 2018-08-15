@@ -143,7 +143,7 @@ bucket_lookup(struct hash_bucket *bkt,
     }
     while (mask != 0)
     {
-	uint32_t i = __builtin_ffs(mask) - 1;
+	uint32_t i = __builtin_ctz(mask);
 	p64_hashelem_t *prnt = &bkt->elems[i];
 	p64_hashelem_t *he = p64_hazptr_acquire((void**)&prnt->next, hazpp);
 	//The head element pointers cannot be marked for REMOVAL
@@ -293,7 +293,7 @@ bucket_insert(struct hash_bucket *bkt,
     }
     while (mask != 0)
     {
-	uint32_t i = __builtin_ffs(mask) - 1;
+	uint32_t i = __builtin_ctz(mask);
 	if (insert_node(&bkt->elems[i], he, hash) == NULL)
 	{
 	    //Success
@@ -409,7 +409,7 @@ bucket_remove(struct hash_bucket *bkt,
     }
     if (mask != 0)
     {
-	uint32_t i = __builtin_ffs(mask) - 1;
+	uint32_t i = __builtin_ctz(mask);
 	p64_hashelem_t *prnt = &bkt->elems[i];
 	//No need to p64_hazptr_acquire(), we already have a reference
 	//Cannot fail due to parent marked for removal
@@ -524,7 +524,7 @@ bucket_remove_by_key(struct hash_bucket *bkt,
     }
     while (mask != 0)
     {
-	uint32_t i = __builtin_ffs(mask) - 1;
+	uint32_t i = __builtin_ctz(mask);
 	p64_hashelem_t *prnt = &bkt->elems[i];
 	p64_hashelem_t *he = p64_hazptr_acquire((void**)&prnt->next, hazpp);
 	//The head element pointers cannot be marked for REMOVAL
