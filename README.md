@@ -12,15 +12,16 @@ Functionality
 -------------
 antireplay - wait-free replay protection
 barrier - thread barrier
+clhlock - CLH queue lock
 hashtable - lock-free hash table
 hazardptr - hazard pointers
 laxrob - lax non-blocking reorder buffer
 reassemble - lock-free IP reassembly
 reorder - strict non-blocking reorder buffer
-ringbuf - SP/MP and SC/MC ring buffers
+ringbuf - SP/MP/SC/MC ring buffer
 rwlock - reader/writer lock
 rwsync - lightweight reader/writer synchronisation
-spinlock - basic spin lock
+spinlock - basic CAS-based spin lock
 timer - lock-free timers
 
 Usage
