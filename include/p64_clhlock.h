@@ -12,23 +12,23 @@ extern "C"
 {
 #endif
 
-typedef struct p64_clhnode
-{
-    struct p64_clhnode *prev;
-    uint32_t wait;
-} p64_clhnode_t;
+typedef struct p64_clhnode p64_clhnode_t;
 
 typedef struct
 {
-    p64_clhnode_t node;
-    p64_clhnode_t *tail __attribute__((__aligned__(64)));
+    p64_clhnode_t *tail;
 } p64_clhlock_t;
 
 //Initialise a CLH lock
 void p64_clhlock_init(p64_clhlock_t *lock);
 
+//Finish a CLH lock
+void p64_clhlock_fini(p64_clhlock_t *lock);
+
 //Acquire a CLH lock
-void p64_clhlock_acquire(p64_clhlock_t *lock, p64_clhnode_t *node);
+//*nodep will be written with a pointer to a p64_clhnode_t, this must
+//eventually be freed
+void p64_clhlock_acquire(p64_clhlock_t *lock, p64_clhnode_t **nodep);
 
 //Release a CLH lock
 void p64_clhlock_release(p64_clhnode_t **nodep);
