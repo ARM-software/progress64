@@ -16,6 +16,7 @@ extern "C"
 #define P64_RINGBUF_FLAG_SP      0x0001 //Single producer
 #define P64_RINGBUF_FLAG_MC      0x0000 //Multi consumer
 #define P64_RINGBUF_FLAG_SC      0x0002 //Single consumer
+#define P64_RINGBUF_FLAG_LFC     0x0004 //Lock-free consume
 
 typedef struct p64_ringbuf p64_ringbuf_t;
 

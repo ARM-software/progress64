@@ -3,11 +3,13 @@
 *.swp
 antireplay
 core
-perf.data*
-libprogress64.a
 hashtable
+laxrob
+libprogress64.a
+perf.data*
 reassemble
 reorder
+ringbuf
 rwlock
 rwsync
 timer

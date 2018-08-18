@@ -1,7 +1,8 @@
-//Copyright (c) 2017, ARM Limited. All rights reserved.
+//Copyright (c) 2017-2018, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+#include <assert.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -22,9 +23,11 @@
 #endif
 
 #define SUPPORTED_FLAGS (P64_RINGBUF_FLAG_SP | P64_RINGBUF_FLAG_MP | \
-			 P64_RINGBUF_FLAG_SC | P64_RINGBUF_FLAG_MC)
+			 P64_RINGBUF_FLAG_SC | P64_RINGBUF_FLAG_MC | \
+			 P64_RINGBUF_FLAG_LFC)
 
-#define FLAG_MTSAFE 0x0001
+#define FLAG_MTSAFE   0x0001
+#define FLAG_LOCKFREE 0x0002
 
 typedef uint32_t ringidx_t;
 
@@ -76,6 +79,7 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags)
 	rb->cons.tail = 0;
 	rb->cons.mask = ringsz - 1;
 	rb->cons.flags = (flags & P64_RINGBUF_FLAG_SC) ? 0 : FLAG_MTSAFE;
+	rb->cons.flags |= (flags & P64_RINGBUF_FLAG_LFC) ? FLAG_LOCKFREE : 0;
 	return rb;
     }
     return NULL;
@@ -86,9 +90,22 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
 {
     if (rb != NULL)
     {
-	if (rb->prod.head != rb->prod.tail || rb->cons.head != rb->cons.tail)
+	if (rb->cons.flags & FLAG_LOCKFREE)
 	{
-	    fprintf(stderr, "Ring buffer %p is not empty\n", rb), abort();
+	    if (rb->prod.head != rb->prod.tail ||
+		rb->cons.head != rb->prod.tail)
+	    {
+		assert(rb->cons.tail/*cons.head*/ == 0);
+		fprintf(stderr, "Ring buffer %p is not empty\n", rb);
+	    }
+	}
+	else
+	{
+	    if (rb->prod.head != rb->prod.tail ||
+		rb->cons.head != rb->cons.tail)
+	    {
+		fprintf(stderr, "Ring buffer %p is not empty\n", rb);
+	    }
 	}
 	free(rb);
     }
@@ -213,7 +230,8 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     while (++idx != end);
 
     //Step 3: release slots to consumer
-    release_slots_blk(&rb->cons.head/*cons_tail*/, r.index, r.actual,
+    //Consumer metadata is swapped: cons.tail<->cons.head
+    release_slots_blk(&rb->cons.head/*cons.tail*/, r.index, r.actual,
 		      /*loads_only=*/false, prod_flags);
 
     return r.actual;
@@ -224,9 +242,52 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 		    void *ev[],
 		    uint32_t num)
 {
-    //Step 1: acquire slots
     uint32_t mask = rb->cons.mask;
     uint32_t cons_flags = rb->cons.flags;
+
+    if (cons_flags & FLAG_LOCKFREE)
+    {
+	//Use prod.head instead of cons.head (which is not used at all)
+	int actual;
+	//Step 1: speculative acquisition of slots
+	ringidx_t head = __atomic_load_n(&rb->prod.head, __ATOMIC_RELAXED);
+	do
+	{
+	    //Consumer metadata is swapped: cons.tail<->cons.head
+	    ringidx_t tail = __atomic_load_n(&rb->cons.head/*cons.tail*/,
+					     __ATOMIC_ACQUIRE);
+	    actual = MIN((int)num, (int)(tail - head));
+	    if (UNLIKELY(actual <= 0))
+	    {
+		return 0;
+	    }
+
+	    //Step 2: read slots (non-destructive)
+	    ringidx_t idx = head;
+	    ringidx_t end = head + actual;
+	    void **evp = ev;
+	    do
+	    {
+		void *elem = rb->ring[idx & mask];
+		PREFETCH_FOR_READ(elem);
+		*evp++ = elem;
+	    }
+	    while (++idx != end);
+
+	    //Step 3: commit acquisition, release slots to producer
+	}
+	while (!__atomic_compare_exchange_n(&rb->prod.head,
+					    &head,//Updated on failure
+					    head + actual,
+					    /*weak=*/true,
+					    __ATOMIC_RELEASE,
+					    __ATOMIC_RELAXED));
+	return actual;
+    }
+
+    //Non-lock-free dequeue code
+
+    //Step 1: acquire slots
     const struct result r = acquire_slots(&rb->cons, num, false);
     if (UNLIKELY(r.actual <= 0))
     {
