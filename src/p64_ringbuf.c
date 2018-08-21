@@ -2,7 +2,6 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-#include <assert.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -90,22 +89,9 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
 {
     if (rb != NULL)
     {
-	if (rb->cons.flags & FLAG_LOCKFREE)
+	if (rb->prod.head != rb->cons.head/*cons.tail*/)
 	{
-	    if (rb->prod.head != rb->prod.tail ||
-		rb->cons.head != rb->prod.tail)
-	    {
-		assert(rb->cons.tail/*cons.head*/ == 0);
-		fprintf(stderr, "Ring buffer %p is not empty\n", rb);
-	    }
-	}
-	else
-	{
-	    if (rb->prod.head != rb->prod.tail ||
-		rb->cons.head != rb->cons.tail)
-	    {
-		fprintf(stderr, "Ring buffer %p is not empty\n", rb);
-	    }
+	    fprintf(stderr, "Ring buffer %p is not empty\n", rb);
 	}
 	free(rb);
     }
@@ -117,62 +103,68 @@ struct result
     ringidx_t index;
 };
 
+//MT-unsafe single producer/consumer code
 static inline struct result
-acquire_slots(struct headtail *rb,
+acquire_slots(const ringidx_t *headp,
+	      ringidx_t *tailp,
+	      ringidx_t mask,
 	      int n,
 	      bool enqueue)
 {
-    ringidx_t old_top;
+    ringidx_t ring_size = enqueue ? /*enqueue*/mask + 1 : /*dequeue*/0;
+    ringidx_t tail = __atomic_load_n(tailp, __ATOMIC_RELAXED);
+    ringidx_t head = __atomic_load_n(headp, __ATOMIC_ACQUIRE);
+    int actual = MIN(n, (int)(ring_size + head - tail));
+    if (UNLIKELY(actual <= 0))
+    {
+	return (struct result){ .index = 0, .actual = 0 };
+    }
+    return (struct result){ .index = tail, .actual = actual };
+}
+
+//MT-safe multi producer/consumer code
+static inline struct result
+acquire_slots_mtsafe(struct headtail *rb,
+		     int n,
+		     bool enqueue)
+{
+    ringidx_t tail;
     ringidx_t ring_size = enqueue ? /*enqueue*/rb->mask + 1 : /*dequeue*/0;
     int actual;
-    if (!(rb->flags & FLAG_MTSAFE))
-    {
-	//MT-unsafe single producer/consumer code
-	old_top = rb->tail;
-	ringidx_t bottom = __atomic_load_n(&rb->head, __ATOMIC_ACQUIRE);
-	actual = MIN(n, (int)(ring_size + bottom - old_top));
-	if (UNLIKELY(actual <= 0))
-	{
-	    return (struct result){ .index = 0, .actual = 0 };
-	}
-	rb->tail = old_top + actual;
-	return (struct result){ .index = old_top, .actual = actual };
-    }
-    //MT-safe multi producer/consumer code
 #ifndef USE_LDXSTX
-    old_top = rb->tail;
+    tail = __atomic_load_n(&rb->tail, __ATOMIC_RELAXED);
 #endif
     do
     {
-	ringidx_t bottom = __atomic_load_n(&rb->head, __ATOMIC_ACQUIRE);
+	ringidx_t head = __atomic_load_n(&rb->head, __ATOMIC_ACQUIRE);
 #ifdef USE_LDXSTX
-	old_top = ldx32(&rb->tail, __ATOMIC_RELAXED);
+	tail = ldx32(&rb->tail, __ATOMIC_RELAXED);
 #endif
-	actual = MIN(n, (int)(ring_size + bottom - old_top));
+	actual = MIN(n, (int)(ring_size + head - tail));
 	if (UNLIKELY(actual <= 0))
 	{
 	    return (struct result){ .index = 0, .actual = 0 };
 	}
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx32(&rb->tail, old_top + actual, __ATOMIC_RELAXED)));
+    while (UNLIKELY(stx32(&rb->tail, tail + actual, __ATOMIC_RELAXED)));
 #else
     while (!__atomic_compare_exchange_n(&rb->tail,
-					&old_top,//Updated on failure
-					old_top + actual,
+					&tail,//Updated on failure
+					tail + actual,
 					/*weak=*/true,
 					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
 #endif
-    return (struct result){ .index = old_top, .actual = actual };
+    return (struct result){ .index = tail, .actual = actual };
 }
 
 static inline void
-release_slots_blk(ringidx_t *loc,
-		  ringidx_t idx,
-		  int n,
-		  bool loads_only,
-		  uint32_t flags)
+release_slots(ringidx_t *loc,
+	      ringidx_t idx,
+	      int n,
+	      bool loads_only,
+	      uint32_t flags)
 {
     if (flags & FLAG_MTSAFE)
     {
@@ -205,6 +197,7 @@ release_slots_blk(ringidx_t *loc,
     }
 }
 
+//Enqueue elements at tail
 uint32_t
 p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 		    void *ev[],
@@ -213,7 +206,20 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     //Step 1: acquire slots
     uint32_t mask = rb->prod.mask;
     uint32_t prod_flags = rb->prod.flags;
-    const struct result r = acquire_slots(&rb->prod, num, true);
+    struct result r;
+
+    if (!(prod_flags & FLAG_MTSAFE))
+    {
+	//MT-unsafe single producer code
+	//Consumer metadata is swapped: cons.tail<->cons.head
+	r = acquire_slots(&rb->prod.head, &rb->cons.head/*cons.tail*/,
+			  mask, num, true);
+    }
+    else
+    {
+	//MT-safe multi producer code
+	r = acquire_slots_mtsafe(&rb->prod, num, true);
+    }
     if (UNLIKELY(r.actual <= 0))
     {
 	return 0;
@@ -231,12 +237,13 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 
     //Step 3: release slots to consumer
     //Consumer metadata is swapped: cons.tail<->cons.head
-    release_slots_blk(&rb->cons.head/*cons.tail*/, r.index, r.actual,
-		      /*loads_only=*/false, prod_flags);
+    release_slots(&rb->cons.head/*cons.tail*/, r.index, r.actual,
+		  /*loads_only=*/false, prod_flags);
 
     return r.actual;
 }
 
+//Dequeue elements from head
 uint32_t
 p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 		    void *ev[],
@@ -262,7 +269,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 		return 0;
 	    }
 
-	    //Step 2: read slots (non-destructive)
+	    //Step 2: read slots in advance (fortunately non-destructive)
 	    ringidx_t idx = head;
 	    ringidx_t end = head + actual;
 	    void **evp = ev;
@@ -285,10 +292,20 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	return actual;
     }
 
-    //Non-lock-free dequeue code
-
     //Step 1: acquire slots
-    const struct result r = acquire_slots(&rb->cons, num, false);
+    struct result r;
+    if (!(cons_flags & FLAG_MTSAFE))
+    {
+	//MT-unsafe single consumer code
+	//Consumer metadata is swapped: cons.tail<->cons.head
+	r = acquire_slots(&rb->cons.head/*cons.tail*/, &rb->prod.head,
+			  mask, num, false);
+    }
+    else
+    {
+	//MT-safe multi consumer code
+	r = acquire_slots_mtsafe(&rb->cons, num, false);
+    }
     if (UNLIKELY(r.actual <= 0))
     {
 	return 0;
@@ -307,8 +324,8 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     while (++idx != end);
 
     //Step 3: release slots to producer
-    release_slots_blk(&rb->prod.head, r.index, r.actual,
-		      /*loads_only=*/true, cons_flags);
+    release_slots(&rb->prod.head, r.index, r.actual,
+		  /*loads_only=*/true, cons_flags);
 
     return r.actual;
 }
