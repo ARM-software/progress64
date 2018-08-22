@@ -24,8 +24,11 @@ static inline void doze(void)
     __asm__ volatile("isb" : : : );//isb better than nop
 }
 
+//Full fence, e.g. for store/load ordering
 #define SMP_MB()  __asm__ volatile("dmb ish"   : : : "memory")
+//Read fence for load/load ordering
 #define SMP_RMB() __asm__ volatile("dmb ishld" : : : "memory")
+//Write fence for store/store ordering
 #define SMP_WMB() __asm__ volatile("dmb ishst" : : : "memory")
 
 #if defined USE_WFE
@@ -37,7 +40,7 @@ static inline void doze(void)
 #define LDXR32(a, b) ldx32(a, b)
 #define LDXR64(a, b) ldx64(a, b)
 #define LDXR128(a, b) ldx128(a, b)
-//When using WFE do not stall the pipeline using other means (e.g. NOP)
+//When using WFE do not stall the pipeline using other means (e.g. NOP or ISB)
 #define DOZE() (void)0
 
 #include "ldxstx.h"
