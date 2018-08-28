@@ -50,11 +50,13 @@ p64_laxrob_alloc(uint32_t nslots,
     assert(!IS_BUSY(IDLE));
     if (nslots < 1 || nslots > 0x80000000)
     {
-	fprintf(stderr, "Invalid laxrob size %u\n", nslots), abort();
+	fprintf(stderr, "Invalid laxrob size %u\n", nslots);
+	abort();
     }
     if (vecsz < 1 || vecsz > 0x80000000)
     {
-	fprintf(stderr, "Invalid laxrob output vector size %u\n", vecsz), abort();
+	fprintf(stderr, "Invalid laxrob output vector size %u\n", vecsz);
+	abort();
     }
     unsigned long ringsize = ROUNDUP_POW2(nslots);
     size_t nbytes = ROUNDUP(sizeof(p64_laxrob_t) +
@@ -271,7 +273,6 @@ release_rob_or_dequeue(p64_laxrob_t *rob)
     return old;
 }
 
-//Retire in-order elements and invoke the callback
 static inline void
 acquire_rob(p64_laxrob_t *rob)
 {
@@ -328,6 +329,7 @@ p64_laxrob_insert(p64_laxrob_t *rob,
     }
 }
 
+//Retire in-order elements and invoke the callback
 void
 p64_laxrob_flush(p64_laxrob_t *rob,
 		 uint32_t nslots)
