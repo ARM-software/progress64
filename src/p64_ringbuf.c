@@ -21,9 +21,9 @@
 #error USE_SPLIT_HEADTAIL not supported without USE_SPLIT_PRODCONS
 #endif
 
-#define SUPPORTED_FLAGS (P64_RINGBUF_FLAG_SP | P64_RINGBUF_FLAG_MP | \
-			 P64_RINGBUF_FLAG_SC | P64_RINGBUF_FLAG_MC | \
-			 P64_RINGBUF_FLAG_LFC)
+#define SUPPORTED_FLAGS (P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_MPENQ | \
+			 P64_RINGBUF_F_SCDEQ | P64_RINGBUF_F_MCDEQ | \
+			 P64_RINGBUF_F_LFDEQ)
 
 #define FLAG_MTSAFE   0x0001
 #define FLAG_LOCKFREE 0x0002
@@ -73,12 +73,12 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags)
 	rb->prod.head = 0;
 	rb->prod.tail = 0;
 	rb->prod.mask = ringsz - 1;
-	rb->prod.flags = (flags & P64_RINGBUF_FLAG_SP) ? 0 : FLAG_MTSAFE;
+	rb->prod.flags = (flags & P64_RINGBUF_F_SPENQ) ? 0 : FLAG_MTSAFE;
 	rb->cons.head = 0;
 	rb->cons.tail = 0;
 	rb->cons.mask = ringsz - 1;
-	rb->cons.flags = (flags & P64_RINGBUF_FLAG_SC) ? 0 : FLAG_MTSAFE;
-	rb->cons.flags |= (flags & P64_RINGBUF_FLAG_LFC) ? FLAG_LOCKFREE : 0;
+	rb->cons.flags = (flags & P64_RINGBUF_F_SCDEQ) ? 0 : FLAG_MTSAFE;
+	rb->cons.flags |= (flags & P64_RINGBUF_F_LFDEQ) ? FLAG_LOCKFREE : 0;
 	return rb;
     }
     return NULL;
@@ -97,6 +97,7 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
     }
 }
 
+#define result p64_ringbuf_result
 struct result
 {
     int actual;//First (LSW) as this will be used to test for success
@@ -247,7 +248,8 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 uint32_t
 p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 		    void *ev[],
-		    uint32_t num)
+		    uint32_t num,
+		    uint32_t *index)
 {
     uint32_t mask = rb->cons.mask;
     uint32_t cons_flags = rb->cons.flags;
@@ -276,7 +278,6 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	    do
 	    {
 		void *elem = rb->ring[idx & mask];
-		PREFETCH_FOR_READ(elem);
 		*evp++ = elem;
 	    }
 	    while (++idx != end);
@@ -289,6 +290,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 					    /*weak=*/true,
 					    __ATOMIC_RELEASE,
 					    __ATOMIC_RELAXED));
+	*index = head;
 	return actual;
     }
 
@@ -318,7 +320,6 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     do
     {
 	void *elem = rb->ring[idx & mask];
-	PREFETCH_FOR_READ(elem);
 	*evp++ = elem;
     }
     while (++idx != end);
@@ -327,5 +328,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     release_slots(&rb->prod.head, r.index, r.actual,
 		  /*loads_only=*/true, cons_flags);
 
+    *index = r.index;
     return r.actual;
 }
+#undef result
