@@ -5,6 +5,7 @@
 
 #include <assert.h>
 #include <stddef.h>
+#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_clhlock.h"
@@ -23,7 +24,11 @@ static p64_clhnode_t *
 alloc_clhnode(void)
 {
     p64_clhnode_t *node = aligned_alloc(CACHE_LINE, sizeof(p64_clhnode_t));
-    //TODO check return value
+    if (node == NULL)
+    {
+	perror("aligned_alloc");
+	exit(EXIT_FAILURE);
+    }
     node->prev = NULL;
     __atomic_store_n(&node->wait, 1, __ATOMIC_RELAXED);
     __atomic_thread_fence(__ATOMIC_RELEASE);
