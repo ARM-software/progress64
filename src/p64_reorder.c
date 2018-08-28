@@ -82,6 +82,7 @@ p64_reorder_reserve(p64_reorder_t *rb,
 {
     uint32_t head, tail;
     int32_t actual;
+    PREFETCH_FOR_WRITE(&rb->tail);
     do
     {
 	head = __atomic_load_n(&rb->hi.head, __ATOMIC_RELAXED);
@@ -114,7 +115,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 		   void *elems[],
 		   uint32_t sn)
 {
-    __builtin_prefetch(&rb->hi, 1, 0);
+    PREFETCH_FOR_WRITE(&rb->hi);
     uint32_t mask = rb->mask;
     p64_reorder_cb cb = rb->cb;
     void *arg = rb->arg;
@@ -148,7 +149,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 	if (__atomic_compare_exchange(&rb->hi,
 				      &old,//Updated on failure
 				      &new,
-				      /*weak=*/false,
+				      /*weak=*/true,
 				      __ATOMIC_RELEASE,
 				      __ATOMIC_RELAXED))
 	{
@@ -163,6 +164,7 @@ p64_reorder_insert(p64_reorder_t *rb,
     //We are in-order so our responsibility to retire elements
     struct hi new;
     new.head = old.head;
+    uint32_t npending = 0;
     //Scan ring to find consecutive in-order elements and retire them
     do
     {
@@ -171,18 +173,30 @@ p64_reorder_insert(p64_reorder_t *rb,
 				       __ATOMIC_ACQUIRE)) != NULL)
 	{
 	    rb->ring[new.head & mask] = NULL;
-	    cb(arg, elem);
+	    if (LIKELY((uintptr_t)elem > (uintptr_t)P64_REORDER_DUMMY))
+	    {
+		cb(arg, elem, new.head);
+		npending++;
+	    }
 	    new.head++;
 	}
+	PREFETCH_FOR_WRITE(&rb->hi);
 	assert(new.head != old.head);
+	if (LIKELY(npending != 0))
+	{
+	    cb(arg, NULL, new.head);
+	    npending = 0;
+	}
 	new.chgi = old.chgi;
-	__builtin_prefetch(&rb->hi, 1, 0);
     }
     //Update head&chgi, fail if chgi has changed (head cannot change)
     while (!__atomic_compare_exchange(&rb->hi,
 				      &old,//Updated on failure
 				      &new,
-				      /*weak=*/false,
+				      /*weak=*/true,
 				      __ATOMIC_RELEASE,//Release ring updates
 				      __ATOMIC_RELAXED));
 }
+
+#undef BEFORE
+#undef AFTER

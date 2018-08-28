@@ -6,13 +6,18 @@
 #include "p64_reorder.h"
 #include "expect.h"
 
-static uint32_t next_sn = 100;
+static uint32_t next_elem = 100;
 
-static void callback(void *arg, void *elem)
+static void callback(void *arg, void *elem, uint32_t sn)
 {
-    printf("Element %lu retired\n", (uintptr_t)elem);
-    EXPECT((uintptr_t)elem == next_sn);
-    next_sn++;
+    EXPECT(elem != P64_REORDER_DUMMY);
+    if (elem != NULL)
+    {
+	printf("Element %lu retired\n", (uintptr_t)elem);
+	EXPECT((uintptr_t)elem == next_elem);
+	EXPECT(sn + 100 == next_elem);
+	next_elem++;
+    }
 }
 
 int main(void)
