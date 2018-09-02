@@ -6,24 +6,22 @@
 #define _P64_REORDER_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #ifdef __cplusplus
 extern "C"
 {
 #endif
 
-//A dummy element pointer that can be inserted into the reorder buffer
 #define P64_REORDER_DUMMY ((void *)1U)
 
 typedef struct p64_reorder p64_reorder_t;
 
-//Call-back function for in-order retirement of elements
-//After a sequence of invocations, the function will be called with
-//a NULL 'elem' pointer (to enable flushing of any buffered elements)
 typedef void (*p64_reorder_cb)(void *arg, void *elem, uint32_t sn);
 
 //Allocate a reorder buffer with space for at least 'nelems' elements
 p64_reorder_t *p64_reorder_alloc(uint32_t nelems,
+				 bool user_reserve,
 				 p64_reorder_cb cb,
 				 void *arg);
 

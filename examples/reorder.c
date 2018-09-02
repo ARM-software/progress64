@@ -23,7 +23,7 @@ static void callback(void *arg, void *elem, uint32_t sn)
 int main(void)
 {
     uint32_t sn;
-    p64_reorder_t *rb = p64_reorder_alloc(4, callback, NULL);
+    p64_reorder_t *rb = p64_reorder_alloc(4, false, callback, NULL);
     EXPECT(rb != NULL);
     EXPECT(p64_reorder_reserve(rb, 1, &sn) == 1);
     EXPECT(sn == 0);

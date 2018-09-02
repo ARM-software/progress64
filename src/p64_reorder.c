@@ -28,6 +28,7 @@ struct p64_reorder
 {
     struct hi hi ALIGNED(CACHE_LINE);//head and chgi
     uint32_t mask;
+    bool user_reserve;
     p64_reorder_cb cb;
     void *arg;
     uint32_t tail ALIGNED(CACHE_LINE);
@@ -36,6 +37,7 @@ struct p64_reorder
 
 p64_reorder_t *
 p64_reorder_alloc(uint32_t nelems,
+		  bool user_reserve,
 		  p64_reorder_cb cb,
 		  void *arg)
 {
@@ -54,6 +56,7 @@ p64_reorder_alloc(uint32_t nelems,
 	rb->hi.head = 0;
 	rb->hi.chgi = 0;
 	rb->mask = ringsize - 1;
+	rb->user_reserve = user_reserve;
 	rb->cb = cb;
 	rb->arg = arg;
 	rb->tail = 0;
@@ -67,7 +70,7 @@ p64_reorder_free(p64_reorder_t *rb)
 {
     if (rb != NULL)
     {
-	if (rb->hi.head != rb->tail)
+	if (!rb->user_reserve && rb->hi.head != rb->tail)
 	{
 	    fprintf(stderr, "Reorder buffer %p is not empty\n", rb), abort();
 	}
@@ -115,11 +118,28 @@ p64_reorder_insert(p64_reorder_t *rb,
 		   void *elems[],
 		   uint32_t sn)
 {
-    PREFETCH_FOR_WRITE(&rb->hi);
     uint32_t mask = rb->mask;
     p64_reorder_cb cb = rb->cb;
     void *arg = rb->arg;
-    if (UNLIKELY(AFTER(sn + nelems, rb->tail)))
+    if (rb->user_reserve)
+    {
+	//With user reserve, the user might have been generous and allocated
+	//a SN currently outside of the ROB window
+	uint32_t sz = mask + 1;
+	if (UNLIKELY(AFTER(sn + nelems,
+			   __atomic_load_n(&rb->hi.head, __ATOMIC_RELAXED) + sz)))
+	{
+	    //We must wait for in-order elements to be retired so that our SN will
+	    //fit inside the ROB window
+	    SEVL();
+	    while (WFE() && AFTER(sn + nelems,
+				  LDXR32(&rb->hi.head, __ATOMIC_RELAXED) + sz))
+	    {
+		DOZE();
+	    }
+	}
+    }
+    else if (UNLIKELY(AFTER(sn + nelems, rb->tail)))
     {
 	fprintf(stderr, "Invalid sequence number %u\n", sn + nelems), abort();
     }
@@ -180,7 +200,6 @@ p64_reorder_insert(p64_reorder_t *rb,
 	    }
 	    new.head++;
 	}
-	PREFETCH_FOR_WRITE(&rb->hi);
 	assert(new.head != old.head);
 	if (LIKELY(npending != 0))
 	{
