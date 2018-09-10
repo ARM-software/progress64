@@ -59,6 +59,10 @@ static void
 p64_hazardptr_init(void)
 {
     uint32_t tidx = __atomic_fetch_add(&tidx_counter, 1, __ATOMIC_RELAXED);
+    if (tidx >= MAXTHREADS)
+    {
+	fprintf(stderr, "Too many threads using hazard pointers\n"), abort();
+    }
     struct thread_state *ts = &thread_state[tidx];
     TS = ts;
     ts->tidx = tidx;
@@ -70,8 +74,8 @@ p64_hazardptr_init(void)
 	ts->hp_fileline[i].file = NULL;
 	ts->hp_fileline[i].line = 0;
     }
-    //Increment 'numthreads' in-order since this will release our
-    //hazard_area and its hazard pointers
+    //Increment 'numthreads' in-order since the store will release our
+    //and any preceding hazard_areas and their hazard pointers
     if (__atomic_load_n(&numthreads, __ATOMIC_RELAXED) != tidx)
     {
 	SEVL();
@@ -178,7 +182,7 @@ p64_hazptr_dump(FILE *fp)
 //specified location
 //Re-use any existing hazard pointer
 //Allocate a new hazard pointer if necessary
-//Don't free any allocated hazard pointer even if is not used
+//Don't free any allocated hazard pointer even if is not actually used
 void *
 p64_hazptr_acquire(void **pptr,
 		   p64_hazardptr_t *hp)
@@ -186,8 +190,9 @@ p64_hazptr_acquire(void **pptr,
     //Reset any existing hazard pointer
     if (*hp != P64_HAZARDPTR_NULL)
     {
-	SMP_RMB();
-	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
+	//Release MO to let any pending stores complete before the reference
+	//is abandoned
+	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
     }
     for (;;)
     {
@@ -215,19 +220,19 @@ p64_hazptr_acquire(void **pptr,
 		abort();
 	    }
 	}
-	//Step 2b: Initialise hazard pointer
+	//Step 2b: Initialise hazard pointer with reference
 	__atomic_store_n(*hp, ptr, __ATOMIC_RELAXED);
 
-	//Step 3: The all-important memory barrier
-	SMP_MB();
+	//Step 3: Ensure HP write is visible before re-reading location
+	__atomic_thread_fence(__ATOMIC_SEQ_CST);
 
-	//Step 4a: Verify reference
-	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_RELAXED) == ptr))
+	//Step 4: Verify reference by re-reading and comparing
+	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_ACQUIRE) == ptr))
 	{
 	    return ptr;//Success
 	}
 
-	//Step 4b: Reset hazard pointer
+	//Step 5: Failed the race, reset hazard pointer and restart
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
     }
 }
@@ -239,12 +244,7 @@ p64_hazptr_release(p64_hazardptr_t *hp)
     if (*hp != P64_HAZARDPTR_NULL)
     {
 	//Reset hazard pointer
-#ifdef USE_DMB
-	SMP_MB();
-	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
-#else
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
-#endif
 	//Release hazard pointer
 	p64_hazptr_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
@@ -326,8 +326,7 @@ find_ptr(userptr_t refs[],
     return false;
 }
 
-//Traverse over all retired objects and reclaim those that have no active
-//references
+//Traverse all retired objects and reclaim those that have no references
 static int
 garbage_collect(void)
 {
@@ -378,7 +377,7 @@ p64_hazptr_retire(void *ptr,
     {
 	//rlist full
 	//Ensure all removals are visible before we read hazard pointers
-	SMP_WMB();
+	__atomic_thread_fence(__ATOMIC_SEQ_CST);
 	//Try to reclaim objects
 	(void)garbage_collect();
 	//At least one object must have been reclaimed
@@ -389,8 +388,6 @@ p64_hazptr_retire(void *ptr,
 bool
 p64_hazptr_reclaim(void)
 {
-    //Ensure all removals are visible before we read hazard pointers
-    SMP_WMB();
     //Try to reclaim objects
     uint32_t nreclaimed = garbage_collect();
     return nreclaimed != 0;

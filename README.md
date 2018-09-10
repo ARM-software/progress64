@@ -8,21 +8,26 @@ provides functionality which is often required in multithreaded networking
 applications. The general goal is to provide primitives which enable
 scalable and preferably non-blocking concurrent applications.
 
+A secondary purpose is to inform and inspire the use of the C11-based memory
+model (especially Release Consistency i.e. using load-acquire/store-release)
+for multithreaded programming.
+
 Functionality
 -------------
 * antireplay - replay protection (lock-free/wait-free)
 * barrier - thread barrier (blocking)
 * clhlock - CLH queue lock (blocking)
 * hashtable - hash table (lock-free)
-* hazardptr - hazard pointers (lock-free)
-* laxrob - lax reorder buffer (non-blocking)
+* hazardptr - MT-safe memory reclamation (lock-free)
+* laxrob - 'lax' reorder buffer (non-blocking)
 * reassemble - IP reassembly (lock-free)
-* reorder - strict reorder buffer (non-blocking)
+* reorder - 'strict' reorder buffer (non-blocking)
 * ringbuf - SP/MP/SC/MC/LFC ring buffer (MP/MC blocking, SP/SC/LFC lock-free)
 * rwlock - reader/writer lock (blocking)
 * rwsync - lightweight reader/writer synchronisation (blocking)
 * spinlock - basic CAS-based spin lock (blocking)
 * timer - timers (lock-free)
+("non-blocking" here means no thread will block (spin) but not properly lock-free)
 
 Requirements
 --------------
