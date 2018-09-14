@@ -109,8 +109,17 @@ p64_reorder_reserve(p64_reorder_t *rb,
     return actual;
 }
 
-#define BEFORE(sn, h) ((int32_t)(sn) - (int32_t)(h) < 0)
-#define AFTER(sn, t) ((int32_t)(sn) - (int32_t)(t) > 0)
+static inline bool
+BEFORE(uint32_t x, uint32_t y)
+{
+    return (int32_t)((x) - (y)) < 0;
+}
+
+static inline bool
+AFTER(uint32_t x, uint32_t y)
+{
+    return (int32_t)((x) - (y)) > 0;
+}
 
 void
 p64_reorder_insert(p64_reorder_t *rb,
@@ -127,13 +136,13 @@ p64_reorder_insert(p64_reorder_t *rb,
 	//a SN currently outside of the ROB window
 	uint32_t sz = mask + 1;
 	if (UNLIKELY(AFTER(sn + nelems,
-			   __atomic_load_n(&rb->hi.head, __ATOMIC_RELAXED) + sz)))
+			   __atomic_load_n(&rb->hi.head, __ATOMIC_ACQUIRE) + sz)))
 	{
 	    //We must wait for in-order elements to be retired so that our SN will
 	    //fit inside the ROB window
 	    SEVL();
 	    while (WFE() && AFTER(sn + nelems,
-				  LDXR32(&rb->hi.head, __ATOMIC_RELAXED) + sz))
+				  LDXR32(&rb->hi.head, __ATOMIC_ACQUIRE) + sz))
 	    {
 		DOZE();
 	    }
@@ -143,8 +152,9 @@ p64_reorder_insert(p64_reorder_t *rb,
     {
 	fprintf(stderr, "Invalid sequence number %u\n", sn + nelems), abort();
     }
-    //Store our elements in reorder buffer
-    SMP_WMB();//Explicit memory barrier so we can use store-relaxed below
+    //Store our elements in reorder buffer, releasing them
+    //Separate release fence so we can use store-relaxed below
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     for (uint32_t i = 0; i < nelems; i++)
     {
 	if (UNLIKELY(elems[i] == NULL))
@@ -158,7 +168,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 
     struct hi old;
     __atomic_load(&rb->hi, &old, __ATOMIC_ACQUIRE);
-    while (BEFORE(sn, old.head) || AFTER(sn + nelems - 1, old.head))
+    while (BEFORE(old.head, sn) || !BEFORE(old.head, sn + nelems))
     {
 	//We are out-of-order
 	//Update chgi to indicate presence of new elements
@@ -171,7 +181,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 				      &new,
 				      /*weak=*/true,
 				      __ATOMIC_RELEASE,
-				      __ATOMIC_RELAXED))
+				      __ATOMIC_ACQUIRE))
 	{
 	    //CAS succeeded => head same (we are not in-order), chgi updated
 	    return;
@@ -214,8 +224,5 @@ p64_reorder_insert(p64_reorder_t *rb,
 				      &new,
 				      /*weak=*/true,
 				      __ATOMIC_RELEASE,//Release ring updates
-				      __ATOMIC_RELAXED));
+				      __ATOMIC_ACQUIRE));
 }
-
-#undef BEFORE
-#undef AFTER
