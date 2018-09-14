@@ -11,7 +11,7 @@
 ################################################################################
 
 #List of executable files to build
-TARGETS = libprogress64.a hashtable timer rwlock reorder antireplay rwsync reassemble laxrob ringbuf
+TARGETS = libprogress64.a hashtable timer rwlock reorder antireplay rwsync reassemble laxrob ringbuf clhlock
 #List object files for each target
 OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o
 OBJECTS_hashtable = p64_hazardptr.o p64_hashtable.o hashtable.o
@@ -23,6 +23,7 @@ OBJECTS_rwsync = p64_rwsync.o rwsync.o
 OBJECTS_reassemble = p64_reassemble.o reassemble.o
 OBJECTS_laxrob = p64_laxrob.o laxrob.o
 OBJECTS_ringbuf = p64_ringbuf.o ringbuf.o
+OBJECTS_clhlock = p64_clhlock.o clhlock.o
 
 DEBUG ?= 0
 ASSERT ?= 0
