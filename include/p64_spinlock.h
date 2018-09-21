@@ -20,6 +20,9 @@ void p64_spinlock_init(p64_spinlock_t *lock);
 //Acquire a spin lock
 void p64_spinlock_acquire(p64_spinlock_t *lock);
 
+//Try to acquire a spin lock
+bool p64_spinlock_try_acquire(p64_spinlock_t *lock);
+
 //Release a spin lock
 void p64_spinlock_release(p64_spinlock_t *lock);
 

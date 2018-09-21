@@ -18,17 +18,18 @@ p64_spinlock_init(p64_spinlock_t *lock)
 }
 
 static inline int
-try_lock(p64_spinlock_t *lock)
+try_lock(p64_spinlock_t *lock, bool weak)
 {
     p64_spinlock_t old = 0;
     //Weak is normally better when using exclusives and retrying
-    return __atomic_compare_exchange_n(lock, &old, 1, /*weak=*/true,
+    return __atomic_compare_exchange_n(lock, &old, 1, /*weak=*/weak,
 				       __ATOMIC_ACQUIRE, __ATOMIC_RELAXED);
 }
 
 void
 p64_spinlock_acquire(p64_spinlock_t *lock)
 {
+    //Wait until lock is available
     do
     {
 	if (__atomic_load_n(lock, __ATOMIC_RELAXED) != 0)
@@ -41,16 +42,24 @@ p64_spinlock_acquire(p64_spinlock_t *lock)
 	}
 	//*lock == 0
     }
-    while (!try_lock(lock));
+    while (!try_lock(lock, /*weak=*/true));
+}
+
+bool
+p64_spinlock_try_acquire(p64_spinlock_t *lock)
+{
+    if (__atomic_load_n(lock, __ATOMIC_RELAXED) == 0)
+    {
+	//Lock is available, try hard once to acquire it
+	return try_lock(lock, /*weak=*/false);
+    }
+    //Lock is not available, don't wait
+    return false;
 }
 
 void
 p64_spinlock_release(p64_spinlock_t *lock)
 {
-    if (UNLIKELY(*lock != 1))
-    {
-	fprintf(stderr, "Invalid release of spinlock %p\n", lock), abort();
-    }
     //Order both loads and stores
 #ifdef USE_DMB
     SMP_MB();
@@ -63,10 +72,6 @@ p64_spinlock_release(p64_spinlock_t *lock)
 void
 p64_spinlock_release_ro(p64_spinlock_t *lock)
 {
-    if (UNLIKELY(*lock != 1))
-    {
-	fprintf(stderr, "Invalid release of spinlock %p\n", lock), abort();
-    }
     //Order only loads
     SMP_RMB();
     __atomic_store_n(lock, 0, __ATOMIC_RELAXED);
