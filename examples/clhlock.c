@@ -16,6 +16,7 @@ int main(void)
     p64_clhlock_acquire(&lock, &node);
     p64_clhlock_release(&node);
     p64_clhlock_fini(&lock);
+    free(node);
 
     printf("clhlock tests complete\n");
     return 0;
