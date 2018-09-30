@@ -54,7 +54,7 @@ struct p64_ringbuf
 } ALIGNED(CACHE_LINE);
 
 p64_ringbuf_t *
-p64_ringbuf_alloc(uint32_t nelems, uint32_t flags)
+p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 {
     unsigned long ringsz = ROUNDUP_POW2(nelems);
     if (nelems == 0 || ringsz == 0 || ringsz > 0x80000000)
@@ -65,8 +65,7 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags)
     {
 	fprintf(stderr, "Invalid flags %x\n", flags), abort();
     }
-    size_t nbytes = ROUNDUP(sizeof(p64_ringbuf_t) + ringsz * sizeof(void *),
-			    CACHE_LINE);
+    size_t nbytes = ROUNDUP(sizeof(p64_ringbuf_t) + ringsz * esize, CACHE_LINE);
     p64_ringbuf_t *rb = aligned_alloc(CACHE_LINE, nbytes);
     if (rb != NULL)
     {
@@ -84,6 +83,17 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags)
     return NULL;
 }
 
+void *
+p64_ringbuf_alloc_(uint32_t nelems, uint32_t flags, size_t esize)
+{
+    p64_ringbuf_t *rb = p64_ringbuf_alloc(nelems, flags, esize);
+    if (rb != NULL)
+    {
+	return &rb->ring;
+    }
+    return NULL;
+}
+
 void
 p64_ringbuf_free(p64_ringbuf_t *rb)
 {
@@ -97,15 +107,20 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
     }
 }
 
-#define result p64_ringbuf_result
-struct result
+#define container_of(pointer, type, member) \
+    ((type *)(void *)(((char *)pointer) - offsetof(type, member)))
+
+void
+p64_ringbuf_free_(void *ptr)
 {
-    int actual;//First (LSW) as this will be used to test for success
-    ringidx_t index;
-};
+    if (ptr != NULL)
+    {
+	p64_ringbuf_free(container_of(ptr, p64_ringbuf_t, ring));
+    }
+}
 
 //MT-unsafe single producer/consumer code
-static inline struct result
+static inline p64_ringbuf_result_t
 acquire_slots(const ringidx_t *headp,
 	      ringidx_t *tailp,
 	      ringidx_t mask,
@@ -118,13 +133,13 @@ acquire_slots(const ringidx_t *headp,
     int actual = MIN(n, (int)(ring_size + head - tail));
     if (UNLIKELY(actual <= 0))
     {
-	return (struct result){ .index = 0, .actual = 0 };
+	return (p64_ringbuf_result_t){ .index = 0, .actual = 0, .mask = mask };
     }
-    return (struct result){ .index = tail, .actual = actual };
+    return (p64_ringbuf_result_t){ .index = tail, .actual = actual, .mask = mask };
 }
 
 //MT-safe multi producer/consumer code
-static inline struct result
+static inline p64_ringbuf_result_t
 acquire_slots_mtsafe(struct headtail *rb,
 		     int n,
 		     bool enqueue)
@@ -144,7 +159,7 @@ acquire_slots_mtsafe(struct headtail *rb,
 	actual = MIN(n, (int)(ring_size + head - tail));
 	if (UNLIKELY(actual <= 0))
 	{
-	    return (struct result){ .index = 0, .actual = 0 };
+	    return (p64_ringbuf_result_t){ .index = 0, .actual = 0, .mask = rb->mask };
 	}
     }
 #ifdef USE_LDXSTX
@@ -157,7 +172,7 @@ acquire_slots_mtsafe(struct headtail *rb,
 					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
 #endif
-    return (struct result){ .index = tail, .actual = actual };
+    return (p64_ringbuf_result_t){ .index = tail, .actual = actual, .mask = rb->mask };
 }
 
 static inline void
@@ -198,16 +213,112 @@ release_slots(ringidx_t *loc,
     }
 }
 
+inline p64_ringbuf_result_t
+p64_ringbuf_acquire_(void *ptr,
+		     uint32_t num,
+		     bool enqueue)
+{
+    p64_ringbuf_t *rb = container_of(ptr, p64_ringbuf_t, ring);
+    p64_ringbuf_result_t r;
+    if (enqueue)
+    {
+	uint32_t mask = rb->prod.mask;
+	uint32_t prod_flags = rb->prod.flags;
+
+	if (!(prod_flags & FLAG_MTSAFE))
+	{
+	    //MT-unsafe single producer code
+	    //Consumer metadata is swapped: cons.tail<->cons.head
+	    r = acquire_slots(&rb->prod.head, &rb->cons.head/*cons.tail*/,
+			      mask, num, true);
+	}
+	else
+	{
+	    //MT-safe multi producer code
+	    r = acquire_slots_mtsafe(&rb->prod, num, true);
+	}
+    }
+    else //dequeue
+    {
+	uint32_t mask = rb->cons.mask;
+	uint32_t cons_flags = rb->cons.flags;
+
+	if (rb->cons.flags & FLAG_LOCKFREE)
+	{
+	    //Use prod.head instead of cons.head (which is not used at all)
+	    int actual;
+	    //Speculative acquisition of slots
+	    ringidx_t head = __atomic_load_n(&rb->prod.head, __ATOMIC_RELAXED);
+            //Consumer metadata is swapped: cons.tail<->cons.head
+            ringidx_t tail = __atomic_load_n(&rb->cons.head/*cons.tail*/,
+                                             __ATOMIC_ACQUIRE);
+            actual = MIN((int)num, (int)(tail - head));
+            if (UNLIKELY(actual <= 0))
+            {
+		return (p64_ringbuf_result_t){ .index = 0, .actual = 0, .mask = mask };
+            }
+	    return (p64_ringbuf_result_t){ .index = head, .actual = actual, .mask = mask };
+
+	}
+
+	if (!(cons_flags & FLAG_MTSAFE))
+	{
+	    //MT-unsafe single consumer code
+	    //Consumer metadata is swapped: cons.tail<->cons.head
+	    r = acquire_slots(&rb->cons.head/*cons.tail*/, &rb->prod.head,
+			      mask, num, false);
+	}
+	else
+	{
+	    //MT-safe multi consumer code
+	    r = acquire_slots_mtsafe(&rb->cons, num, false);
+	}
+    }
+    return r;
+}
+
+inline bool
+p64_ringbuf_release_(void *ptr,
+		     p64_ringbuf_result_t r,
+		     bool enqueue)
+{
+    p64_ringbuf_t *rb = container_of(ptr, p64_ringbuf_t, ring);
+
+    if (enqueue)
+    {
+	//Consumer metadata is swapped: cons.tail<->cons.head
+	release_slots(&rb->cons.head/*cons.tail*/, r.index, r.actual,
+		      /*loads_only=*/false, rb->prod.flags);
+	return true;//Success
+    }
+    else //dequeue
+    {
+	if (rb->cons.flags & FLAG_LOCKFREE)
+	{
+	    bool success = __atomic_compare_exchange_n(&rb->prod.head,
+						       &r.index,
+						       r.index + r.actual,
+						       /*weak=*/true,
+						       __ATOMIC_RELEASE,
+						       __ATOMIC_RELAXED);
+	    return success;
+	}
+	release_slots(&rb->prod.head, r.index, r.actual,
+		      /*loads_only=*/true, rb->cons.flags);
+	return true;//Success
+    }
+}
+
 //Enqueue elements at tail
 uint32_t
 p64_ringbuf_enqueue(p64_ringbuf_t *rb,
-		    void *ev[],
+		    const void *ev[],
 		    uint32_t num)
 {
     //Step 1: acquire slots
     uint32_t mask = rb->prod.mask;
     uint32_t prod_flags = rb->prod.flags;
-    struct result r;
+    p64_ringbuf_result_t r;
 
     if (!(prod_flags & FLAG_MTSAFE))
     {
@@ -221,7 +332,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 	//MT-safe multi producer code
 	r = acquire_slots_mtsafe(&rb->prod, num, true);
     }
-    if (UNLIKELY(r.actual <= 0))
+    if (UNLIKELY(r.actual == 0))
     {
 	return 0;
     }
@@ -229,7 +340,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     //Step 2: write slots
     ringidx_t idx = r.index;
     ringidx_t end = r.index + r.actual;
-    void **evp = ev;
+    void **evp = (void **)ev;
     do
     {
 	rb->ring[idx & mask] = *evp++;
@@ -295,7 +406,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     }
 
     //Step 1: acquire slots
-    struct result r;
+    p64_ringbuf_result_t r;
     if (!(cons_flags & FLAG_MTSAFE))
     {
 	//MT-unsafe single consumer code
@@ -308,7 +419,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	//MT-safe multi consumer code
 	r = acquire_slots_mtsafe(&rb->cons, num, false);
     }
-    if (UNLIKELY(r.actual <= 0))
+    if (UNLIKELY(r.actual == 0))
     {
 	return 0;
     }
@@ -331,4 +442,3 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     *index = r.index;
     return r.actual;
 }
-#undef result
