@@ -7,34 +7,37 @@
 
 #include "p64_ringbuf.h"
 
-#undef _CONCAT
-#define _CONCAT(x, y) x ## y
+#ifndef P64_CONCAT
+#define P64_CONCAT(x, y) x ## y
+#endif
 
 #define P64_RINGBUF(_name, _type) \
-typedef void *_CONCAT(_name,_t); \
-\
-static inline _CONCAT(_name,_t) \
-_CONCAT(_name,_alloc)(uint32_t nelems, uint32_t flags) \
+typedef struct _name \
 { \
-    return (_CONCAT(_name,_t))p64_ringbuf_alloc_(nelems, flags, sizeof(_type)); \
+    _type ring[1]; /* Can't use flexible array member */ \
+} P64_CONCAT(_name,_t); \
+\
+static inline P64_CONCAT(_name,_t) * \
+P64_CONCAT(_name,_alloc)(uint32_t nelems, uint32_t flags) \
+{ \
+    return (P64_CONCAT(_name,_t) *)p64_ringbuf_alloc_(nelems, flags, sizeof(_type)); \
 } \
 \
 static inline void \
-_CONCAT(_name,_free)(_CONCAT(_name,_t) rb) \
+P64_CONCAT(_name,_free)(P64_CONCAT(_name,_t) *rb) \
 { \
     p64_ringbuf_free_((rb)); \
 } \
 \
 static inline uint32_t \
-_CONCAT(_name,_enqueue)(_CONCAT(_name,_t) rb, const _type ev[], uint32_t num) \
+P64_CONCAT(_name,_enqueue)(P64_CONCAT(_name,_t) *rb, const _type ev[], uint32_t num) \
 { \
     const struct p64_ringbuf_result r = p64_ringbuf_acquire_(rb, num, true); \
     if (r.actual != 0) \
     { \
-	_type *ring = (_type *)rb; \
 	for (uint32_t i = 0; i < r.actual; i++) \
 	{ \
-	    ring[(r.index + i) & r.mask] = ev[i]; \
+	    rb->ring[(r.index + i) & r.mask] = ev[i]; \
 	} \
 	(void)p64_ringbuf_release_(rb, r, true); \
     } \
@@ -42,7 +45,7 @@ _CONCAT(_name,_enqueue)(_CONCAT(_name,_t) rb, const _type ev[], uint32_t num) \
 } \
 \
 static inline uint32_t \
-_CONCAT(_name,_dequeue)(_CONCAT(_name,_t) rb, _type ev[], uint32_t num, uint32_t *index) \
+P64_CONCAT(_name,_dequeue)(P64_CONCAT(_name,_t) *rb, _type ev[], uint32_t num, uint32_t *index) \
 { \
     struct p64_ringbuf_result r; \
     do \
@@ -52,11 +55,10 @@ _CONCAT(_name,_dequeue)(_CONCAT(_name,_t) rb, _type ev[], uint32_t num, uint32_t
 	{ \
 	    return r.actual; \
 	} \
-	const _type *ring = (const _type *)rb; \
 	*index = r.index; \
 	for (uint32_t i = 0; i < r.actual; i++) \
 	{ \
-	    ev[i] = ring[(r.index + i) & r.mask]; \
+	    ev[i] = rb->ring[(r.index + i) & r.mask]; \
 	} \
     } \
     while (!p64_ringbuf_release_(rb, r, false)); \
