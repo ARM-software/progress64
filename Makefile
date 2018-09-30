@@ -35,6 +35,10 @@ CCFLAGS += -O0
 endif
 ifeq ($(ASSERT),0)
 DEFINE += -DNDEBUG#disable assertions
+else
+CCFLAGS += -fsanitize=address -fsanitize=undefined
+LDFLAGS += -fsanitize=address -fsanitize=undefined
+LDFLAGS += -static-libasan -static-libubsan
 endif
 DEFINE += -D_GNU_SOURCE
 CCFLAGS += -std=c99
