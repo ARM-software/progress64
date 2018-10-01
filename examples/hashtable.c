@@ -139,8 +139,16 @@ int main(void)
     printf("Remove 9\n");
     EXPECT(p64_hashtable_remove(ht, &h9->next, hash(9)));
     EXPECT(p64_hashtable_check(ht, keyf) == 2);
-    printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
+    EXPECT(p64_hashtable_remove_by_key(ht, compf, &(uint32_t){4}, hash(4), &hp) == (p64_hashelem_t *)h4);
+    EXPECT(p64_hashtable_remove_by_key(ht, compf, &(uint32_t){5}, hash(5), &hp) == (p64_hashelem_t *)h5);
+    p64_hazptr_release_ro(&hp);
     p64_hashtable_free(ht);
+    printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
+    free(h1);
+    free(h2);
+    free(h3);
+    free(h4);
+    free(h5);
 
     printf("hashtable test complete\n");
     return 0;
