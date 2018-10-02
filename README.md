@@ -27,7 +27,8 @@ Functionality
 * rwsync - lightweight reader/writer synchronisation (blocking)
 * spinlock - basic CAS-based spin lock (blocking)
 * timer - timers (lock-free)
-("non-blocking" here means no thread will block (spin) but not properly lock-free)
+
+("non-blocking" here means no thread will block (spin) but not lock-free in the academic sense, instead operations may fail early)
 
 Requirements
 --------------
