@@ -43,7 +43,7 @@ p64_ringbuf_free(p64_ringbuf_t *rb);
 //Enqueue elements on a ring buffer
 //The number of actually enqueued elements is returned
 uint32_t
-p64_ringbuf_enqueue(p64_ringbuf_t *rb, const void *ev[], uint32_t num);
+p64_ringbuf_enqueue(p64_ringbuf_t *rb, void *const ev[], uint32_t num);
 
 //Dequeue elements from a ring buffer
 //The number of actually dequeued elements is returned

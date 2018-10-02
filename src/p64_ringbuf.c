@@ -310,9 +310,10 @@ p64_ringbuf_release_(void *ptr,
 }
 
 //Enqueue elements at tail
+UNROLL_LOOPS
 uint32_t
 p64_ringbuf_enqueue(p64_ringbuf_t *rb,
-		    const void *ev[],
+		    void *const *restrict ev,
 		    uint32_t num)
 {
     //Step 1: acquire slots
@@ -338,14 +339,10 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     }
 
     //Step 2: write slots
-    ringidx_t idx = r.index;
-    ringidx_t end = r.index + r.actual;
-    void **evp = (void **)ev;
-    do
+    for (uint32_t i = 0; i < r.actual; i++)
     {
-	rb->ring[idx & mask] = *evp++;
+	rb->ring[(r.index + i) & mask] = ev[i];
     }
-    while (++idx != end);
 
     //Step 3: release slots to consumer
     //Consumer metadata is swapped: cons.tail<->cons.head
@@ -356,9 +353,10 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 }
 
 //Dequeue elements from head
+UNROLL_LOOPS
 uint32_t
 p64_ringbuf_dequeue(p64_ringbuf_t *rb,
-		    void *ev[],
+		    void **restrict ev,
 		    uint32_t num,
 		    uint32_t *index)
 {
@@ -383,15 +381,10 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	    }
 
 	    //Step 2: read slots in advance (fortunately non-destructive)
-	    ringidx_t idx = head;
-	    ringidx_t end = head + actual;
-	    void **evp = ev;
-	    do
+	    for (uint32_t i = 0; i < (uint32_t)actual; i++)
 	    {
-		void *elem = rb->ring[idx & mask];
-		*evp++ = elem;
+		ev[i] = rb->ring[(head + i) & mask];
 	    }
-	    while (++idx != end);
 
 	    //Step 3: commit acquisition, release slots to producer
 	}
@@ -425,15 +418,10 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     }
 
     //Step 2: read slots
-    ringidx_t idx = r.index;
-    ringidx_t end = r.index + r.actual;
-    void **evp = ev;
-    do
+    for (uint32_t i = 0; i < r.actual; i++)
     {
-	void *elem = rb->ring[idx & mask];
-	*evp++ = elem;
+	ev[i] = rb->ring[(r.index + i) & mask];
     }
-    while (++idx != end);
 
     //Step 3: release slots to producer
     release_slots(&rb->prod.head, r.index, r.actual,

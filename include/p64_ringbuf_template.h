@@ -11,6 +11,15 @@
 #define P64_CONCAT(x, y) x ## y
 #endif
 
+#undef UNROLL_LOOPS
+#ifdef __clang__
+#define UNROLL_LOOPS __attribute__((opencl_unroll_hint(4)))
+#elif defined __GNUC__
+#define UNROLL_LOOPS __attribute__((optimize("unroll-loops")))
+#else
+#define UNROLL_LOOPS
+#endif
+
 #define P64_RINGBUF(_name, _type) \
 typedef struct _name \
 { \
@@ -29,8 +38,9 @@ P64_CONCAT(_name,_free)(P64_CONCAT(_name,_t) *rb) \
     p64_ringbuf_free_((rb)); \
 } \
 \
+UNROLL_LOOPS \
 static inline uint32_t \
-P64_CONCAT(_name,_enqueue)(P64_CONCAT(_name,_t) *rb, const _type ev[], uint32_t num) \
+P64_CONCAT(_name,_enqueue)(P64_CONCAT(_name,_t) *rb, _type const ev[], uint32_t num) \
 { \
     const struct p64_ringbuf_result r = p64_ringbuf_acquire_(rb, num, true); \
     if (r.actual != 0) \
@@ -44,6 +54,7 @@ P64_CONCAT(_name,_enqueue)(P64_CONCAT(_name,_t) *rb, const _type ev[], uint32_t 
     return r.actual; \
 } \
 \
+UNROLL_LOOPS \
 static inline uint32_t \
 P64_CONCAT(_name,_dequeue)(P64_CONCAT(_name,_t) *rb, _type ev[], uint32_t num, uint32_t *index) \
 { \
