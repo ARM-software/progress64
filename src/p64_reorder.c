@@ -22,22 +22,24 @@ struct hi
     uint32_t chgi;//Change indicator
 } ALIGNED(sizeof(uint64_t));
 
-//p64_reorder_reserve() writes tail
-//p64_reorder_insert() writes head & chgi
 struct p64_reorder
 {
+    //Written by p64_reorder_release()
     struct hi hi ALIGNED(CACHE_LINE);//head and chgi
+    //Constants
     uint32_t mask;
-    bool user_reserve;
+    bool user_acquire;
     p64_reorder_cb cb;
     void *arg;
+    //Written by p64_reorder_acquire()
     uint32_t tail ALIGNED(CACHE_LINE);
+    //Written by p64_reorder_release()
     void *ring[] ALIGNED(CACHE_LINE);
 };
 
 p64_reorder_t *
 p64_reorder_alloc(uint32_t nelems,
-		  bool user_reserve,
+		  bool user_acquire,
 		  p64_reorder_cb cb,
 		  void *arg)
 {
@@ -48,49 +50,53 @@ p64_reorder_alloc(uint32_t nelems,
     unsigned long ringsize = ROUNDUP_POW2(nelems);
     size_t nbytes = ROUNDUP(sizeof(p64_reorder_t) + ringsize * sizeof(void *),
 			    CACHE_LINE);
-    p64_reorder_t *rb = aligned_alloc(CACHE_LINE, nbytes);
-    if (rb != NULL)
+    p64_reorder_t *rob = aligned_alloc(CACHE_LINE, nbytes);
+    if (rob != NULL)
     {
 	//Clear the ring pointers
-	memset(rb, 0, nbytes);
-	rb->hi.head = 0;
-	rb->hi.chgi = 0;
-	rb->mask = ringsize - 1;
-	rb->user_reserve = user_reserve;
-	rb->cb = cb;
-	rb->arg = arg;
-	rb->tail = 0;
-	return rb;
+	memset(rob, 0, offsetof(p64_reorder_t, ring));
+	rob->hi.head = 0;
+	rob->hi.chgi = 0;
+	rob->mask = ringsize - 1;
+	rob->user_acquire = user_acquire;
+	rob->cb = cb;
+	rob->arg = arg;
+	rob->tail = 0;
+	for (unsigned long i = 0; i < ringsize; i++)
+	{
+	    rob->ring[i] = NULL;
+	}
+	return rob;
     }
     return NULL;
 }
 
 void
-p64_reorder_free(p64_reorder_t *rb)
+p64_reorder_free(p64_reorder_t *rob)
 {
-    if (rb != NULL)
+    if (rob != NULL)
     {
-	if (!rb->user_reserve && rb->hi.head != rb->tail)
+	if (!rob->user_acquire && rob->hi.head != rob->tail)
 	{
-	    fprintf(stderr, "Reorder buffer %p is not empty\n", rb), abort();
+	    fprintf(stderr, "Reorder buffer %p is not empty\n", rob), abort();
 	}
-	free(rb);
+	free(rob);
     }
 }
 
 uint32_t
-p64_reorder_reserve(p64_reorder_t *rb,
+p64_reorder_acquire(p64_reorder_t *rob,
 		    uint32_t requested,
 		    uint32_t *sn)
 {
     uint32_t head, tail;
     int32_t actual;
-    PREFETCH_FOR_WRITE(&rb->tail);
+    PREFETCH_FOR_WRITE(&rob->tail);
+    tail = __atomic_load_n(&rob->tail, __ATOMIC_RELAXED);
     do
     {
-	tail = __atomic_load_n(&rb->tail, __ATOMIC_RELAXED);
-	head = __atomic_load_n(&rb->hi.head, __ATOMIC_ACQUIRE);
-	int32_t available = (rb->mask + 1) - (tail - head);
+	head = __atomic_load_n(&rob->hi.head, __ATOMIC_ACQUIRE);
+	int32_t available = (rob->mask + 1) - (tail - head);
 	//Use signed arithmetic for robustness as head & tail are not read
 	//atomically, available may be < 0
 	actual = MIN(available, (int32_t)requested);
@@ -99,8 +105,8 @@ p64_reorder_reserve(p64_reorder_t *rb,
 	    return 0;
 	}
     }
-    while (!__atomic_compare_exchange_n(&rb->tail,
-					&tail,
+    while (!__atomic_compare_exchange_n(&rob->tail,
+					&tail,//Updated on failure
 					tail + actual,
 					/*weak=*/true,
 					__ATOMIC_RELAXED,
@@ -122,33 +128,33 @@ AFTER(uint32_t x, uint32_t y)
 }
 
 void
-p64_reorder_insert(p64_reorder_t *rb,
-		   uint32_t nelems,
-		   void *elems[],
-		   uint32_t sn)
+p64_reorder_release(p64_reorder_t *rob,
+		    uint32_t sn,
+		    void *elems[],
+		    uint32_t nelems)
 {
-    uint32_t mask = rb->mask;
-    p64_reorder_cb cb = rb->cb;
-    void *arg = rb->arg;
-    if (rb->user_reserve)
+    uint32_t mask = rob->mask;
+    p64_reorder_cb cb = rob->cb;
+    void *arg = rob->arg;
+    if (rob->user_acquire)
     {
-	//With user reserve, the user might have been generous and allocated
+	//With user_acquire, the user might have been generous and allocated
 	//a SN currently outside of the ROB window
 	uint32_t sz = mask + 1;
 	if (UNLIKELY(AFTER(sn + nelems,
-			   __atomic_load_n(&rb->hi.head, __ATOMIC_ACQUIRE) + sz)))
+			   __atomic_load_n(&rob->hi.head, __ATOMIC_ACQUIRE) + sz)))
 	{
-	    //We must wait for in-order elements to be retired so that our SN will
-	    //fit inside the ROB window
+	    //We must wait for in-order elements to be retired so that our SN
+	    //will fit inside the ROB window
 	    SEVL();
 	    while (WFE() && AFTER(sn + nelems,
-				  LDXR32(&rb->hi.head, __ATOMIC_ACQUIRE) + sz))
+				  LDXR32(&rob->hi.head, __ATOMIC_ACQUIRE) + sz))
 	    {
 		DOZE();
 	    }
 	}
     }
-    else if (UNLIKELY(AFTER(sn + nelems, rb->tail)))
+    else if (UNLIKELY(AFTER(sn + nelems, rob->tail)))
     {
 	fprintf(stderr, "Invalid sequence number %u\n", sn + nelems), abort();
     }
@@ -161,13 +167,13 @@ p64_reorder_insert(p64_reorder_t *rb,
 	{
 	    fprintf(stderr, "Invalid NULL element\n"), abort();
 	}
-	assert(rb->ring[(sn + i) & mask] == NULL);
-	__atomic_store_n(&rb->ring[(sn + i) & mask], elems[i],
+	assert(rob->ring[(sn + i) & mask] == NULL);
+	__atomic_store_n(&rob->ring[(sn + i) & mask], elems[i],
 			 __ATOMIC_RELAXED);
     }
 
     struct hi old;
-    __atomic_load(&rb->hi, &old, __ATOMIC_ACQUIRE);
+    __atomic_load(&rob->hi, &old, __ATOMIC_ACQUIRE);
     while (BEFORE(old.head, sn) || !BEFORE(old.head, sn + nelems))
     {
 	//We are out-of-order
@@ -176,7 +182,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 	new.head = old.head;
 	new.chgi = old.chgi + 1;//Unique value
 	//Update head&chgi, fail if any has changed
-	if (__atomic_compare_exchange(&rb->hi,
+	if (__atomic_compare_exchange(&rob->hi,
 				      &old,//Updated on failure
 				      &new,
 				      /*weak=*/true,
@@ -199,10 +205,10 @@ p64_reorder_insert(p64_reorder_t *rb,
     do
     {
 	void *elem;
-	while ((elem = __atomic_load_n(&rb->ring[new.head & mask],
+	while ((elem = __atomic_load_n(&rob->ring[new.head & mask],
 				       __ATOMIC_ACQUIRE)) != NULL)
 	{
-	    rb->ring[new.head & mask] = NULL;
+	    rob->ring[new.head & mask] = NULL;
 	    if (LIKELY((uintptr_t)elem > (uintptr_t)P64_REORDER_DUMMY))
 	    {
 		cb(arg, elem, new.head);
@@ -219,7 +225,7 @@ p64_reorder_insert(p64_reorder_t *rb,
 	new.chgi = old.chgi;
     }
     //Update head&chgi, fail if chgi has changed (head cannot change)
-    while (!__atomic_compare_exchange(&rb->hi,
+    while (!__atomic_compare_exchange(&rob->hi,
 				      &old,//Updated on failure
 				      &new,
 				      /*weak=*/true,
