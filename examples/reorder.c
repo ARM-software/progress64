@@ -18,6 +18,10 @@ static void callback(void *arg, void *elem, uint32_t sn)
 	EXPECT(sn + 100 == next_elem);
 	next_elem++;
     }
+    else
+    {
+	EXPECT(sn + 100 == next_elem);
+    }
 }
 
 int main(void)

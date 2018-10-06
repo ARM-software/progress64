@@ -88,8 +88,8 @@ p64_reorder_reserve(p64_reorder_t *rb,
     PREFETCH_FOR_WRITE(&rb->tail);
     do
     {
-	head = __atomic_load_n(&rb->hi.head, __ATOMIC_RELAXED);
 	tail = __atomic_load_n(&rb->tail, __ATOMIC_RELAXED);
+	head = __atomic_load_n(&rb->hi.head, __ATOMIC_ACQUIRE);
 	int32_t available = (rb->mask + 1) - (tail - head);
 	//Use signed arithmetic for robustness as head & tail are not read
 	//atomically, available may be < 0
