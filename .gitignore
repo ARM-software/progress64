@@ -2,6 +2,7 @@
 *.o
 *.swp
 antireplay
+clhlock
 core
 hashtable
 laxrob
