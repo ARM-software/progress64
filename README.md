@@ -20,6 +20,7 @@ Functionality
 * hashtable - hash table (lock-free)
 * hazardptr - MT-safe memory reclamation (lock-free)
 * laxrob - 'lax' reorder buffer (non-blocking)
+* lfring - ring buffer (lock-free)
 * reassemble - IP reassembly (lock-free)
 * reorder - 'strict' reorder buffer (non-blocking)
 * ringbuf - SP/MP/SC/MC/LFC ring buffer (MP/MC blocking, SP/SC/LFC lock-free)

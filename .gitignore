@@ -6,6 +6,7 @@ clhlock
 core
 hashtable
 laxrob
+lfring
 libprogress64.a
 perf.data*
 reassemble
