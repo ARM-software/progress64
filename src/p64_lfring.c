@@ -94,7 +94,7 @@ cond_update(ringidx_t *loc, ringidx_t neu)
 	//Else neu > old, need to update *loc
     }
 #ifdef USE_LDXSTX
-    while (unlikely(stx32(loc, neu, __ATOMIC_RELEASE)));
+    while (UNLIKELY(stx32(loc, neu, __ATOMIC_RELEASE)));
 #else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
@@ -182,7 +182,7 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	do
 	{
 #ifdef USE_LDXSTX
-	    elem = (void *)ldx64((uint64_t *)&q->ring[idx & mask],
+	    elem = (void *)ldx64((uint64_t *)&lfr->ring[idx & mask],
 				 __ATOMIC_ACQUIRE);
 #endif
 	    if (elem == NULL)
@@ -193,7 +193,7 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	    //Try to take element
 	}
 #ifdef USE_LDXSTX
-	while (unlikely(stx64((uint64_t *)&q->ring[idx & mask],
+	while (UNLIKELY(stx64((uint64_t *)&lfr->ring[idx & mask],
 			      (uint64_t)NULL,
 			      __ATOMIC_RELAXED)));
 #else
