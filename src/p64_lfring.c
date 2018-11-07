@@ -113,7 +113,8 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 {
     ringidx_t mask = lfr->mask;
     ringidx_t size = mask + 1;
-    ringidx_t idx = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
+    const ringidx_t org_tail = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
+    ringidx_t idx = org_tail;
     int actual = 0;
     while (actual < nelems &&
 	   before(idx, __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE) + size))
@@ -152,8 +153,9 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 	//Continue with next slot
 	idx++;
     }
-    if (actual != 0)
+    if (idx != org_tail)
     {
+	//Either we or some other thread has unreleased updates
 	cond_update(&lfr->tail, idx);
     }
     return actual;
@@ -167,7 +169,8 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 		   uint32_t *restrict idxs)
 {
     ringidx_t mask = lfr->mask;
-    ringidx_t idx = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
+    const ringidx_t org_head = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
+    ringidx_t idx = org_head;
     int actual = 0;
     while (actual < nelems &&
 	   before(idx, __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE)))
@@ -217,8 +220,9 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	//Continue with next slot
 	idx++;
     }
-    if (actual != 0)
+    if (idx != org_head)
     {
+	//Either we or some other thread has unreleased updates
 	cond_update(&lfr->head, idx);
     }
     return actual;
