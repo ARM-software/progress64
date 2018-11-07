@@ -165,8 +165,7 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 uint32_t
 p64_lfring_dequeue(p64_lfring_t *lfr,
 		   void **restrict elems,
-		   uint32_t nelems,
-		   uint32_t *restrict idxs)
+		   uint32_t nelems)
 {
     ringidx_t mask = lfr->mask;
     const ringidx_t org_head = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
@@ -213,7 +212,6 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 		PREFETCH_FOR_READ(elem);
 	    }
 	    elems[actual] = elem;
-	    idxs[actual] = idx;
 	    actual++;
 	}
 	///Slot is now free, either by us or by someone else

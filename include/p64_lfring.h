@@ -35,12 +35,10 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 
 //Dequeue elements from a ring buffer
 //The number of actually dequeued elements is returned
-//The indexes of the dequeued elements are returned in a separate vector
 uint32_t
 p64_lfring_dequeue(p64_lfring_t *lfr,
 		   void *elems[],
-		   uint32_t nelems,
-		   uint32_t idxs[]);
+		   uint32_t nelems);
 
 #ifdef __cplusplus
 }

@@ -45,6 +45,12 @@ Restrictions
 PROGRESS64 currently only supports ARMv8/AArch64 and x86-64 architectures.
 Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the hardware.
 
+Notes
+--------------
+lfring is an experimental lock-free ring buffer.
+We are not sure that FIFO order is always respected.
+E.g. a thread enqueues A then B, possibly B could be dequeued before A.
+
 TODO
 --------------
 * Some missing examples
