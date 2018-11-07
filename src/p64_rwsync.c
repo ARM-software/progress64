@@ -49,7 +49,7 @@ p64_rwsync_acquire_rd(const p64_rwsync_t *sync)
 bool
 p64_rwsync_release_rd(const p64_rwsync_t *sync, p64_rwsync_t prv)
 {
-    SMP_RMB();//Load-only barrier due to reader-sync
+    smp_fence(LoadLoad);//Load-only barrier due to reader-sync
     //Test if sync is unchanged => success
     return __atomic_load_n(sync, __ATOMIC_RELAXED) == prv;
 }
@@ -80,7 +80,7 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
 
     //Clear writer flag
 #ifdef USE_DMB
-    SMP_MB();//Load/store barrier due to writer-sync
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(sync, cur + 1, __ATOMIC_RELAXED);
 #else
     __atomic_store_n(sync, cur + 1, __ATOMIC_RELEASE);

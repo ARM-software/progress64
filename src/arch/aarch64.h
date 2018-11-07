@@ -24,12 +24,27 @@ static inline void doze(void)
     __asm__ volatile("isb" : : : );//isb better than nop
 }
 
-//Full fence, e.g. for store/load ordering
-#define SMP_MB()  __asm__ volatile("dmb ish"   : : : "memory")
-//Read fence for load/load ordering
-#define SMP_RMB() __asm__ volatile("dmb ishld" : : : "memory")
-//Write fence for store/store ordering
-#define SMP_WMB() __asm__ volatile("dmb ishst" : : : "memory")
+static inline void
+smp_fence(uint32_t mask)
+{
+    switch (mask)
+    {
+	case 0 :
+	    break;
+	case LoadLoad :
+	case LoadStore :
+	case LoadLoad | LoadStore :
+	    __asm__ volatile ("dmb ishld" ::: "memory");
+	    break;
+	case StoreStore :
+	    __asm__ volatile ("dmb ishst" ::: "memory");
+	    break;
+	case StoreLoad :
+	default :
+	    __asm__ volatile ("dmb ish" ::: "memory");
+	    break;
+    }
+}
 
 #if defined USE_WFE
 

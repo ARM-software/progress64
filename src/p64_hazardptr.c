@@ -224,7 +224,7 @@ p64_hazptr_acquire(void **pptr,
 	__atomic_store_n(*hp, ptr, __ATOMIC_RELAXED);
 
 	//Step 3: Ensure HP write is visible before re-reading location
-	__atomic_thread_fence(__ATOMIC_SEQ_CST);
+	smp_fence(StoreLoad);
 
 	//Step 4: Verify reference by re-reading and comparing
 	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_ACQUIRE) == ptr))
@@ -257,7 +257,7 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
-	SMP_RMB();//Load-only barrier
+	smp_fence(LoadStore);//Load-only barrier
 	//Reset hazard pointer
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
 	//Release hazard pointer
@@ -377,7 +377,7 @@ p64_hazptr_retire(void *ptr,
     {
 	//rlist full
 	//Ensure all removals are visible before we read hazard pointers
-	__atomic_thread_fence(__ATOMIC_SEQ_CST);
+	smp_fence(StoreLoad);
 	//Try to reclaim objects
 	(void)garbage_collect();
 	//At least one object must have been reclaimed

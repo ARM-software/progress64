@@ -221,7 +221,7 @@ p64_timer_expire(void)
 			 __ATOMIC_RELAXED);
 	//We need our g_timer.earliest reset to be visible before we start to
 	//scan the timer array
-	SMP_WMB();
+	smp_fence(StoreLoad);
 	//Scan expiration ticks looking for expired timers
 	earliest = scan_timers(now, &g_timer.expirations[0],
 			       &g_timer.expirations[g_timer.hiwmark]);

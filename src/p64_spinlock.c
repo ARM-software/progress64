@@ -62,7 +62,7 @@ p64_spinlock_release(p64_spinlock_t *lock)
 {
     //Order both loads and stores
 #ifdef USE_DMB
-    SMP_MB();
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(lock, 0, __ATOMIC_RELAXED);
 #else
     __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
@@ -73,6 +73,6 @@ void
 p64_spinlock_release_ro(p64_spinlock_t *lock)
 {
     //Order only loads
-    SMP_RMB();
+    smp_fence(LoadStore);
     __atomic_store_n(lock, 0, __ATOMIC_RELAXED);
 }

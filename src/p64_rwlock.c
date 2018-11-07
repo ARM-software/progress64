@@ -62,7 +62,7 @@ void
 p64_rwlock_release_rd(p64_rwlock_t *lock)
 {
     p64_rwlock_t prevl;
-    SMP_RMB();//Load-only barrier due to reader-lock
+    smp_fence(LoadStore);//Load-only barrier due to reader-lock
     //Decrement number of readers
     prevl = __atomic_fetch_sub(lock, 1, __ATOMIC_RELAXED);
     //Check after lock is released but use pre-release lock value
@@ -100,7 +100,7 @@ p64_rwlock_release_wr(p64_rwlock_t *lock)
     }
     //Clear writer flag
 #ifdef USE_DMB
-    SMP_MB();//Load/store barrier due to writer-lock
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(lock, 0, __ATOMIC_RELAXED);
 #else
     __atomic_store_n(lock, 0, __ATOMIC_RELEASE);

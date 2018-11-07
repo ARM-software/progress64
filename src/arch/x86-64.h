@@ -13,12 +13,20 @@ static inline void doze(void)
     __asm__ volatile("rep; nop" : : : );
 }
 
-//Full fence, e.g. for store/load ordering
-#define SMP_MB()   __asm__ volatile("mfence" : : : "memory");
-//Read fence for load/load ordering - no-op on x86-64
-#define SMP_RMB()  __asm__ volatile(""       : : : "memory");
-//Write fence for store/store ordering - no-op on x86-64
-#define SMP_WMB()  __asm__ volatile(""       : : : "memory");
+static inline void
+smp_fence(uint32_t mask)
+{
+    if ((mask & StoreLoad) == StoreLoad)
+    {
+	__asm__ volatile ("mfence" ::: "memory");
+    }
+    else if (mask != 0)
+    {
+	//Any fence but StoreLoad
+	__asm__ volatile ("" ::: "memory");
+    }
+    //Else no fence specified
+}
 
 #define SEVL() (void)0
 #define WFE() 1

@@ -199,13 +199,13 @@ release_slots(ringidx_t *loc,
     //Also enable other producers (consumers) to proceed
     if (loads_only)
     {
-	SMP_RMB();//Order loads only
+	smp_fence(LoadStore);//Order loads only
 	__atomic_store_n(loc, idx + n, __ATOMIC_RELAXED);
     }
     else
     {
 #ifdef USE_DMB
-	SMP_MB();//Order both loads and stores
+	__atomic_thread_fence(__ATOMIC_RELEASE);//Order both loads and stores
 	__atomic_store_n(loc, idx + n, __ATOMIC_RELAXED);
 #else
 	__atomic_store_n(loc, idx + n, __ATOMIC_RELEASE);
