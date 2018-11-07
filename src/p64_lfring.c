@@ -85,23 +85,23 @@ cond_update(ringidx_t *loc, ringidx_t neu)
     do
     {
 #ifdef USE_LDXSTX
-        ringidx_t old = ldx32(loc, __ATOMIC_RELAXED);
+	ringidx_t old = ldx32(loc, __ATOMIC_RELAXED);
 #endif
-        if (before(neu, old))//neu < old
-        {
-            break;
-        }
-        //Else neu > old, need to update *loc
+	if (before(neu, old))//neu < old
+	{
+	    break;
+	}
+	//Else neu > old, need to update *loc
     }
 #ifdef USE_LDXSTX
     while (unlikely(stx32(loc, neu, __ATOMIC_RELEASE)));
 #else
     while (!__atomic_compare_exchange_n(loc,
-                                        &old,//Updated on failure
-                                        neu,
-                                        /*weak=*/false,
-                                        __ATOMIC_RELEASE,
-                                        __ATOMIC_RELAXED));
+					&old,//Updated on failure
+					neu,
+					/*weak=*/false,
+					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED));
 #endif
 }
 
@@ -118,7 +118,7 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
     while (actual < nelems &&
 	   before(idx, __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE) + size))
     {
-	__builtin_prefetch(&lfr->ring[idx & mask], 1, 0);
+	PREFETCH_FOR_WRITE(&lfr->ring[idx & mask]);
 	void *elem = __atomic_load_n(&lfr->ring[idx & mask], __ATOMIC_RELAXED);
 	if (elem == NULL)
 	{
@@ -170,36 +170,56 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
     ringidx_t idx = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
     int actual = 0;
     while (actual < nelems &&
-           before(idx, __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE)))
+	   before(idx, __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE)))
     {
-        void *elem = __atomic_load_n(&lfr->ring[idx & mask], __ATOMIC_RELAXED);
-        while (elem != NULL)
-        {
-            //Found used slot
-            //Try to take element
-            if (__atomic_compare_exchange_n(&lfr->ring[idx & mask],
-                                            &elem,//Updated on failure
-                                            NULL,
-                                            /*weak=*/false,
-                                            __ATOMIC_ACQUIRE,
-                                            __ATOMIC_RELAXED))
-            {
-                //CAS succeeded
-                elems[actual] = elem;
-                idxs[actual] = idx;
-		actual++;
-                break;
-            }
-            //Else CAS failed, 'elem' updated
-            //Possibly 'elem' has non-NULL value so try again
-        }
-        ///Slot is now free, either by us or by someone else
-        //Continue with next slot
-        idx++;
+	void *elem;
+#ifndef USE_LDXSTX
+	elem = __atomic_load_n(&lfr->ring[idx & mask], __ATOMIC_RELAXED);
+#endif
+	do
+	{
+#ifdef USE_LDXSTX
+	    elem = (void *)ldx64((uint64_t *)&q->ring[idx & mask],
+				 __ATOMIC_ACQUIRE);
+#endif
+	    if (elem == NULL)
+	    {
+		break;
+	    }
+	    //Found used slot
+	    //Try to take element
+	}
+#ifdef USE_LDXSTX
+	while (unlikely(stx64((uint64_t *)&q->ring[idx & mask],
+			      (uint64_t)NULL,
+			      __ATOMIC_RELAXED)));
+#else
+	while (!__atomic_compare_exchange_n(&lfr->ring[idx & mask],
+					    &elem,//Updated on failure
+					    NULL,
+					    /*weak=*/false,
+					    __ATOMIC_ACQUIRE,
+					    __ATOMIC_RELAXED));
+#endif
+	if (elem != NULL)
+	{
+	    //CAS succeeded
+	    if (actual == 0)
+	    {
+		//Prefetch first cache line of first element
+		PREFETCH_FOR_READ(elem);
+	    }
+	    elems[actual] = elem;
+	    idxs[actual] = idx;
+	    actual++;
+	}
+	///Slot is now free, either by us or by someone else
+	//Continue with next slot
+	idx++;
     }
     if (actual != 0)
     {
-        cond_update(&lfr->head, idx);
+	cond_update(&lfr->head, idx);
     }
     return actual;
 }
