@@ -221,18 +221,17 @@ p64_hazptr_acquire(void **pptr,
 	    }
 	}
 	//Step 2b: Initialise hazard pointer with reference
-	__atomic_store_n(*hp, ptr, __ATOMIC_RELAXED);
+	__atomic_store_n(*hp, ptr, __ATOMIC_SEQ_CST);
 
-	//Step 3: Ensure HP write is visible before re-reading location
-	smp_fence(StoreLoad);
+	//Sequential consistency will separate the store and the load
 
-	//Step 4: Verify reference by re-reading and comparing
-	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_ACQUIRE) == ptr))
+	//Step 3: Verify reference by re-reading and comparing
+	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_SEQ_CST) == ptr))
 	{
 	    return ptr;//Success
 	}
 
-	//Step 5: Failed the race, reset hazard pointer and restart
+	//Step 4: Lost the race, reset hazard pointer and restart
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
     }
 }
