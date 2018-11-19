@@ -150,9 +150,9 @@ acquire_slots_mtsafe(struct headtail *rb,
 #ifndef USE_LDXSTX
     tail = __atomic_load_n(&rb->tail, __ATOMIC_RELAXED);
 #endif
+    ringidx_t head = __atomic_load_n(&rb->head, __ATOMIC_ACQUIRE);
     do
     {
-	ringidx_t head = __atomic_load_n(&rb->head, __ATOMIC_ACQUIRE);
 #ifdef USE_LDXSTX
 	tail = ldx32(&rb->tail, __ATOMIC_RELAXED);
 #endif
@@ -369,11 +369,11 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	int actual;
 	//Step 1: speculative acquisition of slots
 	ringidx_t head = __atomic_load_n(&rb->prod.head, __ATOMIC_RELAXED);
+	//Consumer metadata is swapped: cons.tail<->cons.head
+	ringidx_t tail = __atomic_load_n(&rb->cons.head/*cons.tail*/,
+					 __ATOMIC_ACQUIRE);
 	do
 	{
-	    //Consumer metadata is swapped: cons.tail<->cons.head
-	    ringidx_t tail = __atomic_load_n(&rb->cons.head/*cons.tail*/,
-					     __ATOMIC_ACQUIRE);
 	    actual = MIN((int)num, (int)(tail - head));
 	    if (UNLIKELY(actual <= 0))
 	    {
