@@ -56,8 +56,10 @@ int main(void)
     test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_MCDEQ);
     printf("testing SPSC ring buffer\n");
     test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_SCDEQ);
-    printf("testing LFC ring buffer\n");
-    test_rb(P64_RINGBUF_F_LFDEQ);
+    printf("testing MPLFC ring buffer\n");
+    test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_LFDEQ);
+    printf("testing SPLFC ring buffer\n");
+    test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_LFDEQ);
     printf("ringbuf test complete\n");
     return 0;
 }
