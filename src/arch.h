@@ -11,7 +11,7 @@
 #define StoreLoad  0x21
 #define StoreStore 0x22
 
-static void smp_fence(uint32_t mask);
+static void smp_fence(unsigned int mask);
 
 #if defined __aarch64__
 

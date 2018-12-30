@@ -25,7 +25,7 @@ static inline void doze(void)
 }
 
 static inline void
-smp_fence(uint32_t mask)
+smp_fence(unsigned int mask)
 {
     switch (mask)
     {
