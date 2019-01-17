@@ -49,13 +49,13 @@ p64_rwlock_acquire_rd(p64_rwlock_t *lock)
     do
     {
 	//Wait for any present writer to go away
-	l = wait_for_no(lock, RWLOCK_WRITER, __ATOMIC_ACQUIRE);
+	l = wait_for_no(lock, RWLOCK_WRITER, __ATOMIC_RELAXED);
 
 	//Attempt to increment number of readers
     }
     while (!__atomic_compare_exchange_n(lock, &l, l + 1,
 					/*weak=*/true,
-					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
+					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
 }
 
 void
@@ -79,13 +79,13 @@ p64_rwlock_acquire_wr(p64_rwlock_t *lock)
     do
     {
 	//Wait for any present writer to go away
-	l = wait_for_no(lock, RWLOCK_WRITER, __ATOMIC_ACQUIRE);
+	l = wait_for_no(lock, RWLOCK_WRITER, __ATOMIC_RELAXED);
 
 	//Attempt to set writer flag
     }
     while (!__atomic_compare_exchange_n(lock, &l, l | RWLOCK_WRITER,
 					/*weak=*/true,
-					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
+					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
 
     //Wait for any present readers to go away
     (void)wait_for_no(lock, RWLOCK_READERS, __ATOMIC_RELAXED);
