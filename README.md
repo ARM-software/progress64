@@ -25,7 +25,7 @@ Functionality
 * reorder - 'strict' reorder buffer (non-blocking)
 * ringbuf - SP/MP/SC/MC/LFC ring buffer (MP/MC blocking, SP/SC/LFC lock-free)
 * rwlock - reader/writer lock (blocking)
-* rwsync - lightweight reader/writer synchronisation (blocking)
+* rwsync - lightweight reader/writer synchronisation 'seqlock' (blocking)
 * spinlock - basic CAS-based spin lock (blocking)
 * timer - timers (lock-free)
 

@@ -61,12 +61,12 @@ p64_rwsync_acquire_wr(p64_rwsync_t *sync)
     do
     {
 	//Wait for any present writer to go away
-	l = wait_for_no_writer(sync, __ATOMIC_ACQUIRE);
-	//Attempt to set writer flag
+	l = wait_for_no_writer(sync, __ATOMIC_RELAXED);
+	//Attempt to increment, setting writer flag
     }
     while (!__atomic_compare_exchange_n(sync, &l, l + RWSYNC_WRITER,
 					/*weak=*/true,
-					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
+					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
 }
 
 void
@@ -78,7 +78,7 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
 	fprintf(stderr, "Invalid write release of RW sync %p\n", sync), abort();
     }
 
-    //Clear writer flag
+    //Increment, clearing writer flag
 #ifdef USE_DMB
     __atomic_thread_fence(__ATOMIC_RELEASE);
     __atomic_store_n(sync, cur + 1, __ATOMIC_RELAXED);
