@@ -21,7 +21,7 @@
 #include "ldxstx.h"
 #endif
 
-typedef uint32_t ringidx_t;
+typedef uintptr_t ringidx_t;
 struct element
 {
     void *ptr;
@@ -59,7 +59,7 @@ p64_lfring_alloc(uint32_t nelems)
 	for (ringidx_t i = 0; i < ringsz; i++)
 	{
 	    lfr->ring[i].ptr = NULL;
-	    lfr->ring[i].idx = i;
+	    lfr->ring[i].idx = i - ringsz;
 	}
 	return lfr;
     }
@@ -83,7 +83,7 @@ p64_lfring_free(p64_lfring_t *lfr)
 static inline bool
 before(ringidx_t a, ringidx_t b)
 {
-    return (int32_t)(a - b) < 0;
+    return (intptr_t)(a - b) < 0;
 }
 
 static inline void
@@ -161,26 +161,28 @@ restart:
 	    old.ui = ldx128((__int128 *)&lfr->ring[idx & mask],
 			    __ATOMIC_RELAXED);
 #endif
-	    if (old.e.idx != idx)
+	    if (old.e.idx != idx - size)
 	    {
-		//Slot (enqueued and) dequeued again
-		//We are far behind, restart with fresh index
-		idx = cond_reload(idx, &lfr->tail);
-		goto restart;
+		if (old.e.idx != idx)
+		{
+		    //We are far behind, restart with fresh index
+		    idx = cond_reload(idx, &lfr->tail);
+		    goto restart;
+		}
+		else//old.e.idx == idx
+		{
+		    //Slot already enqueued
+		    idx++;//Try next slot
+		    goto restart;
+		}
 	    }
-	    if (old.e.ptr != NULL)
-	    {
-		//Slot already enqueued
-		idx++;//Try next slot
-		goto restart;
-	    }
-	    //Found empty slot
+	    //Found slot that was used one lap back
 	    //Try to enqueue next element
 	    neu.e.ptr = elems[actual];
-	    neu.e.idx = old.e.idx;//Keep idx on enqueue
+	    neu.e.idx = idx;//Set idx on enqueue
 	}
 #ifdef USE_LDXSTX
-	while (unlikely(stx128((__int128 *)&lfr->ring[idx & mask],
+	while (UNLIKELY(stx128((__int128 *)&lfr->ring[idx & mask],
 			       neu.ui,
 			       __ATOMIC_RELEASE)));
 #else
@@ -203,75 +205,31 @@ restart:
 uint32_t
 p64_lfring_dequeue(p64_lfring_t *lfr,
 		   void **restrict elems,
-		   uint32_t nelems)
+		   uint32_t nelems,
+		   uint32_t *index)
 {
-    uint32_t actual = 0;
     ringidx_t mask = lfr->mask;
-    ringidx_t size = mask + 1;
-    ringidx_t idx = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
-restart:
-    while (actual < nelems &&
-	   before(idx, __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE)))
+    intptr_t actual;
+    ringidx_t head = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
+    ringidx_t tail = __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE);
+    do
     {
-	union
+	actual = MIN((intptr_t)(tail - head), (intptr_t)nelems);
+	if (UNLIKELY(actual <= 0))
 	{
-	    struct element e;
-	    __int128 ui;
-	} old, neu;
-#ifndef USE_LDXSTX
-	old.e.ptr = __atomic_load_n(&lfr->ring[idx & mask].ptr, __ATOMIC_RELAXED);
-	old.e.idx = __atomic_load_n(&lfr->ring[idx & mask].idx, __ATOMIC_RELAXED);
-#endif
-	do
-	{
-#ifdef USE_LDXSTX
-	    old.ui = ldx128((__int128 *)&lfr->ring[idx & mask],
-			    __ATOMIC_ACQUIRE);
-#endif
-	    if (old.e.ptr == NULL)
-	    {
-		//Slot already dequeued
-		if (old.e.idx != idx + size)
-		{
-		    //We are far behind, restart
-		    idx = cond_reload(idx, &lfr->head);
-		    goto restart;
-		}
-		else
-		{
-		    idx++;//Try next slot
-		    goto restart;
-		}
-	    }
-	    else //Found used slot
-	    {
-		if (old.e.idx != idx)
-		{
-		    //We are far behind, restart
-		    idx = cond_reload(idx, &lfr->head);
-		    goto restart;
-		}
-	    }
-	    //Try to dequeue element
-	    neu.e.ptr = NULL;
-	    neu.e.idx = idx + size;//Increment idx on dequeue
+	    return 0;
 	}
-#ifdef USE_LDXSTX
-	while (unlikely(stx128((__int128 *)&lfr->ring[idx & mask],
-			       neu.ui,
-			       __ATOMIC_RELAXED)));
-#else
-	while (!lockfree_compare_exchange_16_frail((__int128 *)&lfr->ring[idx & mask],
-						   &old.ui,//Updated on failure
-						   neu.ui,
-						   /*weak=*/true,
-						   __ATOMIC_ACQUIRE,
-						   __ATOMIC_RELAXED));
-#endif
-	//Dequeue succeeded
-	elems[actual++] = old.e.ptr;
-	idx++;//Continue with next slot
+	for (uint32_t i = 0; i < (uint32_t)actual; i++)
+	{
+	    elems[i] = lfr->ring[(head + i) & mask].ptr;
+	}
     }
-    cond_update(&lfr->head, idx);
-    return actual;
+    while (!__atomic_compare_exchange_n(&lfr->head,
+					&head,//Updated on failure
+					head + actual,
+					/*weak*/false,
+					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED));
+    *index = head;
+    return (uint32_t)actual;
 }

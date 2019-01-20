@@ -38,7 +38,8 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 uint32_t
 p64_lfring_dequeue(p64_lfring_t *lfr,
 		   void *elems[],
-		   uint32_t nelems);
+		   uint32_t nelems,
+		   uint32_t *index);
 
 #ifdef __cplusplus
 }

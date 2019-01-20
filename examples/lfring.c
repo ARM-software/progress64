@@ -13,32 +13,36 @@ static void
 test_rb(void)
 {
     void *vec[4];
-    int ret;
+    uint32_t ret;
+    uint32_t idx;
 
     p64_lfring_t *rb = p64_lfring_alloc(1);
     EXPECT(rb != NULL);
 
-    ret = p64_lfring_dequeue(rb, vec, 1);
+    ret = p64_lfring_dequeue(rb, vec, 1, &idx);
     EXPECT(ret == 0);
     ret = p64_lfring_enqueue(rb, (void *[]){ (void*)1 }, 1);
     EXPECT(ret == 1);
 
-    ret = p64_lfring_dequeue(rb, vec, 1);
+    ret = p64_lfring_dequeue(rb, vec, 1, &idx);
     EXPECT(ret == 1);
+    EXPECT(idx == 0);
     EXPECT(vec[0] == (void*)1);
 
-    ret = p64_lfring_dequeue(rb, vec, 1);
+    ret = p64_lfring_dequeue(rb, vec, 1, &idx);
     EXPECT(ret == 0);
 
     ret = p64_lfring_enqueue(rb, (void *[]){ (void*)2, (void*)3, (void*)4 }, 3);
     EXPECT(ret == 2);
 
-    ret = p64_lfring_dequeue(rb, vec, 1);
+    ret = p64_lfring_dequeue(rb, vec, 1, &idx);
     EXPECT(ret == 1);
+    EXPECT(idx == 1);
     EXPECT(vec[0] == (void*)2);
 
-    ret = p64_lfring_dequeue(rb, vec, 4);
+    ret = p64_lfring_dequeue(rb, vec, 4, &idx);
     EXPECT(ret == 1);
+    EXPECT(idx == 2);
     EXPECT(vec[0] == (void*)3);
 
     p64_lfring_free(rb);
