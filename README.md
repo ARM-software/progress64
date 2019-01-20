@@ -47,9 +47,7 @@ Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the h
 
 Notes
 --------------
-lfring is an experimental lock-free ring buffer.
-We are not sure that FIFO order is always respected.
-E.g. a thread enqueues A then B, possibly B could be dequeued before A.
+lfring is an experimental lock-free ring buffer. It needs more analysis and verification.
 
 TODO
 --------------

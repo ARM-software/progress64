@@ -12,12 +12,21 @@
 #include "build_config.h"
 
 #include "arch.h"
+#include "lockfree.h"
+#ifndef __aarch64__
+#define lockfree_compare_exchange_16_frail lockfree_compare_exchange_16
+#endif
 #include "common.h"
 #ifdef USE_LDXSTX
 #include "ldxstx.h"
 #endif
 
 typedef uint32_t ringidx_t;
+struct element
+{
+    void *ptr;
+    uintptr_t idx;
+};
 
 struct p64_lfring
 {
@@ -28,7 +37,7 @@ struct p64_lfring
     ringidx_t tail;
 #endif
     ringidx_t mask;
-    void *ring[] ALIGNED(CACHE_LINE);
+    struct element ring[] ALIGNED(CACHE_LINE);
 } ALIGNED(CACHE_LINE);
 
 p64_lfring_t *
@@ -47,9 +56,10 @@ p64_lfring_alloc(uint32_t nelems)
 	lfr->head = 0;
 	lfr->tail = 0;
 	lfr->mask = ringsz - 1;
-	for (uint32_t i = 0; i < ringsz; i++)
+	for (ringidx_t i = 0; i < ringsz; i++)
 	{
-	    lfr->ring[i] = NULL;
+	    lfr->ring[i].ptr = NULL;
+	    lfr->ring[i].idx = i;
 	}
 	return lfr;
     }
@@ -99,10 +109,27 @@ cond_update(ringidx_t *loc, ringidx_t neu)
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
-					/*weak=*/false,
+					/*weak=*/true,
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
 #endif
+}
+
+static inline ringidx_t
+cond_reload(ringidx_t idx, const ringidx_t *loc)
+{
+    ringidx_t fresh = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    if (before(idx, fresh))
+    {
+	//fresh is after idx, use this instead
+	idx = fresh;
+    }
+    else
+    {
+	//Continue with next slot
+	idx++;
+    }
+    return idx;
 }
 
 //Enqueue elements at tail
@@ -111,53 +138,64 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 		   void *const *restrict elems,
 		   uint32_t nelems)
 {
+    uint32_t actual = 0;
     ringidx_t mask = lfr->mask;
     ringidx_t size = mask + 1;
-    const ringidx_t org_tail = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
-    ringidx_t idx = org_tail;
-    int actual = 0;
+    ringidx_t idx = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
+restart:
     while (actual < nelems &&
 	   before(idx, __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE) + size))
     {
-	PREFETCH_FOR_WRITE(&lfr->ring[idx & mask]);
-	void *elem = __atomic_load_n(&lfr->ring[idx & mask], __ATOMIC_RELAXED);
-	if (elem == NULL)
+	union
 	{
+	    struct element e;
+	    __int128 ui;
+	} old, neu;
+#ifndef USE_LDXSTX
+	old.e.ptr = __atomic_load_n(&lfr->ring[idx & mask].ptr, __ATOMIC_RELAXED);
+	old.e.idx = __atomic_load_n(&lfr->ring[idx & mask].idx, __ATOMIC_RELAXED);
+#endif
+	do
+	{
+#ifdef USE_LDXSTX
+	    old.ui = ldx128((__int128 *)&lfr->ring[idx & mask],
+			    __ATOMIC_RELAXED);
+#endif
+	    if (old.e.idx != idx)
+	    {
+		//Slot (enqueued and) dequeued again
+		//We are far behind, restart with fresh index
+		idx = cond_reload(idx, &lfr->tail);
+		goto restart;
+	    }
+	    if (old.e.ptr != NULL)
+	    {
+		//Slot already enqueued
+		idx++;//Try next slot
+		goto restart;
+	    }
 	    //Found empty slot
 	    //Try to enqueue next element
-	    if (__atomic_compare_exchange_n(&lfr->ring[idx & mask],
-					    &elem,
-					    elems[actual],
-					    /*weak=*/false,
-					    __ATOMIC_RELEASE,
-					    __ATOMIC_RELAXED))
-	    {
-		//CAS succeeded
-		actual++;
-	    }
-	    else
-	    {
-		//Else CAS failed, someone else took the slot
-		//Active contention, re-read tail for a better index
-		ringidx_t tail = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
-		if (before(idx, tail))
-		{
-		    //tail > idx, update idx
-		    idx = tail;
-		    continue;
-		}
-		//Else idx >= tail
-	    }
+	    neu.e.ptr = elems[actual];
+	    neu.e.idx = old.e.idx;//Keep idx on enqueue
 	}
-	///Slot is now used, either by us or by someone else
-	//Continue with next slot
-	idx++;
+#ifdef USE_LDXSTX
+	while (unlikely(stx128((__int128 *)&lfr->ring[idx & mask],
+			       neu.ui,
+			       __ATOMIC_RELEASE)));
+#else
+	while (!lockfree_compare_exchange_16_frail((__int128 *)&lfr->ring[idx & mask],
+						   &old.ui,//Updated on failure
+						   neu.ui,
+						   /*weak=*/true,
+						   __ATOMIC_RELEASE,
+						   __ATOMIC_RELAXED));
+#endif
+	//Enqueue succeeded
+	actual++;
+	idx++;//Continue with next slot
     }
-    if (idx != org_tail)
-    {
-	//Either we or some other thread has unreleased updates
-	cond_update(&lfr->tail, idx);
-    }
+    cond_update(&lfr->tail, idx);
     return actual;
 }
 
@@ -167,61 +205,73 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 		   void **restrict elems,
 		   uint32_t nelems)
 {
+    uint32_t actual = 0;
     ringidx_t mask = lfr->mask;
-    const ringidx_t org_head = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
-    ringidx_t idx = org_head;
-    int actual = 0;
+    ringidx_t size = mask + 1;
+    ringidx_t idx = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
+restart:
     while (actual < nelems &&
 	   before(idx, __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE)))
     {
-	void *elem;
+	union
+	{
+	    struct element e;
+	    __int128 ui;
+	} old, neu;
 #ifndef USE_LDXSTX
-	elem = __atomic_load_n(&lfr->ring[idx & mask], __ATOMIC_RELAXED);
+	old.e.ptr = __atomic_load_n(&lfr->ring[idx & mask].ptr, __ATOMIC_RELAXED);
+	old.e.idx = __atomic_load_n(&lfr->ring[idx & mask].idx, __ATOMIC_RELAXED);
 #endif
 	do
 	{
 #ifdef USE_LDXSTX
-	    elem = (void *)ldx64((uint64_t *)&lfr->ring[idx & mask],
-				 __ATOMIC_ACQUIRE);
+	    old.ui = ldx128((__int128 *)&lfr->ring[idx & mask],
+			    __ATOMIC_ACQUIRE);
 #endif
-	    if (elem == NULL)
+	    if (old.e.ptr == NULL)
 	    {
-		break;
+		//Slot already dequeued
+		if (old.e.idx != idx + size)
+		{
+		    //We are far behind, restart
+		    idx = cond_reload(idx, &lfr->head);
+		    goto restart;
+		}
+		else
+		{
+		    idx++;//Try next slot
+		    goto restart;
+		}
 	    }
-	    //Found used slot
-	    //Try to take element
+	    else //Found used slot
+	    {
+		if (old.e.idx != idx)
+		{
+		    //We are far behind, restart
+		    idx = cond_reload(idx, &lfr->head);
+		    goto restart;
+		}
+	    }
+	    //Try to dequeue element
+	    neu.e.ptr = NULL;
+	    neu.e.idx = idx + size;//Increment idx on dequeue
 	}
 #ifdef USE_LDXSTX
-	while (UNLIKELY(stx64((uint64_t *)&lfr->ring[idx & mask],
-			      (uint64_t)NULL,
-			      __ATOMIC_RELAXED)));
+	while (unlikely(stx128((__int128 *)&lfr->ring[idx & mask],
+			       neu.ui,
+			       __ATOMIC_RELAXED)));
 #else
-	while (!__atomic_compare_exchange_n(&lfr->ring[idx & mask],
-					    &elem,//Updated on failure
-					    NULL,
-					    /*weak=*/false,
-					    __ATOMIC_ACQUIRE,
-					    __ATOMIC_RELAXED));
+	while (!lockfree_compare_exchange_16_frail((__int128 *)&lfr->ring[idx & mask],
+						   &old.ui,//Updated on failure
+						   neu.ui,
+						   /*weak=*/true,
+						   __ATOMIC_ACQUIRE,
+						   __ATOMIC_RELAXED));
 #endif
-	if (elem != NULL)
-	{
-	    //CAS succeeded
-	    if (actual == 0)
-	    {
-		//Prefetch first cache line of first element
-		PREFETCH_FOR_READ(elem);
-	    }
-	    elems[actual] = elem;
-	    actual++;
-	}
-	///Slot is now free, either by us or by someone else
-	//Continue with next slot
-	idx++;
+	//Dequeue succeeded
+	elems[actual++] = old.e.ptr;
+	idx++;//Continue with next slot
     }
-    if (idx != org_head)
-    {
-	//Either we or some other thread has unreleased updates
-	cond_update(&lfr->head, idx);
-    }
+    cond_update(&lfr->head, idx);
     return actual;
 }
