@@ -105,7 +105,7 @@ cond_update(ringidx_t *loc, ringidx_t neu)
     do
     {
 #ifdef USE_LDXSTX
-	ringidx_t old = ldx32(loc, __ATOMIC_RELAXED);
+	ringidx_t old = ldx64(loc, __ATOMIC_RELAXED);
 #endif
 	if (before(neu, old))//neu < old
 	{
@@ -114,7 +114,7 @@ cond_update(ringidx_t *loc, ringidx_t neu)
 	//Else neu > old, need to update *loc
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx32(loc, neu, __ATOMIC_RELEASE)));
+    while (UNLIKELY(stx64(loc, neu, __ATOMIC_RELEASE)));
 #else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
