@@ -18,7 +18,7 @@ test_rb(uint32_t flags)
     int ret;
     uint32_t index;
 
-    p64_ringbuf_ui32_t *rb = p64_ringbuf_ui32_alloc(1, flags);
+    p64_ringbuf_ui32_t *rb = p64_ringbuf_ui32_alloc(2, flags);
     EXPECT(rb != NULL);
 
     ret = p64_ringbuf_ui32_dequeue(rb, vec, 1, &index);

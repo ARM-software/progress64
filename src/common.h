@@ -22,7 +22,12 @@
 
 #define ALIGNED(x) __attribute__((__aligned__(x)))
 
-#define ROUNDUP_POW2(x) (1UL << (__SIZEOF_LONG__ * __CHAR_BIT__ - __builtin_clzl((x) - 1UL)))
+#define ROUNDUP_POW2(x) \
+    ({ \
+         unsigned long _x = (x); \
+         _x > 1 ?  (1UL << (__SIZEOF_LONG__ * __CHAR_BIT__ - __builtin_clzl(_x - 1UL))) : 1; \
+     })
+
 
 #define ROUNDUP(a, b) \
     ({                                          \

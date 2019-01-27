@@ -16,7 +16,7 @@ test_rb(void)
     uint32_t ret;
     uint32_t idx;
 
-    p64_lfring_t *rb = p64_lfring_alloc(1);
+    p64_lfring_t *rb = p64_lfring_alloc(2);
     EXPECT(rb != NULL);
 
     ret = p64_lfring_dequeue(rb, vec, 1, &idx);
