@@ -10,13 +10,13 @@
 #include "expect.h"
 
 static void
-test_rb(void)
+test_rb(uint32_t flags)
 {
     void *vec[4];
     uint32_t ret;
     uint32_t idx;
 
-    p64_lfring_t *rb = p64_lfring_alloc(2);
+    p64_lfring_t *rb = p64_lfring_alloc(2, flags);
     EXPECT(rb != NULL);
 
     ret = p64_lfring_dequeue(rb, vec, 1, &idx);
@@ -50,8 +50,14 @@ test_rb(void)
 
 int main(void)
 {
-    printf("testing lock-free ring\n");
-    test_rb();
-    printf("lock-free ring test complete\n");
+    printf("testing MPMC lock-free ring\n");
+    test_rb(P64_LFRING_F_MPENQ | P64_LFRING_F_MCDEQ);
+    printf("testing MPSC lock-free ring\n");
+    test_rb(P64_LFRING_F_MPENQ | P64_LFRING_F_SCDEQ);
+    printf("testing SPMC lock-free ring\n");
+    test_rb(P64_LFRING_F_SPENQ | P64_LFRING_F_MCDEQ);
+    printf("testing SPSC lock-free ring\n");
+    test_rb(P64_LFRING_F_SPENQ | P64_LFRING_F_SCDEQ);
+    printf("lock-free ring tests complete\n");
     return 0;
 }

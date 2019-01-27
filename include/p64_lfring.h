@@ -1,4 +1,4 @@
-//Copyright (c) 2018, ARM Limited. All rights reserved.
+//Copyright (c) 2018-2019, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
@@ -14,12 +14,17 @@ extern "C"
 {
 #endif
 
+#define P64_LFRING_F_MPENQ      0x0000 //Multi producer
+#define P64_LFRING_F_SPENQ      0x0001 //Single producer
+#define P64_LFRING_F_MCDEQ      0x0000 //Multi consumer
+#define P64_LFRING_F_SCDEQ      0x0002 //Single consumer
+
 typedef struct p64_lfring p64_lfring_t;
 
 //Allocate a ring buffer with space for at least 'nelems' elements
 //'nelems' != 0 and 'nelems' <= 0x80000000
 p64_lfring_t *
-p64_lfring_alloc(uint32_t nelems);
+p64_lfring_alloc(uint32_t nelems, uint32_t flags);
 
 //Free a ring buffer
 //The ring buffer must be empty

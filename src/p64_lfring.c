@@ -1,4 +1,4 @@
-//Copyright (c) 2017-2018, ARM Limited. All rights reserved.
+//Copyright (c) 2018-2019, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
@@ -21,6 +21,9 @@
 #include "ldxstx.h"
 #endif
 
+#define SUPPORTED_FLAGS (P64_LFRING_F_SPENQ | P64_LFRING_F_MPENQ | \
+			 P64_LFRING_F_SCDEQ | P64_LFRING_F_MCDEQ)
+
 typedef uintptr_t ringidx_t;
 struct element
 {
@@ -36,18 +39,24 @@ struct p64_lfring
 #else
     ringidx_t tail;
 #endif
-    ringidx_t mask;
+    uint32_t mask;
+    uint32_t flags;
     struct element ring[] ALIGNED(CACHE_LINE);
 } ALIGNED(CACHE_LINE);
 
 p64_lfring_t *
-p64_lfring_alloc(uint32_t nelems)
+p64_lfring_alloc(uint32_t nelems, uint32_t flags)
 {
     unsigned long ringsz = ROUNDUP_POW2(nelems);
     if (nelems == 0 || ringsz == 0 || ringsz > 0x80000000)
     {
 	fprintf(stderr, "Invalid number of elements %u\n", nelems), abort();
     }
+    if ((flags & ~SUPPORTED_FLAGS) != 0)
+    {
+	fprintf(stderr, "Invalid flags %x\n", flags), abort();
+    }
+
     size_t nbytes = ROUNDUP(sizeof(p64_lfring_t) + ringsz * sizeof(void *),
 			    CACHE_LINE);
     p64_lfring_t *lfr = aligned_alloc(CACHE_LINE, nbytes);
@@ -56,6 +65,7 @@ p64_lfring_alloc(uint32_t nelems)
 	lfr->head = 0;
 	lfr->tail = 0;
 	lfr->mask = ringsz - 1;
+	lfr->flags = flags;
 	for (ringidx_t i = 0; i < ringsz; i++)
 	{
 	    lfr->ring[i].ptr = NULL;
@@ -138,55 +148,72 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 		   void *const *restrict elems,
 		   uint32_t nelems)
 {
-    uint32_t actual = 0;
+    intptr_t actual = 0;
     ringidx_t mask = lfr->mask;
     ringidx_t size = mask + 1;
-    ringidx_t idx = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
+    ringidx_t tail = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
+    if (lfr->flags & P64_LFRING_F_SPENQ)
+    {
+	//Single-producer
+	ringidx_t head = __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE);
+	actual = MIN((intptr_t)(head + size - tail), (intptr_t)nelems);
+	if (actual <= 0)
+	{
+	    return 0;
+	}
+	for (uint32_t i = 0; i < (uint32_t)actual; i++)
+	{
+	    lfr->ring[tail & mask].ptr = *elems++;
+	    lfr->ring[tail & mask].idx = tail;
+	    tail++;
+	}
+	__atomic_store_n(&lfr->tail, tail, __ATOMIC_RELEASE);
+	return (uint32_t)actual;
+    }
+    //Else lock-free multi-producer
 restart:
-    while (actual < nelems &&
-	   before(idx, __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE) + size))
+    while ((uint32_t)actual < nelems &&
+	   before(tail, __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE) + size))
     {
 	union
 	{
 	    struct element e;
 	    __int128 ui;
 	} old, neu;
+	struct element *slot = &lfr->ring[tail & mask];
 #ifndef USE_LDXSTX
-	old.e.ptr = __atomic_load_n(&lfr->ring[idx & mask].ptr, __ATOMIC_RELAXED);
-	old.e.idx = __atomic_load_n(&lfr->ring[idx & mask].idx, __ATOMIC_RELAXED);
+	old.e.ptr = __atomic_load_n(&slot->ptr, __ATOMIC_RELAXED);
+	old.e.idx = __atomic_load_n(&slot->idx, __ATOMIC_RELAXED);
 #endif
 	do
 	{
 #ifdef USE_LDXSTX
-	    old.ui = ldx128((__int128 *)&lfr->ring[idx & mask],
-			    __ATOMIC_RELAXED);
+	    old.ui = ldx128((__int128 *)slot, __ATOMIC_RELAXED);
 #endif
-	    if (old.e.idx != idx - size)
+	    if (old.e.idx != tail - size)
 	    {
-		if (old.e.idx != idx)
+		if (old.e.idx != tail)
 		{
 		    //We are far behind, restart with fresh index
-		    idx = cond_reload(idx, &lfr->tail);
+		    tail = cond_reload(tail, &lfr->tail);
 		    goto restart;
 		}
-		else//old.e.idx == idx
+		else//old.e.idx == tail
 		{
 		    //Slot already enqueued
-		    idx++;//Try next slot
+		    tail++;//Try next slot
 		    goto restart;
 		}
 	    }
 	    //Found slot that was used one lap back
 	    //Try to enqueue next element
 	    neu.e.ptr = elems[actual];
-	    neu.e.idx = idx;//Set idx on enqueue
+	    neu.e.idx = tail;//Set idx on enqueue
 	}
 #ifdef USE_LDXSTX
-	while (UNLIKELY(stx128((__int128 *)&lfr->ring[idx & mask],
-			       neu.ui,
-			       __ATOMIC_RELEASE)));
+	while (UNLIKELY(stx128((__int128 *)slot, neu.ui, __ATOMIC_RELEASE)));
 #else
-	while (!lockfree_compare_exchange_16_frail((__int128 *)&lfr->ring[idx & mask],
+	while (!lockfree_compare_exchange_16_frail((__int128 *)slot,
 						   &old.ui,//Updated on failure
 						   neu.ui,
 						   /*weak=*/true,
@@ -195,10 +222,10 @@ restart:
 #endif
 	//Enqueue succeeded
 	actual++;
-	idx++;//Continue with next slot
+	tail++;//Continue with next slot
     }
-    cond_update(&lfr->tail, idx);
-    return actual;
+    cond_update(&lfr->tail, tail);
+    return (uint32_t)actual;
 }
 
 //Dequeue elements from head
@@ -223,6 +250,13 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	{
 	    elems[i] = lfr->ring[(head + i) & mask].ptr;
 	}
+	if (UNLIKELY(lfr->flags & P64_LFRING_F_SCDEQ))
+	{
+	    //Single-consumer
+	    __atomic_store_n(&lfr->head, head + actual, __ATOMIC_RELEASE);
+	    break;
+	}
+	//Else lock-free multi-consumer
     }
     while (!__atomic_compare_exchange_n(&lfr->head,
 					&head,//Updated on failure
@@ -230,6 +264,6 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 					/*weak*/false,
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
-    *index = head;
+    *index = (uint32_t)head;
     return (uint32_t)actual;
 }
