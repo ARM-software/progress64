@@ -180,6 +180,7 @@ restart:
 	    struct element e;
 	    __int128 ui;
 	} old, neu;
+	void *elem = elems[actual];
 	struct element *slot = &lfr->ring[tail & mask];
 #ifndef USE_LDXSTX
 	old.e.ptr = __atomic_load_n(&slot->ptr, __ATOMIC_RELAXED);
@@ -190,7 +191,7 @@ restart:
 #ifdef USE_LDXSTX
 	    old.ui = ldx128((__int128 *)slot, __ATOMIC_RELAXED);
 #endif
-	    if (old.e.idx != tail - size)
+	    if (UNLIKELY(old.e.idx != tail - size))
 	    {
 		if (old.e.idx != tail)
 		{
@@ -207,7 +208,7 @@ restart:
 	    }
 	    //Found slot that was used one lap back
 	    //Try to enqueue next element
-	    neu.e.ptr = elems[actual];
+	    neu.e.ptr = elem;
 	    neu.e.idx = tail;//Set idx on enqueue
 	}
 #ifdef USE_LDXSTX
