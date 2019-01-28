@@ -251,10 +251,11 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	{
 	    elems[i] = lfr->ring[(head + i) & mask].ptr;
 	}
+	smp_fence(LoadStore);//Order loads only
 	if (UNLIKELY(lfr->flags & P64_LFRING_F_SCDEQ))
 	{
 	    //Single-consumer
-	    __atomic_store_n(&lfr->head, head + actual, __ATOMIC_RELEASE);
+	    __atomic_store_n(&lfr->head, head + actual, __ATOMIC_RELAXED);
 	    break;
 	}
 	//Else lock-free multi-consumer
@@ -263,7 +264,7 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 					&head,//Updated on failure
 					head + actual,
 					/*weak*/false,
-					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
     *index = (uint32_t)head;
     return (uint32_t)actual;
