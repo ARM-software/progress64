@@ -96,7 +96,7 @@ before(ringidx_t a, ringidx_t b)
     return (intptr_t)(a - b) < 0;
 }
 
-static inline void
+static inline ringidx_t
 cond_update(ringidx_t *loc, ringidx_t neu)
 {
 #ifndef USE_LDXSTX
@@ -109,7 +109,7 @@ cond_update(ringidx_t *loc, ringidx_t neu)
 #endif
 	if (before(neu, old))//neu < old
 	{
-	    break;
+	    return old;
 	}
 	//Else neu > old, need to update *loc
     }
@@ -123,6 +123,7 @@ cond_update(ringidx_t *loc, ringidx_t neu)
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
 #endif
+    return neu;
 }
 
 static inline ringidx_t
@@ -225,8 +226,22 @@ restart:
 	actual++;
 	tail++;//Continue with next slot
     }
-    cond_update(&lfr->tail, tail);
+    (void)cond_update(&lfr->tail, tail);
     return (uint32_t)actual;
+}
+
+static inline ringidx_t
+scan_ring(p64_lfring_t *lfr, ringidx_t head, ringidx_t tail)
+{
+    ringidx_t mask = lfr->mask;
+    ringidx_t size = mask + 1;
+    while (before(tail, head + size) &&
+	__atomic_load_n(&lfr->ring[tail & mask].idx, __ATOMIC_RELAXED) == tail)
+    {
+	tail++;
+    }
+    tail = cond_update(&lfr->tail, tail);
+    return tail;
 }
 
 //Dequeue elements from head
@@ -245,7 +260,13 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	actual = MIN((intptr_t)(tail - head), (intptr_t)nelems);
 	if (UNLIKELY(actual <= 0))
 	{
-	    return 0;
+	    //Ring looks empty, scan for new but unreleased elements
+	    tail = scan_ring(lfr, head, tail);
+	    actual = MIN((intptr_t)(tail - head), (intptr_t)nelems);
+	    if (actual <= 0)
+	    {
+		return 0;
+	    }
 	}
 	for (uint32_t i = 0; i < (uint32_t)actual; i++)
 	{
