@@ -2,6 +2,7 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+#include <assert.h>
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -164,6 +165,7 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 	}
 	for (uint32_t i = 0; i < (uint32_t)actual; i++)
 	{
+	    assert(lfr->ring[tail & mask].idx == tail - size);
 	    lfr->ring[tail & mask].ptr = *elems++;
 	    lfr->ring[tail & mask].idx = tail;
 	    tail++;
@@ -231,8 +233,17 @@ restart:
 }
 
 static inline ringidx_t
-scan_ring(p64_lfring_t *lfr, ringidx_t head, ringidx_t tail)
+find_tail(p64_lfring_t *lfr, ringidx_t head, ringidx_t tail)
 {
+    if (lfr->flags & P64_LFRING_F_SPENQ)
+    {
+	//Single-producer enqueue
+	//Just return a freshly read tail pointer
+	tail = __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE);
+	return tail;
+    }
+    //Multi-producer enqueue
+    //Scan ring for new elements that have been written but not released
     ringidx_t mask = lfr->mask;
     ringidx_t size = mask + 1;
     while (before(tail, head + size) &&
@@ -261,7 +272,7 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	if (UNLIKELY(actual <= 0))
 	{
 	    //Ring looks empty, scan for new but unreleased elements
-	    tail = scan_ring(lfr, head, tail);
+	    tail = find_tail(lfr, head, tail);
 	    actual = MIN((intptr_t)(tail - head), (intptr_t)nelems);
 	    if (actual <= 0)
 	    {
