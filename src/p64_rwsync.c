@@ -87,6 +87,28 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
 #endif
 }
 
+#define ATOMIC_COPY(_d, _s, _sz, _type) \
+({ \
+    _type val = __atomic_load_n((const _type *)(_s), __ATOMIC_RELAXED); \
+    _s += sizeof(_type); \
+    __atomic_store_n((_type *)(_d), val, __ATOMIC_RELAXED); \
+    _d += sizeof(_type); \
+    _sz -= sizeof(_type); \
+})
+
+static void
+atomic_memcpy(char *dst, const char *src, size_t sz)
+{
+    while (sz >= sizeof(uint64_t))
+	ATOMIC_COPY(dst, src, sz, uint64_t);
+    if (sz >= sizeof(uint32_t))
+	ATOMIC_COPY(dst, src, sz, uint32_t);
+    if (sz >= sizeof(uint16_t))
+	ATOMIC_COPY(dst, src, sz, uint16_t);
+    if (sz >= sizeof(uint8_t))
+	ATOMIC_COPY(dst, src, sz, uint8_t);
+}
+
 void
 p64_rwsync_read(p64_rwsync_t *sync,
 		void *dst,
@@ -97,7 +119,7 @@ p64_rwsync_read(p64_rwsync_t *sync,
     do
     {
 	prv = p64_rwsync_acquire_rd(sync);
-	memcpy(dst, data, len);
+	atomic_memcpy(dst, data, len);
     }
     while (!p64_rwsync_release_rd(sync, prv));
 }
@@ -109,6 +131,6 @@ p64_rwsync_write(p64_rwsync_t *sync,
 		 size_t len)
 {
     p64_rwsync_acquire_wr(sync);
-    memcpy(data, src, len);
+    atomic_memcpy(data, src, len);
     p64_rwsync_release_wr(sync);
 }
