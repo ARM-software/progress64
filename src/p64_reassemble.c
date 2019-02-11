@@ -178,19 +178,15 @@ restart: (void)0;
     return NULL;
 }
 
-union fraglist
+struct fraglist
 {
     struct
     {
-	struct
-	{
-	    uint32_t earliest;
-	    unsigned accsize:14;
-	    unsigned totsize:14;
-	} a;
-	p64_fragment_t *head; //A list of related fragments awaiting reassembly
-    } st;
-    __int128 ui;
+	uint32_t earliest;
+	unsigned accsize:14;
+	unsigned totsize:14;
+    } a;
+    p64_fragment_t *head; //A list of related fragments awaiting reassembly
 } ALIGNED(sizeof(__int128));
 
 struct p64_reassemble
@@ -199,7 +195,7 @@ struct p64_reassemble
     p64_reassemble_cb stale_cb;
     void *arg;
     uint32_t nentries;
-    union fraglist fragtbl[] ALIGNED(CACHE_LINE);
+    struct fraglist fragtbl[] ALIGNED(CACHE_LINE);
 };
 
 p64_reassemble_t *
@@ -213,7 +209,7 @@ p64_reassemble_alloc(uint32_t nentries,
         fprintf(stderr, "Invalid fragment table size %u\n", nentries), abort();
     }
     size_t nbytes = ROUNDUP(sizeof(p64_reassemble_t) +
-			    nentries * sizeof(union fraglist), CACHE_LINE);
+			    nentries * sizeof(struct fraglist), CACHE_LINE);
     p64_reassemble_t *fl = aligned_alloc(CACHE_LINE, nbytes);
     if (fl != NULL)
     {
@@ -223,10 +219,10 @@ p64_reassemble_alloc(uint32_t nentries,
 	fl->nentries = nentries;
 	for (uint32_t i = 0; i < nentries; i++)
 	{
-	    fl->fragtbl[i].st.a.earliest = 0;//Not used for null fraglists
-	    fl->fragtbl[i].st.a.totsize = OCT_SIZEMAX;
-	    fl->fragtbl[i].st.a.accsize = 0U;
-	    fl->fragtbl[i].st.head = NULL;
+	    fl->fragtbl[i].a.earliest = 0;//Not used for null fraglists
+	    fl->fragtbl[i].a.totsize = OCT_SIZEMAX;
+	    fl->fragtbl[i].a.accsize = 0U;
+	    fl->fragtbl[i].head = NULL;
 	}
 
 	return fl;
@@ -241,9 +237,9 @@ p64_reassemble_free(p64_reassemble_t *fl)
     {
 	for (uint32_t i = 0; i < fl->nentries; i++)
 	{
-	    if (fl->fragtbl[i].st.head != NULL)
+	    if (fl->fragtbl[i].head != NULL)
 	    {
-		fl->stale_cb(fl->arg, fl->fragtbl[i].st.head);
+		fl->stale_cb(fl->arg, fl->fragtbl[i].head);
 	    }
 	}
 	free(fl);
@@ -311,7 +307,7 @@ recompute(p64_fragment_t **head,
 
 static void
 insert_fraglist(p64_reassemble_t *re,
-		union fraglist *fl,
+		struct fraglist *fl,
 		p64_fragment_t *frag)
 {
     //Prefetch-for-store before we read the line to update
@@ -325,10 +321,14 @@ insert_fraglist(p64_reassemble_t *re,
     p64_fragment_t **last;
     last = recompute(&frag, &fragsize, &totsize, &earliest, now);
 
-    union fraglist old, neu;
+    union
+    {
+	struct fraglist st;
+	__int128 ui;
+    } old, neu;
 restart:
-    __atomic_load(&fl->st.a, &old.st.a, __ATOMIC_RELAXED);
-    __atomic_load(&fl->st.head, &old.st.head, __ATOMIC_RELAXED);
+    __atomic_load(&fl->a, &old.st.a, __ATOMIC_RELAXED);
+    __atomic_load(&fl->head, &old.st.head, __ATOMIC_RELAXED);
     if (old.st.head != NULL)
     {
 	false_positive = false;
@@ -352,7 +352,7 @@ restart:
 	{
 	    neu.st.a.earliest = earliest;
 	}
-	if (!lockfree_compare_exchange_16(&fl->ui,
+	if (!lockfree_compare_exchange_16((__int128 *)fl,
 					  &old.ui,
 					  neu.ui,
 					  /*weak=*/false,
@@ -373,7 +373,7 @@ restart:
 	neu.st.a.accsize = 0;
 	neu.st.a.totsize = OCT_SIZEMAX;
 	neu.st.a.earliest = 0;
-	if (!lockfree_compare_exchange_16(&fl->ui,
+	if (!lockfree_compare_exchange_16((__int128 *)fl,
 					  &old.ui,
 					  neu.ui,
 					  /*weak=*/false,
@@ -408,7 +408,7 @@ void
 p64_reassemble_insert(p64_reassemble_t *re,
 		      p64_fragment_t *frag)
 {
-    union fraglist *fl = &re->fragtbl[(uint32_t)frag->hash % re->nentries];
+    struct fraglist *fl = &re->fragtbl[(uint32_t)frag->hash % re->nentries];
     frag->nextfrag = NULL;
     insert_fraglist(re, fl, frag);
 }
@@ -439,12 +439,16 @@ find_stale(p64_fragment_t **pfrag,
 
 static inline void
 expire_one(p64_reassemble_t *re,
-	   union fraglist *fl,
+	   struct fraglist *fl,
 	   uint32_t time)
 {
-    union fraglist old, neu;
-    __atomic_load(&fl->st.a, &old.st.a, __ATOMIC_RELAXED);
-    __atomic_load(&fl->st.head, &old.st.head, __ATOMIC_RELAXED);
+    union
+    {
+	struct fraglist st;
+	__int128 ui;
+    } old, neu;
+    __atomic_load(&fl->a, &old.st.a, __ATOMIC_RELAXED);
+    __atomic_load(&fl->head, &old.st.head, __ATOMIC_RELAXED);
     do
     {
 	if (old.st.head == NULL ||
@@ -460,7 +464,7 @@ expire_one(p64_reassemble_t *re,
 	neu.st.a.totsize = OCT_SIZEMAX;
 	neu.st.a.earliest = 0;
     }
-    while (!lockfree_compare_exchange_16(&fl->ui,
+    while (!lockfree_compare_exchange_16((__int128 *)fl,
 					 &old.ui,//Updated on failure
 					 neu.ui,
 					 /*weak=*/false,
@@ -487,7 +491,7 @@ p64_reassemble_expire(p64_reassemble_t *re,
 {
     for (uint32_t i = 0; i < re->nentries; i++)
     {
-	union fraglist *fl = &re->fragtbl[i];
+	struct fraglist *fl = &re->fragtbl[i];
 	expire_one(re, fl, time);
     }
 }
