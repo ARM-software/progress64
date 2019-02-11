@@ -182,9 +182,12 @@ union fraglist
 {
     struct
     {
-	uint32_t earliest;
-	unsigned accsize:14;
-	unsigned totsize:14;
+	struct
+	{
+	    uint32_t earliest;
+	    unsigned accsize:14;
+	    unsigned totsize:14;
+	} a;
 	p64_fragment_t *head; //A list of related fragments awaiting reassembly
     } st;
     __int128 ui;
@@ -220,9 +223,9 @@ p64_reassemble_alloc(uint32_t nentries,
 	fl->nentries = nentries;
 	for (uint32_t i = 0; i < nentries; i++)
 	{
-	    fl->fragtbl[i].st.earliest = 0;//Not used for null fraglists
-	    fl->fragtbl[i].st.totsize = OCT_SIZEMAX;
-	    fl->fragtbl[i].st.accsize = 0U;
+	    fl->fragtbl[i].st.a.earliest = 0;//Not used for null fraglists
+	    fl->fragtbl[i].st.a.totsize = OCT_SIZEMAX;
+	    fl->fragtbl[i].st.a.accsize = 0U;
 	    fl->fragtbl[i].st.head = NULL;
 	}
 
@@ -311,7 +314,8 @@ insert_fraglist(p64_reassemble_t *re,
 		union fraglist *fl,
 		p64_fragment_t *frag)
 {
-    PREFETCH_FOR_WRITE(&fl->ui);
+    //Prefetch-for-store before we read the line to update
+    PREFETCH_FOR_WRITE(fl);
     uint32_t now = frag->arrival;
     bool false_positive = false;
     uint16_t fragsize;
@@ -323,8 +327,8 @@ insert_fraglist(p64_reassemble_t *re,
 
     union fraglist old, neu;
 restart:
-    //Prefetch-for-store before we read the line to update
-    old.ui = fl->ui;
+    __atomic_load(&fl->st.a, &old.st.a, __ATOMIC_RELAXED);
+    __atomic_load(&fl->st.head, &old.st.head, __ATOMIC_RELAXED);
     if (old.st.head != NULL)
     {
 	false_positive = false;
@@ -333,20 +337,20 @@ restart:
     *last = old.st.head;
     neu.st.head = frag;
     //Use min to implement saturating add, don't overflow the allocated bits
-    neu.st.accsize = umin(OCT_SIZEMAX, old.st.accsize + fragsize);
+    neu.st.a.accsize = umin(OCT_SIZEMAX, old.st.a.accsize + fragsize);
     //Replace previous totsize if smaller
-    neu.st.totsize = umin(old.st.totsize, totsize);
+    neu.st.a.totsize = umin(old.st.a.totsize, totsize);
     //Check if we have all fragments
-    if (neu.st.accsize < neu.st.totsize || false_positive)
+    if (neu.st.a.accsize < neu.st.a.totsize || false_positive)
     {
 	//Still missing fragment, write back updated fraglist
 	if (old.st.head != NULL)
 	{
-	    neu.st.earliest = min_earliest(old.st.earliest, earliest, now);
+	    neu.st.a.earliest = min_earliest(old.st.a.earliest, earliest, now);
 	}
 	else //old is null fraglist, earliest field not valid
 	{
-	    neu.st.earliest = earliest;
+	    neu.st.a.earliest = earliest;
 	}
 	if (!lockfree_compare_exchange_16(&fl->ui,
 					  &old.ui,
@@ -356,7 +360,7 @@ restart:
 					  __ATOMIC_RELAXED))
 	{
 	    //CAS failed, restart from beginning
-	    PREFETCH_FOR_WRITE(&fl->ui);
+	    PREFETCH_FOR_WRITE(fl);
 	    goto restart;
 	}
 	//Fragment(s) inserted
@@ -366,9 +370,9 @@ restart:
 	//We seem to have all fragments
 	//Write a null element to the fraglist slot
 	neu.st.head = NULL;
-	neu.st.accsize = 0;
-	neu.st.totsize = OCT_SIZEMAX;
-	neu.st.earliest = 0;
+	neu.st.a.accsize = 0;
+	neu.st.a.totsize = OCT_SIZEMAX;
+	neu.st.a.earliest = 0;
 	if (!lockfree_compare_exchange_16(&fl->ui,
 					  &old.ui,
 					  neu.ui,
@@ -377,7 +381,7 @@ restart:
 					  __ATOMIC_RELAXED))
 	{
 	    //CAS failed, restart from beginning
-	    PREFETCH_FOR_WRITE(&fl->ui);
+	    PREFETCH_FOR_WRITE(fl);
 	    goto restart;
 	}
 
@@ -393,7 +397,7 @@ restart:
 	    //Compute accumulated size of fragments and expected total size
 	    last = recompute(&frag, &fragsize, &totsize, &earliest, now);
 	    //Update fraglist again
-	    PREFETCH_FOR_WRITE(&fl->ui);
+	    PREFETCH_FOR_WRITE(fl);
 	    goto restart;
 	}
 	//Else no fragments left, nothing to do
@@ -439,11 +443,12 @@ expire_one(p64_reassemble_t *re,
 	   uint32_t time)
 {
     union fraglist old, neu;
-    old.ui = fl->ui;
+    __atomic_load(&fl->st.a, &old.st.a, __ATOMIC_RELAXED);
+    __atomic_load(&fl->st.head, &old.st.head, __ATOMIC_RELAXED);
     do
     {
 	if (old.st.head == NULL ||
-		(int32_t)old.st.earliest - (int32_t)time >= 0)
+		(int32_t)old.st.a.earliest - (int32_t)time >= 0)
 	{
 	    //Null fraglist or no stale fragments
 	    return;
@@ -451,9 +456,9 @@ expire_one(p64_reassemble_t *re,
 	//Found fraglist with at least one stale fragment
 	//Swap in a null fraglist in its place
 	neu.st.head = NULL;
-	neu.st.accsize = 0;
-	neu.st.totsize = OCT_SIZEMAX;
-	neu.st.earliest = 0;
+	neu.st.a.accsize = 0;
+	neu.st.a.totsize = OCT_SIZEMAX;
+	neu.st.a.earliest = 0;
     }
     while (!lockfree_compare_exchange_16(&fl->ui,
 					 &old.ui,//Updated on failure
