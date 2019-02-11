@@ -185,6 +185,7 @@ struct fraglist
 	uint32_t earliest;
 	unsigned accsize:14;
 	unsigned totsize:14;
+	unsigned padding:4;
     } a;
     p64_fragment_t *head; //A list of related fragments awaiting reassembly
 } ALIGNED(sizeof(__int128));
@@ -222,6 +223,7 @@ p64_reassemble_alloc(uint32_t nentries,
 	    fl->fragtbl[i].a.earliest = 0;//Not used for null fraglists
 	    fl->fragtbl[i].a.totsize = OCT_SIZEMAX;
 	    fl->fragtbl[i].a.accsize = 0U;
+	    fl->fragtbl[i].a.padding = 0U;
 	    fl->fragtbl[i].head = NULL;
 	}
 
@@ -336,6 +338,7 @@ restart:
     //Merge lists of fragments, insert previous head fragment at end of new list
     *last = old.st.head;
     neu.st.head = frag;
+    neu.st.a.padding = 0;
     //Use min to implement saturating add, don't overflow the allocated bits
     neu.st.a.accsize = umin(OCT_SIZEMAX, old.st.a.accsize + fragsize);
     //Replace previous totsize if smaller
@@ -463,6 +466,7 @@ expire_one(p64_reassemble_t *re,
 	neu.st.a.accsize = 0;
 	neu.st.a.totsize = OCT_SIZEMAX;
 	neu.st.a.earliest = 0;
+	neu.st.a.padding = 0;
     }
     while (!lockfree_compare_exchange_16((__int128 *)fl,
 					 &old.ui,//Updated on failure
