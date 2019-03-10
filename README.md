@@ -23,7 +23,7 @@ Functionality
 * lfring - ring buffer (lock-free)
 * reassemble - IP reassembly (lock-free)
 * reorder - 'strict' reorder buffer (non-blocking)
-* ringbuf - classic ring buffer (MP/MC blocking, lock-free dequeue)
+* ringbuf - classic ring buffer (blocking & non-blocking, lock-free dequeue)
 * rwlock - reader/writer lock (blocking)
 * rwsync - lightweight reader/writer synchronisation 'seqlock' (blocking)
 * spinlock - basic CAS-based spin lock (blocking)

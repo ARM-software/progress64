@@ -19,6 +19,11 @@ test_rb(uint32_t flags)
     uint32_t index;
 
     p64_ringbuf_ui32_t *rb = p64_ringbuf_ui32_alloc(2, flags);
+    if (flags == (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ))
+    {
+	EXPECT(rb == NULL);
+	return;
+    }
     EXPECT(rb != NULL);
 
     ret = p64_ringbuf_ui32_dequeue(rb, vec, 1, &index);
@@ -52,14 +57,30 @@ test_rb(uint32_t flags)
 
 int main(void)
 {
-    printf("testing MPMC ring buffer\n");
+    printf("testing MP/MC ring buffer\n");
     test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_MCDEQ);
-    printf("testing SPSC ring buffer\n");
+    printf("testing SP/SC ring buffer\n");
     test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_SCDEQ);
-    printf("testing MPLFC ring buffer\n");
+    printf("testing MP/SC ring buffer\n");
+    test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_SCDEQ);
+    printf("testing SP/MC ring buffer\n");
+    test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_MCDEQ);
+    printf("testing MP/LFC ring buffer\n");
     test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_LFDEQ);
-    printf("testing SPLFC ring buffer\n");
+    printf("testing SP/LFC ring buffer\n");
     test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_LFDEQ);
+    printf("testing NBMP/NBMC ring buffer\n");
+    test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_NBDEQ);
+    printf("testing NBMP/SC ring buffer\n");
+    test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_SCDEQ);
+    printf("testing NBMP/MC ring buffer\n");
+    test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_MCDEQ);
+    printf("testing MP/NBDEQ ring buffer\n");
+    test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_NBDEQ);
+    printf("testing SP/NBDEQ ring buffer\n");
+    test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_NBDEQ);
+    printf("testing NBEBQ/LFDEQ ring buffer\n");
+    test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ);
     printf("ringbuf test complete\n");
     return 0;
 }

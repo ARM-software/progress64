@@ -14,11 +14,16 @@ extern "C"
 {
 #endif
 
-#define P64_RINGBUF_F_MPENQ      0x0000 //Multi producer
-#define P64_RINGBUF_F_SPENQ      0x0001 //Single producer
-#define P64_RINGBUF_F_MCDEQ      0x0000 //Multi consumer
-#define P64_RINGBUF_F_SCDEQ      0x0002 //Single consumer
-#define P64_RINGBUF_F_LFDEQ      0x0004 //Lock-free multi consumer
+//In non-blocking mode, the following element value is invalid
+#define P64_RINGBUF_INVALID_ELEM NULL
+
+#define P64_RINGBUF_F_MPENQ      0x0000 //Blocking multi producer enqueue
+#define P64_RINGBUF_F_MCDEQ      0x0000 //Blocking multi consumer dequeue
+#define P64_RINGBUF_F_SPENQ      0x0001 //Single producer enqueue (non MT-safe)
+#define P64_RINGBUF_F_SCDEQ      0x0002 //Single consumer dequeue (non MT-safe)
+#define P64_RINGBUF_F_LFDEQ      0x0004 //Lock-free multi consumer dequeue
+#define P64_RINGBUF_F_NBENQ      0x0008 //Non-blocking multi-producer enqueue
+#define P64_RINGBUF_F_NBDEQ      0x0010 //Non-blocking multi-consumer dequeue
 
 typedef struct p64_ringbuf p64_ringbuf_t;
 
@@ -41,12 +46,12 @@ void
 p64_ringbuf_free(p64_ringbuf_t *rb);
 
 //Enqueue elements on a ring buffer
-//The number of actually enqueued elements is returned
+//Return the number of actually enqueued elements
 uint32_t
 p64_ringbuf_enqueue(p64_ringbuf_t *rb, void *const ev[], uint32_t num);
 
 //Dequeue elements from a ring buffer
-//The number of actually dequeued elements is returned
+//Return the number of actually dequeued elements
 uint32_t
 p64_ringbuf_dequeue(p64_ringbuf_t *rb, void *ev[], uint32_t num,
 		    uint32_t *index);

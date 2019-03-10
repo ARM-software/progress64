@@ -43,6 +43,13 @@
         tmp_a < tmp_b ? tmp_a : tmp_b;          \
     })
 
+#define MAX(a, b) \
+    ({                                          \
+        __typeof__ (a) tmp_a = (a);             \
+        __typeof__ (b) tmp_b = (b);             \
+        tmp_a > tmp_b ? tmp_a : tmp_b;          \
+    })
+
 #define IS_POWER_OF_TWO(n) \
     ({                                            \
 	__typeof__ (n) tmp_n = (n);               \
