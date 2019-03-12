@@ -26,6 +26,7 @@ Functionality
 * ringbuf - classic ring buffer (blocking & non-blocking, lock-free dequeue)
 * rwlock - reader/writer lock (blocking)
 * rwsync - lightweight reader/writer synchronisation 'seqlock' (blocking)
+* rwsync\_r - recursive rwsync (blocking)
 * spinlock - basic CAS-based spin lock (blocking)
 * timer - timers (lock-free)
 
@@ -49,6 +50,7 @@ Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the h
 Notes
 --------------
 lfring is an experimental lock-free ring buffer. It needs more analysis and verification.
+rwsync\_r is experimental.
 
 TODO
 --------------

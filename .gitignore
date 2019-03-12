@@ -15,6 +15,7 @@ reorder
 ringbuf
 rwlock
 rwsync
+rwsync_r
 timer
 tags
 TAGS
