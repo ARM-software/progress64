@@ -29,11 +29,12 @@ Functionality
 * spinlock - basic CAS-based spin lock (blocking)
 * timer - timers (lock-free)
 
-("non-blocking" here means no thread will block (spin) but not lock-free in the academic sense, instead operations may fail early)
+"Non-blocking" here means no thread will block (wait for other threads) but not
+lock-free in the academic sense (e.g. linearizable).
 
 Requirements
 --------------
-* A C compiler (e.g. GCC) which supports the '__atomic' builtins and inline assembler
+* A C compiler (e.g. GCC) which supports the '\_\_atomic' builtins and inline assembler
 
 Usage
 --------------
