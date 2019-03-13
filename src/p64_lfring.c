@@ -58,7 +58,7 @@ p64_lfring_alloc(uint32_t nelems, uint32_t flags)
 	fprintf(stderr, "Invalid flags %x\n", flags), abort();
     }
 
-    size_t nbytes = ROUNDUP(sizeof(p64_lfring_t) + ringsz * sizeof(void *),
+    size_t nbytes = ROUNDUP(sizeof(p64_lfring_t) + ringsz * sizeof(struct element),
 			    CACHE_LINE);
     p64_lfring_t *lfr = aligned_alloc(CACHE_LINE, nbytes);
     if (lfr != NULL)
