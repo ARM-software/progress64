@@ -25,6 +25,7 @@ Functionality
 * reorder - 'strict' reorder buffer (non-blocking)
 * ringbuf - classic ring buffer (blocking & non-blocking, lock-free dequeue)
 * rwlock - reader/writer lock (blocking)
+* rwlock\_r - recursive reader/writer lock (blocking)
 * rwsync - lightweight reader/writer synchronisation 'seqlock' (blocking)
 * rwsync\_r - recursive rwsync (blocking)
 * spinlock - basic CAS-based spin lock (blocking)

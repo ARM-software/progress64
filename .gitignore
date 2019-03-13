@@ -14,6 +14,7 @@ reassemble
 reorder
 ringbuf
 rwlock
+rwlock_r
 rwsync
 rwsync_r
 timer

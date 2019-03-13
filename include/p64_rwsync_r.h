@@ -34,7 +34,7 @@ void p64_rwsync_r_init(p64_rwsync_r_t *sync);
 p64_rwsync_t p64_rwsync_r_acquire_rd(const p64_rwsync_r_t *sync, int32_t tid);
 
 //Release a read synchroniser
-//Return false if a write has occured or is in progress
+//Return false if a write has occurred or is in progress
 //This means any read data may be inconsistent and the operation should be
 //restarted
 bool p64_rwsync_r_release_rd(const p64_rwsync_r_t *sync, p64_rwsync_t prv);
