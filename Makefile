@@ -26,7 +26,7 @@ OBJECTS_laxrob = p64_laxrob.o laxrob.o
 OBJECTS_ringbuf = p64_ringbuf.o ringbuf.o
 OBJECTS_clhlock = p64_clhlock.o clhlock.o
 OBJECTS_lfring = p64_lfring.o lfring.o
-OBJECTS_bm_ringbuf = p64_ringbuf.o bm_ringbuf.o
+OBJECTS_bm_ringbuf = p64_ringbuf.o p64_lfring.o bm_ringbuf.o
 
 DEBUG ?= 0
 ASSERT ?= 0

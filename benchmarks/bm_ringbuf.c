@@ -20,6 +20,7 @@
 #include <unistd.h>
 
 #include "p64_ringbuf.h"
+#include "p64_lfring.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -62,7 +63,7 @@ static uint32_t RESULT_OPS[MAXTHREADS];
 static uint32_t RESULT_OVH[MAXTHREADS];
 static bool DOUBLESTEP = false;
 static uint64_t AFFINITY = ~0U;
-static p64_ringbuf_t *RINGBUFS[MAXRINGBUFS];
+static void *RINGBUFS[MAXRINGBUFS];
 static uint32_t NUMLAPS = 10000;
 static uint32_t NUMELEMS = 256;
 static struct element_s *ELEMS[MAXELEMS];
@@ -71,6 +72,7 @@ static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static sem_t ALL_DONE;
 static struct timespec END_TIME;
 static bool VERBOSE = false;
+static bool LFRING = false;
 
 //Wait for my signal to begin
 static void barrier_thr_begin(uint32_t idx)
@@ -116,6 +118,41 @@ static void barrier_all_wait(uint32_t numthreads)
     }
 }
 
+static bool
+enqueue(void *rb, void *elem)
+{
+    if (LFRING)
+    {
+	return p64_lfring_enqueue(rb, &elem, 1) == 1;
+    }
+    else
+    {
+	return p64_ringbuf_enqueue(rb, &elem, 1) == 1;
+    }
+}
+
+static void *
+dequeue(void *rb)
+{
+    void *elem;
+    uint32_t idx;
+    if (LFRING)
+    {
+	if (p64_lfring_dequeue(rb, &elem, 1, &idx) != 0)
+	{
+	    return elem;
+	}
+    }
+    else
+    {
+	if (p64_ringbuf_dequeue(rb, &elem, 1, &idx) != 0)
+	{
+	    return elem;
+	}
+    }
+    return NULL;
+}
+
 static void thr_execute(uint32_t tidx)
 {
     if (tidx == 0)
@@ -129,8 +166,8 @@ static void thr_execute(uint32_t tidx)
 	    unsigned j;
 	    for (j = 0; j < 100000; j++)
 	    {
-		int rc = p64_ringbuf_enqueue(RINGBUFS[0], (void **)&ELEMS[i], 1);
-		if (rc == 1)
+		bool success = enqueue(RINGBUFS[0], ELEMS[i]);
+		if (success)
 		    break;
 		doze();
 	    }
@@ -150,9 +187,8 @@ static void thr_execute(uint32_t tidx)
 	struct element_s *elem;
 	for (;;)
 	{
-	    uint32_t idx;
-	    int ret = p64_ringbuf_dequeue(RINGBUFS[q], (void **)&elem, 1, &idx);
-	    if (ret != 0)
+	    elem = dequeue(RINGBUFS[q]);
+	    if (elem != NULL)
 		break;
 	    if (__atomic_load_n(&NUMCOMPLETED, __ATOMIC_RELAXED) == NUMELEMS)
 		goto done;
@@ -176,8 +212,8 @@ static void thr_execute(uint32_t tidx)
 	    ptr = (ptr + 1) % NUMRAND;
 	    for (;;)
 	    {
-		int ret = p64_ringbuf_enqueue(RINGBUFS[q], (void **)&elem, 1);
-		if (ret != 0)
+		bool success = enqueue(RINGBUFS[q], elem);
+		if (success)
 		    break;
 		q = (q + 1) % NUMRINGBUFS;
 		//printf("%u: enqueue() to ringbuf %u FAILED\n", tidx, q);
@@ -472,11 +508,12 @@ int main(int argc, char *argv[])
 	    case 'm' :
 		{
 		    rbmode = atoi(optarg);
-		    if (rbmode < 0 || rbmode > 4)
+		    if (rbmode < 0 || rbmode > 5)
 		    {
 			fprintf(stderr, "Invalid ring buffer mode %d\n", rbmode);
 			exit(EXIT_FAILURE);
 		    }
+		    LFRING = rbmode == 5;
 		    break;
 		}
 	    case 'r' :
@@ -535,6 +572,7 @@ usage :
 		fprintf(stderr, "mode 2: non-blocking enqueue/blocking dequeue\n");
 		fprintf(stderr, "mode 3: non-blocking enqueue/non-blocking dequeue\n");
 		fprintf(stderr, "mode 4: blocking enqueue/lock-free dequeue\n");
+		fprintf(stderr, "mode 5: lock-free enqueue/lock-free dequeue (lfring)\n");
 		exit(EXIT_FAILURE);
 	}
     }
@@ -547,7 +585,7 @@ usage :
 	    NUMELEMS,
 	    NUMRINGBUFS,
 	    NUMRINGBUFS != 1 ? "s" : "",
-	    (rbmode & 2) ? 'N' : 'B',
+	     rbmode == 5 ? 'L' : (rbmode & 2) ? 'N' : 'B',
 	    (rbmode & 4) ? 'L' : (rbmode & 1) ? 'N' : 'B',
 	    NUMLAPS,
 	    NUMTHREADS,
@@ -566,7 +604,9 @@ usage :
 	flags |= (rbmode & 1) ? P64_RINGBUF_F_NBDEQ : 0;
 	flags |= (rbmode & 2) ? P64_RINGBUF_F_NBENQ : 0;
 	flags |= (rbmode & 4) ? P64_RINGBUF_F_LFDEQ : 0;
-	p64_ringbuf_t *q = p64_ringbuf_alloc(RINGSIZE, flags, sizeof(void *));
+	void *q = LFRING ?
+		  (void *)p64_lfring_alloc(RINGSIZE, 0) :
+		  (void *)p64_ringbuf_alloc(RINGSIZE, flags, sizeof(void *));
 	if (q == NULL)
 	{
 	    fprintf(stderr, "Failed to create ring buffer\n");
@@ -598,6 +638,7 @@ usage :
 	{
 	    benchmark(numthr, AFFINITY);
 	}
+	printf("(enq+deq)/s ");
 	for (uint32_t numthr = 1; numthr <= MAXNUMTHREADS; numthr++)
 	{
 	    printf("%u%c",
