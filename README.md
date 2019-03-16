@@ -19,20 +19,25 @@ Functionality
 * clhlock - CLH queue lock (blocking)
 * hashtable - hash table (lock-free)
 * hazardptr - MT-safe memory reclamation (lock-free)
-* laxrob - 'lax' reorder buffer (non-blocking)
+* laxrob - 'lax' reorder buffer (?)
 * lfring - ring buffer (lock-free)
 * reassemble - IP reassembly (lock-free)
 * reorder - 'strict' reorder buffer (non-blocking)
 * ringbuf - classic ring buffer (blocking & non-blocking, lock-free dequeue)
 * rwlock - reader/writer lock (blocking)
 * rwlock\_r - recursive reader/writer lock (blocking)
-* rwsync - lightweight reader/writer synchronisation 'seqlock' (blocking)
+* rwsync - lightweight reader/writer synchronisation aka 'seqlock' (blocking)
 * rwsync\_r - recursive rwsync (blocking)
 * spinlock - basic CAS-based spin lock (blocking)
 * timer - timers (lock-free)
 
-"Non-blocking" here means no thread will block (wait for other threads) but not
-lock-free in the academic sense (e.g. linearizable).
+"Non-blocking" here means that individual operations are lockless and no thread
+will block (wait for other threads) but the whole data structure is not lock-
+free in the academic sense (e.g. linearizable). Example, an acquired slot in a
+reorder buffer must eventually be released or the reorder buffer will fill up
+and later release slots will not be retired. Acquire and release operations are
+lockless but the reorder buffer as a whole is neither lock-free nor
+obstruction-free.
 
 Requirements
 --------------
