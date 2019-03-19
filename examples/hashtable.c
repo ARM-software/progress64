@@ -149,6 +149,7 @@ int main(void)
     free(h3);
     free(h4);
     free(h5);
+    free(h9);
 
     printf("hashtable test complete\n");
     return 0;
