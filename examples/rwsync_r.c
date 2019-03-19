@@ -7,7 +7,6 @@
 #include "p64_rwsync_r.h"
 #include "expect.h"
 
-#define MY_TID 242
 
 int main(void)
 {
@@ -15,16 +14,16 @@ int main(void)
     p64_rwsync_t s, ss;
     char data[37] = { [36] = 255 };
     p64_rwsync_r_init(&sync_r);
-    s = p64_rwsync_r_acquire_rd(&sync_r, MY_TID);
+    s = p64_rwsync_r_acquire_rd(&sync_r);
     EXPECT(p64_rwsync_r_release_rd(&sync_r, s) == true);
     //First acquire-read call
-    s = p64_rwsync_r_acquire_rd(&sync_r, MY_TID);
+    s = p64_rwsync_r_acquire_rd(&sync_r);
     //Second (recursive) acquire-read call
-    ss = p64_rwsync_r_acquire_rd(&sync_r, MY_TID);
+    ss = p64_rwsync_r_acquire_rd(&sync_r);
     //First acquire-write call
-    p64_rwsync_r_acquire_wr(&sync_r, MY_TID);
+    p64_rwsync_r_acquire_wr(&sync_r);
     //Second (recursive) acquire-write call
-    p64_rwsync_r_acquire_wr(&sync_r, MY_TID);
+    p64_rwsync_r_acquire_wr(&sync_r);
     //Write the protected data
     strcpy(data, "Daisy, Daisy give me your answer do");
     //Second (recursive) release-read call

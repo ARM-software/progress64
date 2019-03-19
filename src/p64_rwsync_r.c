@@ -11,22 +11,30 @@
 #include "p64_rwsync_r.h"
 
 #include "common.h"
+#include "os_abstraction.h"
+
+static __thread uint64_t threadid = INVALID_TID;
 
 void
 p64_rwsync_r_init(p64_rwsync_r_t *sync)
 {
     p64_rwsync_init(&sync->rwsync);
-    sync->owner = P64_RWSYNC_INVALID_TID;
+    sync->owner = INVALID_TID;
     sync->count = 0;
 }
 
 p64_rwsync_t
-p64_rwsync_r_acquire_rd(const p64_rwsync_r_t *sync, int32_t tid)
+p64_rwsync_r_acquire_rd(const p64_rwsync_r_t *sync)
 {
+    if (UNLIKELY(threadid == INVALID_TID))
+    {
+	threadid = p64_gettid();
+    }
+
     //Check if we already have acquired the synchroniser for write
     //If so, we are in the middle of our own update and cannot wait
     //for this update to complete
-    if (__atomic_load_n(&sync->owner, __ATOMIC_RELAXED) == tid)
+    if (__atomic_load_n(&sync->owner, __ATOMIC_RELAXED) == threadid)
     {
 	fprintf(stderr, "rwsync_r: acquire-read after acquire-write\n");
 	fflush(stderr);
@@ -42,19 +50,18 @@ p64_rwsync_r_release_rd(const p64_rwsync_r_t *sync, p64_rwsync_t prv)
 }
 
 void
-p64_rwsync_r_acquire_wr(p64_rwsync_r_t *sync, int32_t tid)
+p64_rwsync_r_acquire_wr(p64_rwsync_r_t *sync)
 {
-    if (UNLIKELY(tid == P64_RWSYNC_INVALID_TID))
+    if (UNLIKELY(threadid == INVALID_TID))
     {
-	fprintf(stderr, "rwsync_r: Invalid TID %d\n", tid);
-	fflush(stderr);
-	abort();
+	threadid = p64_gettid();
     }
-    if (__atomic_load_n(&sync->owner, __ATOMIC_RELAXED) != tid)
+
+    if (__atomic_load_n(&sync->owner, __ATOMIC_RELAXED) != threadid)
     {
 	p64_rwsync_acquire_wr(&sync->rwsync);
 	assert(sync->count == 0);
-	__atomic_store_n(&sync->owner, tid, __ATOMIC_RELAXED);
+	__atomic_store_n(&sync->owner, threadid, __ATOMIC_RELAXED);
     }
     sync->count++;
 }
@@ -65,7 +72,7 @@ p64_rwsync_r_release_wr(p64_rwsync_r_t *sync)
     int32_t count = --(sync->count);
     if (count == 0)
     {
-	__atomic_store_n(&sync->owner, P64_RWSYNC_INVALID_TID, __ATOMIC_RELAXED);
+	__atomic_store_n(&sync->owner, INVALID_TID, __ATOMIC_RELAXED);
 	p64_rwsync_release_wr(&sync->rwsync);
     }
     else if (UNLIKELY(count < 0))

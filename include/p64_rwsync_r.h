@@ -13,12 +13,10 @@ extern "C"
 {
 #endif
 
-#define P64_RWSYNC_INVALID_TID -1
-
 typedef struct
 {
     p64_rwsync_t rwsync;
-    int32_t owner;
+    int64_t owner;
     int32_t count;
 } p64_rwsync_r_t;
 
@@ -31,7 +29,7 @@ void p64_rwsync_r_init(p64_rwsync_r_t *sync);
 //progress, protected data is in unknown state and the call cannot block
 //waiting for the write to complete
 //Recursive acquire-read calls allowed for the same synchroniser
-p64_rwsync_t p64_rwsync_r_acquire_rd(const p64_rwsync_r_t *sync, int32_t tid);
+p64_rwsync_t p64_rwsync_r_acquire_rd(const p64_rwsync_r_t *sync);
 
 //Release a read synchroniser
 //Return false if a write has occurred or is in progress
@@ -42,7 +40,7 @@ bool p64_rwsync_r_release_rd(const p64_rwsync_r_t *sync, p64_rwsync_t prv);
 //Acquire a synchroniser for writing
 //Block until earlier writes have completed
 //Recursive acquire-write calls allowed for the same synchroniser
-void p64_rwsync_r_acquire_wr(p64_rwsync_r_t *sync, int32_t tid);
+void p64_rwsync_r_acquire_wr(p64_rwsync_r_t *sync);
 
 //Release a write synchroniser
 void p64_rwsync_r_release_wr(p64_rwsync_r_t *sync);
