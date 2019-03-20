@@ -14,21 +14,22 @@
 TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock lfring bm_ringbuf
 #List object files for each target
 OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o
-OBJECTS_hashtable = p64_hazardptr.o p64_hashtable.o hashtable.o
-OBJECTS_timer = p64_timer.o timer.o
-OBJECTS_rwlock = p64_rwlock.o rwlock.o
-OBJECTS_rwlock_r = p64_rwlock.o p64_rwlock_r.o rwlock_r.o os_abstraction.o
-OBJECTS_reorder = p64_reorder.o reorder.o
-OBJECTS_antireplay = p64_antireplay.o antireplay.o
-OBJECTS_rwsync = p64_rwsync.o rwsync.o
-OBJECTS_rwsync_r = p64_rwsync.o p64_rwsync_r.o rwsync_r.o os_abstraction.o
-OBJECTS_reassemble = p64_reassemble.o reassemble.o
-OBJECTS_laxrob = p64_laxrob.o laxrob.o
-OBJECTS_ringbuf = p64_ringbuf.o ringbuf.o
-OBJECTS_clhlock = p64_clhlock.o clhlock.o
-OBJECTS_lfring = p64_lfring.o lfring.o
-OBJECTS_bm_ringbuf = p64_ringbuf.o p64_lfring.o bm_ringbuf.o p64_hazardptr.o
+OBJECTS_hashtable = hashtable.o
+OBJECTS_timer = timer.o
+OBJECTS_rwlock = rwlock.o
+OBJECTS_rwlock_r = rwlock_r.o
+OBJECTS_reorder = reorder.o
+OBJECTS_antireplay = antireplay.o
+OBJECTS_rwsync = rwsync.o
+OBJECTS_rwsync_r = rwsync_r.o
+OBJECTS_reassemble = reassemble.o
+OBJECTS_laxrob = laxrob.o
+OBJECTS_ringbuf = ringbuf.o
+OBJECTS_clhlock = clhlock.o
+OBJECTS_lfring = lfring.o
+OBJECTS_bm_ringbuf = bm_ringbuf.o
 
+LIBS = libprogress64.a
 DEBUG ?= 0
 ASSERT ?= 0
 
@@ -179,7 +180,7 @@ $(TARGETS_lib) :
 	@echo "--- Archiving $@ from $(OBJECTS_$@)"
 	$(VERB)$(AR) $(ARFLAGS) $(AROUT) $(addprefix $(OBJDIR)/,$(OBJECTS_$@))
 
-$(TARGETS_bin) :
+$(TARGETS_bin) : $(TARGETS_lib)
 	@echo "--- Linking $@ from $(OBJECTS_$@) $(LIBS)"
 	$(VERB)$(LD) $(LDFLAGS) $(LDOUT) $(addprefix $(OBJDIR)/,$(OBJECTS_$@)) $(GROUPSTART) $(LIBS) $(GROUPEND) $(LDMAP)
 
