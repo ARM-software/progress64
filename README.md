@@ -18,9 +18,10 @@ Functionality
 * barrier - thread barrier (blocking)
 * clhlock - CLH queue lock (blocking)
 * hashtable - hash table (lock-free)
-* hazardptr - MT-safe memory reclamation (lock-free)
+* hazardptr - MT-safe memory reclamation (reader lock-free, writer ?)
 * laxrob - 'lax' reorder buffer (?)
 * lfring - ring buffer (lock-free)
+* qsbr - MT-safe memory reclamation (reader wait-free, writer ?)
 * reassemble - IP reassembly (lock-free)
 * reorder - 'strict' reorder buffer (non-blocking)
 * ringbuf - classic ring buffer (blocking & non-blocking, lock-free dequeue)
@@ -56,7 +57,7 @@ Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the h
 Notes
 --------------
 lfring is an experimental lock-free ring buffer. It needs more analysis and verification.
-rwsync\_r is experimental.
+qsbr is experimental and needs analysis and verification.
 
 TODO
 --------------
