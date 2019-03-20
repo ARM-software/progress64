@@ -16,6 +16,7 @@
 
 #include "arch.h"
 #include "common.h"
+#include "thr_idx.h"
 
 #define MAXREFS (MAXTHREADS * MAXHPREFS + 1)//One extra element!
 
@@ -50,7 +51,6 @@ struct thread_state
     } hp_fileline[MAXHPREFS];
 } ALIGNED(CACHE_LINE);
 
-static uint32_t tidx_counter = 0;
 static uint32_t numthreads = 0;
 static struct thread_state thread_state[MAXTHREADS];
 static __thread struct thread_state *TS;
@@ -58,8 +58,8 @@ static __thread struct thread_state *TS;
 static void
 p64_hazardptr_init(void)
 {
-    uint32_t tidx = __atomic_fetch_add(&tidx_counter, 1, __ATOMIC_RELAXED);
-    if (tidx >= MAXTHREADS)
+    int32_t tidx = p64_idx_alloc();
+    if (tidx < 0)
     {
 	fprintf(stderr, "Too many threads using hazard pointers\n"), abort();
     }
