@@ -87,3 +87,14 @@ p64_idx_alloc(void)
     }
     return -1;
 }
+
+void
+p64_idx_free(int32_t idx)
+{
+    if (idx < 0 || idx >= MAXTHREADS ||
+	(__atomic_load_n(&thread_words[idx / 64], __ATOMIC_RELAXED) & (1U << (idx % 64))) == 0)
+    {
+	fprintf(stderr, "Invalid thread index %d\n", idx), abort();
+    }
+    __atomic_fetch_and(&thread_words[idx / 64], ~(1U << (idx % 64)), __ATOMIC_RELEASE);
+}
