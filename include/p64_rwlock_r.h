@@ -23,11 +23,9 @@ typedef struct
 void p64_rwlock_r_init(p64_rwlock_r_t *lock);
 
 //Acquire a rwlock for reading
-//Block until no write is in progress
-//Not allowed to call acquire-read when the lock has already been acquired
-//for write, protected data is in unknown state and the call cannot block
-//waiting for the write to complete
+//Block until no write is in progress (unless its own write)
 //Recursive acquire-read calls allowed for the same rwlock
+//Can acquire read lock when write lock already acquired for same lock
 void p64_rwlock_r_acquire_rd(p64_rwlock_r_t *lock);
 
 //Release a read lock
@@ -36,6 +34,7 @@ void p64_rwlock_r_release_rd(p64_rwlock_r_t *lock);
 //Acquire a rwlock for writing
 //Block until earlier reads & writes have completed
 //Recursive acquire-write calls allowed for the same rwlock
+//Cannot upgrade read lock to write lock
 void p64_rwlock_r_acquire_wr(p64_rwlock_r_t *lock);
 
 //Release a write lock

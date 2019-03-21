@@ -43,6 +43,11 @@ int main(void)
     p64_rwlock_r_release_wr(&lock_B);
     p64_rwlock_r_release_rd(&lock_A);
 
+    p64_rwlock_r_acquire_wr(&lock_A);
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_release_rd(&lock_A);
+    p64_rwlock_r_release_wr(&lock_A);
+
     printf("rwlock_r tests complete\n");
     return 0;
 }
