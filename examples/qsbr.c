@@ -26,7 +26,8 @@ int main(void)
     uint32_t r;
     p64_qsbr_t *qsbr = p64_qsbr_alloc(10);
     EXPECT(qsbr != NULL)
-    p64_qsbr_acquire(qsbr);
+    p64_qsbr_register(qsbr);
+    p64_qsbr_acquire();
     b = p64_qsbr_retire("X", callback);
     EXPECT(b == true);
     r = p64_qsbr_reclaim();
@@ -46,7 +47,7 @@ int main(void)
     r = p64_qsbr_reclaim();
     EXPECT(r == 0);//0 unreclaimed objects
     expect = NULL;
-    p64_qsbr_cleanup();
+    p64_qsbr_unregister();
     p64_qsbr_free(qsbr);
 
     printf("qsbr tests complete\n");

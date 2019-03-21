@@ -20,10 +20,10 @@
 
 struct p64_qsbr
 {
-    uint64_t cur_int;//Current interval
+    uint64_t current;//Current interval
     uint32_t nelems;
     uint32_t high_wm;//High watermark of thread index
-    uint64_t last_int[MAXTHREADS] ALIGNED(CACHE_LINE);//Each thread's last quiescent interval
+    uint64_t intervals[MAXTHREADS] ALIGNED(CACHE_LINE);//Each thread's last quiescent interval
 };
 
 //Value larger than all possible intervals
@@ -36,18 +36,19 @@ p64_qsbr_alloc(uint32_t nelems)
     p64_qsbr_t *qsbr = aligned_alloc(CACHE_LINE, nbytes);
     if (qsbr != NULL)
     {
-	qsbr->cur_int = 0;
+	qsbr->current = 0;
 	qsbr->nelems = nelems;
 	qsbr->high_wm = 0;
 	for (uint32_t i = 0; i < MAXTHREADS; i++)
 	{
-	    qsbr->last_int[i] = INFINITE;
+	    qsbr->intervals[i] = INFINITE;
 	}
 	return qsbr;
     }
     return NULL;
 }
 
+//Find the smallest value in the array
 static uint64_t
 find_min(const uint64_t vec[], uint32_t num)
 {
@@ -66,10 +67,11 @@ find_min(const uint64_t vec[], uint32_t num)
 void
 p64_qsbr_free(p64_qsbr_t *qsbr)
 {
-    uint64_t last_int = find_min(qsbr->last_int, qsbr->high_wm);
-    if (last_int < __atomic_load_n(&qsbr->cur_int, __ATOMIC_RELAXED))
+    uint64_t interval = find_min(qsbr->intervals, qsbr->high_wm);
+    if (interval != INFINITE)
     {
-	fprintf(stderr, "qsbr: Some threads may still have references\n");
+	fprintf(stderr, "qsbr: Registered threads still present\n");
+	fflush(stderr);
 	abort();
     }
     free(qsbr);
@@ -87,9 +89,9 @@ struct element
 struct thread_state
 {
     p64_qsbr_t *qsbr;
-    uint64_t last_int;//Last seen interval
+    uint64_t interval;//Last seen interval
     uint32_t idx;//Thread index
-    //Removed but not yet recycled objects
+    //Removed but not yet reclaimed objects
     uint32_t nitems;
     uint32_t maxitems;
     struct element objs[];
@@ -112,65 +114,32 @@ alloc_ts(p64_qsbr_t *qsbr)
     int32_t idx = p64_idx_alloc();
     if (idx < 0)
     {
-	fprintf(stderr, "Too many threads using QBSR\n"), abort();
+	fprintf(stderr, "qsbr: Too many registered threads\n");
+	fflush(stderr);
+	abort();
     }
     //Conditionally update high watermark of indexes
     lockfree_fetch_umax_4(&qsbr->high_wm, (uint32_t)idx + 1, __ATOMIC_RELAXED);
     ts->qsbr = qsbr;
-    ts->last_int = INFINITE;
+    ts->interval = INFINITE;
     ts->idx = idx;
     ts->nitems = 0;
     ts->maxitems = qsbr->nelems;
-    __atomic_store_n(&qsbr->last_int[idx], ts->last_int, __ATOMIC_RELAXED);
+    assert(qsbr->intervals[idx] == INFINITE);
     return ts;
 }
 
 void
-p64_qsbr_acquire(p64_qsbr_t *qsbr)
+p64_qsbr_register(p64_qsbr_t *qsbr)
 {
     if (UNLIKELY(TS == NULL))
     {
 	TS = alloc_ts(qsbr);
     }
-    uint64_t last_int = __atomic_load_n(&qsbr->cur_int, __ATOMIC_RELAXED);
-    __atomic_store_n(&qsbr->last_int[TS->idx], last_int, __ATOMIC_RELAXED);
-    TS->last_int = last_int;
-    smp_fence(StoreLoad);
 }
 
 void
-p64_qsbr_quiescent(void)
-{
-    if (UNLIKELY(TS == NULL))
-    {
-	fprintf(stderr, "qsbr: p64_qsbr_acquire() not called\n"), abort();
-    }
-    p64_qsbr_t *qsbr = TS->qsbr;
-    uint64_t last_int = __atomic_load_n(&qsbr->cur_int, __ATOMIC_RELAXED);
-    if (last_int != TS->last_int)
-    {
-	//Release order to contain all our previous access to shared objects
-	__atomic_store_n(&qsbr->last_int[TS->idx], last_int, __ATOMIC_RELEASE);
-	TS->last_int = last_int;
-    }
-    smp_fence(StoreLoad);//TODO move up?
-}
-
-void
-p64_qsbr_release(void)
-{
-    if (UNLIKELY(TS == NULL))
-    {
-	fprintf(stderr, "qsbr: p64_qsbr_acquire() not called\n"), abort();
-    }
-    p64_qsbr_t *qsbr = TS->qsbr;
-    //Mark thread as inactive, no references kept
-    __atomic_store_n(&qsbr->last_int[TS->idx], INFINITE, __ATOMIC_RELEASE);
-    TS->last_int = INFINITE;
-}
-
-void
-p64_qsbr_cleanup(void)
+p64_qsbr_unregister(void)
 {
     if (UNLIKELY(TS == NULL))
     {
@@ -180,11 +149,66 @@ p64_qsbr_cleanup(void)
     {
 	fprintf(stderr, "qsbr: Thread index %d has %u unreclaimed objects\n",
 		TS->idx, TS->nitems);
+	fflush(stderr);
 	abort();
     }
+    //Mark thread as inactive, no references kept
+    __atomic_store_n(&TS->qsbr->intervals[TS->idx], INFINITE, __ATOMIC_RELEASE);
     p64_idx_free(TS->idx);
     free(TS);
     TS = NULL;
+}
+
+void
+p64_qsbr_acquire(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
+	fflush(stderr);
+	abort();
+    }
+    p64_qsbr_t *qsbr = TS->qsbr;
+    uint64_t interval = __atomic_load_n(&qsbr->current, __ATOMIC_RELAXED);
+    __atomic_store_n(&qsbr->intervals[TS->idx], interval, __ATOMIC_RELAXED);
+    TS->interval = interval;
+    //Ensure our interval is observable before any reads are observed
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+void
+p64_qsbr_quiescent(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
+	fflush(stderr);
+	abort();
+    }
+    p64_qsbr_t *qsbr = TS->qsbr;
+    uint64_t interval = __atomic_load_n(&qsbr->current, __ATOMIC_RELAXED);
+    if (interval != TS->interval)
+    {
+	//Release order to contain all our previous access to shared objects
+	__atomic_store_n(&qsbr->intervals[TS->idx], interval, __ATOMIC_RELEASE);
+	TS->interval = interval;
+	__atomic_thread_fence(__ATOMIC_SEQ_CST);
+    }
+}
+
+void
+p64_qsbr_release(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
+	fflush(stderr);
+	abort();
+    }
+    //Mark thread as inactive, no references kept
+    //Release order to contain all our previous access to shared objects
+    __atomic_store_n(&TS->qsbr->intervals[TS->idx], INFINITE, __ATOMIC_RELEASE);
+    TS->interval = INFINITE;
 }
 
 uint32_t
@@ -200,14 +224,14 @@ p64_qsbr_reclaim(void)
 	return 0;
     }
     p64_qsbr_t *qsbr = TS->qsbr;
-    uint64_t last_int = find_min(qsbr->last_int, qsbr->high_wm);
+    uint64_t interval = find_min(qsbr->intervals, qsbr->high_wm);
     uint32_t nreclaimed = 0;
     //Traverse list of retired objects
     uint32_t nitems = 0;
     for (uint32_t i = 0; i < TS->nitems; i++)
     {
 	struct element elem = TS->objs[i];
-	if (last_int > elem.interval)
+	if (interval > elem.interval)
 	{
 	    //All threads have observed a later interval =>
 	    //No thread has any reference to this object, reclaim it
@@ -235,8 +259,7 @@ p64_qsbr_retire(void *ptr,
     {
 	fprintf(stderr, "qsbr: p64_qsbr_acquire() not called\n"), abort();
     }
-    p64_qsbr_t *qsbr = TS->qsbr;
-    if (TS->nitems == TS->maxitems)
+    if (UNLIKELY(TS->nitems == TS->maxitems))
     {
 	if (p64_qsbr_reclaim() == TS->maxitems)
 	{
@@ -249,8 +272,12 @@ p64_qsbr_retire(void *ptr,
     TS->objs[i].cb = cb;
     //Create a new interval
     //Retired object belongs to previous interval
-    //Release order to ensure removal is visible before new interval
-    TS->objs[i].interval = __atomic_fetch_add(&qsbr->cur_int, 1, __ATOMIC_RELEASE);
-    //When all threads have observed the new interval, this object can be reclaimed
+    //Release order to ensure removal is observable before new interval is
+    //observed
+    TS->objs[i].interval = __atomic_fetch_add(&TS->qsbr->current,
+					      1,
+					      __ATOMIC_RELEASE);
+    //The object can be reclaimed when all threads have observed
+    //the new interval
     return true;
 }
