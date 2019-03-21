@@ -9,21 +9,39 @@
 
 int main(void)
 {
-    p64_rwlock_r_t lock_r;
-    p64_rwlock_r_init(&lock_r);
+    p64_rwlock_r_t lock_A;
+    p64_rwlock_r_t lock_B;
+    p64_rwlock_r_init(&lock_A);
+    p64_rwlock_r_init(&lock_B);
 
-    p64_rwlock_r_acquire_rd(&lock_r);
-    p64_rwlock_r_acquire_rd(&lock_r);
-    p64_rwlock_r_release_rd(&lock_r);
-    p64_rwlock_r_release_rd(&lock_r);
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_release_rd(&lock_A);
+    p64_rwlock_r_release_rd(&lock_A);
 
-    p64_rwlock_r_acquire_wr(&lock_r);
-    p64_rwlock_r_acquire_wr(&lock_r);
-    p64_rwlock_r_release_wr(&lock_r);
-    p64_rwlock_r_release_wr(&lock_r);
+    p64_rwlock_r_acquire_wr(&lock_A);
+    p64_rwlock_r_acquire_wr(&lock_A);
+    p64_rwlock_r_release_wr(&lock_A);
+    p64_rwlock_r_release_wr(&lock_A);
 
-    p64_rwlock_r_acquire_rd(&lock_r);
-    p64_rwlock_r_release_rd(&lock_r);
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_release_rd(&lock_A);
+
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_acquire_rd(&lock_B);
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_release_rd(&lock_A);
+    p64_rwlock_r_release_rd(&lock_B);
+    p64_rwlock_r_release_rd(&lock_A);
+
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_acquire_wr(&lock_B);
+    p64_rwlock_r_acquire_rd(&lock_A);
+    p64_rwlock_r_acquire_wr(&lock_B);
+    p64_rwlock_r_release_wr(&lock_B);
+    p64_rwlock_r_release_rd(&lock_A);
+    p64_rwlock_r_release_wr(&lock_B);
+    p64_rwlock_r_release_rd(&lock_A);
 
     printf("rwlock_r tests complete\n");
     return 0;
