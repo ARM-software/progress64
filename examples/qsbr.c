@@ -24,7 +24,7 @@ int main(void)
 {
     bool b;
     uint32_t r;
-    p64_qsbr_t *qsbr = p64_qsbr_alloc(10);
+    p64_qsbrdomain_t *qsbr = p64_qsbr_alloc(10);
     EXPECT(qsbr != NULL)
     p64_qsbr_register(qsbr);
     p64_qsbr_acquire();

@@ -18,7 +18,14 @@
 #include "common.h"
 #include "thr_idx.h"
 
-struct p64_qsbr
+static void
+eprintf_not_registered(void)
+{
+    fprintf(stderr, "hazardptr: p64_qsbr_register() not called\n");
+    fflush(stderr);
+}
+
+struct p64_qsbrdomain
 {
     uint64_t current;//Current interval
     uint32_t nelems;
@@ -29,11 +36,11 @@ struct p64_qsbr
 //Value larger than all possible intervals
 #define INFINITE (~(uint64_t)0)
 
-p64_qsbr_t *
+p64_qsbrdomain_t *
 p64_qsbr_alloc(uint32_t nelems)
 {
-    size_t nbytes = ROUNDUP(sizeof(p64_qsbr_t), CACHE_LINE);
-    p64_qsbr_t *qsbr = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = ROUNDUP(sizeof(p64_qsbrdomain_t), CACHE_LINE);
+    p64_qsbrdomain_t *qsbr = aligned_alloc(CACHE_LINE, nbytes);
     if (qsbr != NULL)
     {
 	qsbr->current = 0;
@@ -65,7 +72,7 @@ find_min(const uint64_t vec[], uint32_t num)
 }
 
 void
-p64_qsbr_free(p64_qsbr_t *qsbr)
+p64_qsbr_free(p64_qsbrdomain_t *qsbr)
 {
     uint64_t interval = find_min(qsbr->intervals, qsbr->high_wm);
     if (interval != INFINITE)
@@ -79,7 +86,7 @@ p64_qsbr_free(p64_qsbr_t *qsbr)
 
 typedef void *userptr_t;
 
-struct element
+struct object
 {
     userptr_t ptr;
     void (*cb)(userptr_t);
@@ -88,28 +95,21 @@ struct element
 
 struct thread_state
 {
-    p64_qsbr_t *qsbr;
+    p64_qsbrdomain_t *qsbr;
     uint64_t interval;//Last seen interval
     uint32_t idx;//Thread index
     //Removed but not yet reclaimed objects
-    uint32_t nitems;
-    uint32_t maxitems;
-    struct element objs[];
+    uint32_t nobjs;
+    uint32_t maxobjs;
+    struct object objs[];
 } ALIGNED(CACHE_LINE);
 
 static __thread struct thread_state *TS = NULL;
 
 static struct thread_state *
-alloc_ts(p64_qsbr_t *qsbr)
+alloc_ts(p64_qsbrdomain_t *qsbr)
 {
     assert(TS == NULL);
-    size_t nbytes = ROUNDUP(sizeof(struct thread_state) +
-			    qsbr->nelems * sizeof(struct element), CACHE_LINE);
-    struct thread_state *ts = aligned_alloc(CACHE_LINE, nbytes);
-    if (ts == NULL)
-    {
-	perror("malloc"), exit(EXIT_FAILURE);
-    }
     //Attempt to allocate a thread index
     int32_t idx = p64_idx_alloc();
     if (idx < 0)
@@ -118,19 +118,26 @@ alloc_ts(p64_qsbr_t *qsbr)
 	fflush(stderr);
 	abort();
     }
+    size_t nbytes = ROUNDUP(sizeof(struct thread_state) +
+			    qsbr->nelems * sizeof(struct object), CACHE_LINE);
+    struct thread_state *ts = aligned_alloc(CACHE_LINE, nbytes);
+    if (ts == NULL)
+    {
+	perror("malloc"), exit(EXIT_FAILURE);
+    }
     //Conditionally update high watermark of indexes
     lockfree_fetch_umax_4(&qsbr->high_wm, (uint32_t)idx + 1, __ATOMIC_RELAXED);
     ts->qsbr = qsbr;
     ts->interval = INFINITE;
     ts->idx = idx;
-    ts->nitems = 0;
-    ts->maxitems = qsbr->nelems;
+    ts->nobjs = 0;
+    ts->maxobjs = qsbr->nelems;
     assert(qsbr->intervals[idx] == INFINITE);
     return ts;
 }
 
 void
-p64_qsbr_register(p64_qsbr_t *qsbr)
+p64_qsbr_register(p64_qsbrdomain_t *qsbr)
 {
     if (UNLIKELY(TS == NULL))
     {
@@ -145,10 +152,9 @@ p64_qsbr_unregister(void)
     {
 	return;
     }
-    if (TS->nitems != 0)
+    if (TS->nobjs != 0)
     {
-	fprintf(stderr, "qsbr: Thread index %d has %u unreclaimed objects\n",
-		TS->idx, TS->nitems);
+	fprintf(stderr, "qsbr: Thread has %u unreclaimed objects\n", TS->nobjs);
 	fflush(stderr);
 	abort();
     }
@@ -164,11 +170,9 @@ p64_qsbr_acquire(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
-	fflush(stderr);
-	abort();
+	eprintf_not_registered(); abort();
     }
-    p64_qsbr_t *qsbr = TS->qsbr;
+    p64_qsbrdomain_t *qsbr = TS->qsbr;
     uint64_t interval = __atomic_load_n(&qsbr->current, __ATOMIC_RELAXED);
     __atomic_store_n(&qsbr->intervals[TS->idx], interval, __ATOMIC_RELAXED);
     TS->interval = interval;
@@ -181,11 +185,9 @@ p64_qsbr_quiescent(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
-	fflush(stderr);
-	abort();
+	eprintf_not_registered(); abort();
     }
-    p64_qsbr_t *qsbr = TS->qsbr;
+    p64_qsbrdomain_t *qsbr = TS->qsbr;
     uint64_t interval = __atomic_load_n(&qsbr->current, __ATOMIC_RELAXED);
     if (interval != TS->interval)
     {
@@ -201,9 +203,7 @@ p64_qsbr_release(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
-	fflush(stderr);
-	abort();
+	eprintf_not_registered(); abort();
     }
     //Mark thread as inactive, no references kept
     //Release order to contain all our previous access to shared objects
@@ -211,46 +211,38 @@ p64_qsbr_release(void)
     TS->interval = INFINITE;
 }
 
-uint32_t
-p64_qsbr_reclaim(void)
+//Traverse all pending objects and reclaim those that have no references
+static uint32_t
+garbage_collect(void)
 {
-    if (UNLIKELY(TS == NULL))
-    {
-	return 0;
-    }
-    if (TS->nitems == 0)
-    {
-	//Nothing to reclaim
-	return 0;
-    }
-    p64_qsbr_t *qsbr = TS->qsbr;
+    p64_qsbrdomain_t *qsbr = TS->qsbr;
     uint64_t interval = find_min(qsbr->intervals, qsbr->high_wm);
-    uint32_t nreclaimed = 0;
-    //Traverse list of retired objects
-    uint32_t nitems = 0;
-    for (uint32_t i = 0; i < TS->nitems; i++)
+    //Traverse list of pending objects
+    uint32_t nobjs = 0;
+    for (uint32_t i = 0; i < TS->nobjs; i++)
     {
-	struct element elem = TS->objs[i];
-	if (interval > elem.interval)
+	struct object obj = TS->objs[i];
+	if (interval > obj.interval)
 	{
 	    //All threads have observed a later interval =>
 	    //No thread has any reference to this object, reclaim it
-	    elem.cb(elem.ptr);
-	    nreclaimed++;
+	    obj.cb(obj.ptr);
 	}
 	else
 	{
 	    //Retired object still referenced, keep it in rlist
-	    TS->objs[nitems++] = elem;
+	    TS->objs[nobjs++] = obj;
 	}
     }
     //Some objects may remain in the list of retired objects
-    TS->nitems = nitems;
+    TS->nobjs = nobjs;
     //Return number of remaining unreclaimed objects
     //Caller can compute number of available slots
-    return nitems;
+    return nobjs;
 }
 
+//Retire an object
+//If necessary, perform garbage collection on retired objects
 bool
 p64_qsbr_retire(void *ptr,
 		void (*cb)(void *ptr))
@@ -259,15 +251,15 @@ p64_qsbr_retire(void *ptr,
     {
 	fprintf(stderr, "qsbr: p64_qsbr_acquire() not called\n"), abort();
     }
-    if (UNLIKELY(TS->nitems == TS->maxitems))
+    if (UNLIKELY(TS->nobjs == TS->maxobjs))
     {
-	if (p64_qsbr_reclaim() == TS->maxitems)
+	if (p64_qsbr_reclaim() == TS->maxobjs)
 	{
 	    return false;//No space for object
 	}
     }
-    assert(TS->nitems < TS->maxitems);
-    uint32_t i = TS->nitems++;
+    assert(TS->nobjs < TS->maxobjs);
+    uint32_t i = TS->nobjs++;
     TS->objs[i].ptr = ptr;
     TS->objs[i].cb = cb;
     //Create a new interval
@@ -280,4 +272,21 @@ p64_qsbr_retire(void *ptr,
     //The object can be reclaimed when all threads have observed
     //the new interval
     return true;
+}
+
+uint32_t
+p64_qsbr_reclaim(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	eprintf_not_registered(); abort();
+    }
+    if (TS->nobjs == 0)
+    {
+	//Nothing to reclaim
+	return 0;
+    }
+    //Try to reclaim objects
+    uint32_t nremaining = garbage_collect();
+    return nremaining;
 }

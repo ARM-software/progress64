@@ -14,30 +14,30 @@ extern "C"
 {
 #endif
 
-typedef struct p64_qsbr p64_qsbr_t;
+typedef struct p64_qsbrdomain p64_qsbrdomain_t;
 
-//Allocate a QSBR data structure where each thread will be able to have up to
+//Allocate a QSBR domain where each thread will be able to have up to
 //'nelems' objects waiting for reclamation
-p64_qsbr_t *p64_qsbr_alloc(uint32_t nelems);
+p64_qsbrdomain_t *p64_qsbr_alloc(uint32_t nelems);
 
-//Free a QSBR data structure
-void p64_qsbr_free(p64_qsbr_t *qsbr);
+//Free a QSBR domain
+void p64_qsbr_free(p64_qsbrdomain_t *qsbr);
 
 //Register a thread, allocate per-thread resources
-void p64_qsbr_register(p64_qsbr_t *qsbr);
+void p64_qsbr_register(p64_qsbrdomain_t *qsbr);
 
 //Unregister a thread, free any per-thread resources
 void p64_qsbr_unregister(void);
 
-//Signal QSBR data structure that this thread is now acquiring references to
+//Signal QSBR domain that this thread is now acquiring references to
 //shared objects
 void p64_qsbr_acquire(void);
 
-//Signal QSBR data structure that this thread has released all references
+//Signal QSBR domain that this thread has released all references
 //to shared objects
 void p64_qsbr_release(void);
 
-//Signal QSBR data structure that this thread has released all previous
+//Signal QSBR domain that this thread has released all previous
 //references to shared objects but will continue to acquire new references
 //to shared objects
 //This is functionally equivalent to p64_qsbr_release + p64_qsbr_acquire
