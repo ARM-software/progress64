@@ -6,8 +6,12 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "p64_hazardptr.h"
 #include "p64_hashtable.h"
 #include "expect.h"
+
+//Hashtable requires 2 hazard pointers per thread
+#define NUM_HAZARD_POINTERS 2
 
 uint32_t p64_hashtable_check(p64_hashtable_t *ht,
 			     uint64_t (*f)(p64_hashelem_t *));
@@ -57,6 +61,10 @@ compf(const p64_hashelem_t *he,
 
 int main(void)
 {
+    p64_hpdomain_t *hpd = p64_hazptr_alloc(NUM_HAZARD_POINTERS);
+    EXPECT(hpd != NULL);
+    p64_hazptr_register(hpd);
+
     p64_hashtable_t *ht = p64_hashtable_alloc(1);
     EXPECT(ht != NULL);
     p64_hashtable_check(ht, keyf);
@@ -150,6 +158,9 @@ int main(void)
     free(h4);
     free(h5);
     free(h9);
+
+    p64_hazptr_unregister();
+    p64_hazptr_free(hpd);
 
     printf("hashtable test complete\n");
     return 0;

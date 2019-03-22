@@ -5,8 +5,8 @@
 #ifndef _P64_HAZARDPTR_H
 #define _P64_HAZARDPTR_H
 
-#include <stdbool.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdio.h>
 
 #ifdef __cplusplus
@@ -17,8 +17,20 @@ extern "C"
 typedef void **p64_hazardptr_t;
 #define P64_HAZARDPTR_NULL NULL
 
-//Return maximum number of references per thread
-uint32_t p64_hazptr_maxrefs(void);
+typedef struct p64_hpdomain p64_hpdomain_t;
+
+//Allocate a hazard pointer domain where each thread will be able to keep up
+//to 'nrefs' objects safe from premature reclamation
+p64_hpdomain_t *p64_hazptr_alloc(uint32_t nrefs);
+
+//Free a hazard pointer domain
+void p64_hazptr_free(p64_hpdomain_t *hdom);
+
+//Register a thread, allocate per-thread resources
+void p64_hazptr_register(p64_hpdomain_t *hdom);
+
+//Unregister a thread, free any per-thread resources
+void p64_hazptr_unregister(void);
 
 //Acquire a reference to the object which '*pptr' points to
 //Return a pointer to the object or NULL (*pptr was NULL)
@@ -59,7 +71,8 @@ void p64_hazptr_release_ro(p64_hazardptr_t *hp);
 void p64_hazptr_retire(void *ptr, void (*callback)(void *ptr));
 
 //Force garbage reclamation
-bool p64_hazptr_reclaim(void);
+//Return number of remaining unreclamined objects
+uint32_t p64_hazptr_reclaim(void);
 
 //Debugging support
 //Annotate a hazard pointer (if != P64_HAZARDPTR_NULL) with file & line
@@ -67,7 +80,7 @@ void p64_hazptr_annotate(p64_hazardptr_t hp, const char *file, unsigned line);
 
 //Print allocated hazard pointers and associated file & line
 //Return number of allocated hazard pointers
-unsigned p64_hazptr_dump(FILE *fp);
+uint32_t p64_hazptr_dump(FILE *fp);
 
 #ifdef __cplusplus
 }
