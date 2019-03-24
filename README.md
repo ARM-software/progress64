@@ -18,13 +18,13 @@ Functionality
 * barrier - thread barrier (blocking)
 * clhlock - CLH queue lock (blocking)
 * hashtable - hash table (lock-free)
-* hazardptr - MT-safe memory reclamation (reader lock-free, writer ?)
+* hazardptr - MT-safe object reclamation (reader lock-free, writer blocking)
 * laxrob - 'lax' reorder buffer (?)
 * lfring - ring buffer (lock-free)
-* qsbr - MT-safe memory reclamation (reader wait-free, writer ?)
+* qsbr - MT-safe object reclamation (reader wait-free, writer blocking)
 * reassemble - IP reassembly (lock-free)
-* reorder - 'strict' reorder buffer (non-blocking)
-* ringbuf - classic ring buffer (blocking & non-blocking, lock-free dequeue)
+* reorder - 'strict' reorder buffer ("lockless")
+* ringbuf - classic ring buffer (blocking & "lockless", lock-free dequeue)
 * rwlock - reader/writer lock (blocking)
 * rwlock\_r - recursive reader/writer lock (blocking)
 * rwsync - lightweight reader/writer synchronisation aka 'seqlock' (blocking)
@@ -32,17 +32,16 @@ Functionality
 * spinlock - basic CAS-based spin lock (blocking)
 * timer - timers (lock-free)
 
-"Non-blocking" here means that individual operations are lockless and no thread
-will block (wait for other threads) but the whole data structure is not lock-
-free in the academic sense (e.g. linearizable). Example, an acquired slot in a
-reorder buffer must eventually be released or the reorder buffer will fill up
-and later release slots will not be retired. Acquire and release operations are
-lockless but the reorder buffer as a whole is neither lock-free nor
-obstruction-free.
+"Lockless" here means that individual operations will not block (wait for other
+threads) but the whole data structure is not lock-free in the academic sense
+(e.g. linearizable). Example, an acquired slot in a reorder buffer must
+eventually be released or the reorder buffer will fill up and later release
+slots will not be retired. Acquire and release operations are lockless but the
+reorder buffer as a whole is neither lock-free nor obstruction-free.
 
 Requirements
 --------------
-* A C compiler (e.g. GCC) which supports the '\_\_atomic' builtins and inline assembler
+* A C compiler (e.g. GCC) which supports the '\_\_atomic' builtins and inline assembler. A lot of other GCC'isms are used as well.
 
 Usage
 --------------
@@ -53,15 +52,15 @@ Restrictions
 --------------
 PROGRESS64 currently only supports ARMv8/AArch64 and x86-64 architectures.
 Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the hardware.
+Hazardptr and qsbr support one domain only. This simplifies the API.
 
 Notes
 --------------
-qsbr is experimental and needs analysis and verification.
 
 TODO
 --------------
 * Some missing examples
-* Multithreaded test programs
+* Multithreaded test programs for e.g. hash table, reassembly, reorder
 
 License
 --------------
