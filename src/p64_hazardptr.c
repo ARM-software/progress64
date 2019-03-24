@@ -56,6 +56,12 @@ struct p64_hpdomain
 p64_hpdomain_t *
 p64_hazptr_alloc(uint32_t nrefs)
 {
+    if (nrefs < 1 || nrefs > 32)
+    {
+	fprintf(stderr, "hazardptr: Invalid number of references\n");
+	fflush(stderr);
+	abort();
+    }
     size_t nbytes = ROUNDUP(sizeof(p64_hpdomain_t), CACHE_LINE);
     p64_hpdomain_t *hpd = aligned_alloc(CACHE_LINE, nbytes);
     if (hpd != NULL)
@@ -410,7 +416,7 @@ find_ptr(userptr_t refs[],
 	int half = nrefs / 2;
 	if (ptr < refs[half])
 	{
-	    return find_ptr(refs, half - 1, ptr);
+	    return find_ptr(refs, half, ptr);
 	}
 	else if (ptr > refs[half])
 	{
@@ -442,6 +448,10 @@ garbage_collect(void)
 	struct object obj = TS->objs[i];
 	if (!find_ptr(refs, nrefs, obj.ptr))
 	{
+	    for (uint32_t j = 0; j < nrefs; j++)
+	    {
+		assert(refs[j] != obj.ptr);
+	    }
 	    //No references found to retired object, reclaim it
 	    obj.cb(obj.ptr);
 	}
