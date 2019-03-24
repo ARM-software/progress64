@@ -3,6 +3,7 @@
 *.swp
 antireplay
 bm_ringbuf
+bm_smr
 clhlock
 core
 hashtable
