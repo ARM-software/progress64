@@ -70,7 +70,7 @@ OBJDIR = obj#Must not be .
 # Make actions (phony targets)
 ################################################################################
 
-.PHONY : default all clean tags etags
+.PHONY : default all clean tags etags run
 
 default:
 	@echo "Make targets:"
@@ -78,6 +78,7 @@ default:
 	@echo "clean       remove derived files"
 	@echo "tags        generate vi tags file"
 	@echo "etags       generate emacs tags file"
+	@echo "run         run all examples, tests and benchmarks"
 
 all : $(TARGETS)
 
@@ -97,6 +98,9 @@ tags :
 
 etags :
 	$(VERB)ctags -e -R .
+
+run : $(TARGETS_bin)
+	for cmd in $(TARGETS_bin); do echo Running $$cmd; ./$$cmd || break; done
 
 ################################################################################
 # Setup tool commands and flags
