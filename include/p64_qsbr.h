@@ -29,18 +29,15 @@ void p64_qsbr_register(p64_qsbrdomain_t *qsbr);
 //Unregister a thread, free any per-thread resources
 void p64_qsbr_unregister(void);
 
-//Signal QSBR domain that this thread is now acquiring references to
-//shared objects
+//p64_qsbr_acquire() and p64_qsbr_release() allow for use of QSBR in e.g.
+//libraries. When the number of calls to p64_qsbr_release() matches the
+//number of calls to p64_qsbr_acquire(), p64_qsbr_quiescent() is called.
 void p64_qsbr_acquire(void);
-
-//Signal QSBR domain that this thread has released all references
-//to shared objects
 void p64_qsbr_release(void);
 
 //Signal QSBR domain that this thread has released all previous
-//references to shared objects but will continue to acquire new references
-//to shared objects
-//This is functionally equivalent to p64_qsbr_release + p64_qsbr_acquire
+//references to shared objects
+//p64_qsbr_quiescent() is expected to be called from some application main loop
 void p64_qsbr_quiescent(void);
 
 //Retire a removed shared object

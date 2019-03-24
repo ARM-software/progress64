@@ -27,7 +27,6 @@ int main(void)
     p64_qsbrdomain_t *qsbr = p64_qsbr_alloc(10);
     EXPECT(qsbr != NULL)
     p64_qsbr_register(qsbr);
-    p64_qsbr_acquire();
     b = p64_qsbr_retire("X", callback);
     EXPECT(b == true);
     r = p64_qsbr_reclaim();
