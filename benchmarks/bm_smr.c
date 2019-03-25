@@ -213,6 +213,7 @@ thr_execute(uint32_t tidx)
 		abort();
 	    }
 	}
+	printf("Writer done: numnull %u\n", numnull);
     }
     else
     {
@@ -248,6 +249,13 @@ thr_execute(uint32_t tidx)
 		p64_hazptr_release(&hp);
 	    else
 		p64_qsbr_release();
+	    if (!USEHP)
+	    {
+		//Verify that active/inactive works
+		p64_qsbr_deactivate();
+		delay_loop(1);
+		p64_qsbr_reactivate();
+	    }
 	}
 	printf("Reader %u done: numfail %u, numnull %u\n", tidx, numfail, numnull);
     }

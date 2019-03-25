@@ -139,17 +139,40 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
 }
 
 void
+p64_qsbr_reactivate(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	eprintf_not_registered(); abort();
+    }
+    uint64_t interval = __atomic_load_n(&TS->qsbr->current, __ATOMIC_RELAXED);
+    __atomic_store_n(&TS->qsbr->intervals[TS->idx], interval, __ATOMIC_RELAXED);
+    TS->interval = interval;
+    //Ensure our interval is observable before any reads are observed
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+}
+
+void
 p64_qsbr_register(p64_qsbrdomain_t *qsbr)
 {
     if (UNLIKELY(TS == NULL))
     {
 	TS = alloc_ts(qsbr);
     }
-    uint64_t interval = __atomic_load_n(&qsbr->current, __ATOMIC_RELAXED);
-    __atomic_store_n(&qsbr->intervals[TS->idx], interval, __ATOMIC_RELAXED);
+    p64_qsbr_reactivate();
+}
+
+void
+p64_qsbr_deactivate(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	eprintf_not_registered(); abort();
+    }
+    //Mark thread as inactive, no references kept
+    uint64_t interval = INFINITE;
+    __atomic_store_n(&TS->qsbr->intervals[TS->idx], interval, __ATOMIC_RELEASE);
     TS->interval = interval;
-    //Ensure our interval is observable before any reads are observed
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 void
@@ -157,7 +180,7 @@ p64_qsbr_unregister(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	return;
+	eprintf_not_registered(); abort();
     }
     if (TS->nobjs != 0)
     {
@@ -165,21 +188,10 @@ p64_qsbr_unregister(void)
 	fflush(stderr);
 	abort();
     }
-    //Mark thread as inactive, no references kept
-    __atomic_store_n(&TS->qsbr->intervals[TS->idx], INFINITE, __ATOMIC_RELEASE);
+    p64_qsbr_deactivate();
     p64_idx_free(TS->idx);
     free(TS);
     TS = NULL;
-}
-
-void
-p64_qsbr_acquire(void)
-{
-    if (UNLIKELY(TS == NULL))
-    {
-	eprintf_not_registered(); abort();
-    }
-    TS->recur++;
 }
 
 static inline void
@@ -203,7 +215,29 @@ p64_qsbr_quiescent(void)
     {
 	eprintf_not_registered(); abort();
     }
+    if (UNLIKELY(TS->interval == INFINITE))
+    {
+	fprintf(stderr, "qsbr: Inactive thread calling p64_qsbr_quiescent()\n");
+	fflush(stderr);
+	abort();
+    }
     quiescent();
+}
+
+void
+p64_qsbr_acquire(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	eprintf_not_registered(); abort();
+    }
+    if (UNLIKELY(TS->interval == INFINITE))
+    {
+	fprintf(stderr, "qsbr: Inactive thread calling p64_qsbr_acquire()\n");
+	fflush(stderr);
+	abort();
+    }
+    TS->recur++;
 }
 
 void
@@ -281,7 +315,7 @@ p64_qsbr_retire(void *ptr,
     //created and can be observed
     uint32_t new_interval = __atomic_fetch_add(&TS->qsbr->current,
 					       1,
-					       __ATOMIC_RELEASE);
+					       __ATOMIC_ACQ_REL);
     //Retired object belongs to previous interval
     TS->objs[i].interval = new_interval;
     //The object can be reclaimed when all threads have observed

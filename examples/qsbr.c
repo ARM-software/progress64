@@ -33,6 +33,8 @@ int main(void)
     EXPECT(r == 1);//1 unreclaimed object
     //Thread reports no saved references, X can now be reclaimed
     p64_qsbr_quiescent();
+    p64_qsbr_deactivate();
+    p64_qsbr_reactivate();
     p64_qsbr_quiescent();
     b = p64_qsbr_retire("Y", callback);
     EXPECT(b == true);
