@@ -434,7 +434,7 @@ find_ptr(userptr_t refs[],
 static uint32_t
 garbage_collect(void)
 {
-    userptr_t refs[TS->nobjs];
+    userptr_t refs[TS->maxobjs];
     //Get sorted list of active references
     uint32_t nrefs = collect_refs(refs,
 				  TS->hpd->hpp,
