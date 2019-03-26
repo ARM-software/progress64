@@ -19,33 +19,66 @@ static uint64_t thread_words[NWORDS];
 static pthread_once_t once = PTHREAD_ONCE_INIT;
 static pthread_key_t key;
 
-static inline intptr_t
-ptr_to_int(void *ptr)
+struct idx_cnt
+{
+    uint16_t idx;
+    uint16_t cnt;
+};
+
+static inline struct idx_cnt
+uint_to_idxcnt(uintptr_t uint)
+{
+    struct idx_cnt ic;
+    ic.idx = (uint16_t)(uint & 0xffff);
+    ic.cnt = (uint16_t)(uint >> 16);
+    return ic;
+}
+
+static inline uintptr_t
+idxcnt_to_uint(struct idx_cnt ic)
+{
+    return ic.idx | (ic.cnt << 16);
+}
+
+static inline struct idx_cnt
+ptr_to_idxcnt(void *ptr)
 {
     assert(ptr != NULL);
-    return (intptr_t)ptr - 1;
+    return uint_to_idxcnt((uintptr_t)ptr - 1);
 }
 
 
 static inline void *
-int_to_ptr(intptr_t sint)
+idxcnt_to_ptr(struct idx_cnt ic)
 {
-    return (void *)(sint + 1);
+    return (void *)(idxcnt_to_uint(ic) + 1);
 }
 
 static void
 destructor(void *ptr)
 {
-    uint32_t idx = ptr_to_int(ptr);
-    __atomic_fetch_and(&thread_words[idx / 64], ~(1U << (idx % 64)), __ATOMIC_RELEASE);
+    uint32_t idx = ptr_to_idxcnt(ptr).idx;
+    __atomic_fetch_and(&thread_words[idx / 64],
+		       ~(1U << (idx % 64)),
+		       __ATOMIC_RELEASE);
 }
 
 void
 very_first_time(void)
 {
-    if (pthread_key_create(&key, destructor) != 0)
+    if ((errno = pthread_key_create(&key, destructor)) != 0)
     {
 	perror("pthread_key_create"), exit(EXIT_FAILURE);
+    }
+}
+
+static void
+set_key(struct idx_cnt ic)
+{
+    assert(ic.cnt != 0);
+    if ((errno = pthread_setspecific(key, idxcnt_to_ptr(ic))) != 0)
+    {
+	perror("pthread_setspecific"), exit(EXIT_FAILURE);
     }
 }
 
@@ -56,7 +89,10 @@ p64_idx_alloc(void)
     void *ptr = pthread_getspecific(key);
     if (ptr != NULL)
     {
-	return ptr_to_int(ptr);
+	struct idx_cnt ic = ptr_to_idxcnt(ptr);
+	ic.cnt++;
+	set_key(ic);
+	return ic.idx;
     }
 
     for (uint32_t i = 0; i < NWORDS; i++)
@@ -76,12 +112,11 @@ p64_idx_alloc(void)
 					    __ATOMIC_ACQUIRE,
 					    __ATOMIC_RELAXED))
 	    {
-		int32_t idx = 64 * i + bit;
-		if ((errno = pthread_setspecific(key, int_to_ptr(idx))) != 0)
-		{
-		    perror("pthread_setspecific"), exit(EXIT_FAILURE);
-		}
-		return idx;
+		struct idx_cnt ic;
+		ic.idx = 64 * i + bit;
+		ic.cnt = 1;
+		set_key(ic);
+		return ic.idx;
 	    }
 	}
     }
@@ -91,10 +126,32 @@ p64_idx_alloc(void)
 void
 p64_idx_free(int32_t idx)
 {
-    if (idx < 0 || idx >= MAXTHREADS ||
-	(__atomic_load_n(&thread_words[idx / 64], __ATOMIC_RELAXED) & (1U << (idx % 64))) == 0)
+    void *ptr = pthread_getspecific(key);
+    if (ptr != NULL)
     {
-	fprintf(stderr, "Invalid thread index %d\n", idx), abort();
+	struct idx_cnt ic = ptr_to_idxcnt(ptr);
+	if (ic.idx == idx)
+	{
+	    assert (ic.cnt != 0);
+	    assert((__atomic_load_n(&thread_words[idx / 64], __ATOMIC_RELAXED) &
+				    (1U << (idx % 64))) != 0);
+	    if (--ic.cnt == 0)
+	    {
+		//Relinquish this thread index
+		__atomic_fetch_and(&thread_words[idx / 64],
+				   ~(1U << (idx % 64)), __ATOMIC_RELEASE);
+		pthread_setspecific(key, NULL);
+	    }
+	    else
+	    {
+		set_key(ic);
+	    }
+	    return;
+	}
+	//Else mismatching thread index
     }
-    __atomic_fetch_and(&thread_words[idx / 64], ~(1U << (idx % 64)), __ATOMIC_RELEASE);
+    //Else pthread TLS not set
+    fprintf(stderr, "Mismatched call to p64_idx_free(idx=%d)\n", idx);
+    fflush(stderr);
+    abort();
 }
