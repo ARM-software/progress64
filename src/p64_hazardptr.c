@@ -150,10 +150,21 @@ alloc_ts(p64_hpdomain_t *hpd)
 	ts->hp[i].file = NULL;
 	ts->hp[i].line = 0;
     }
-    __atomic_store_n(&hpd->hpp[idx], ts->hp, __ATOMIC_RELEASE);
     //Conditionally update high watermark of indexes
     lockfree_fetch_umax_4(&hpd->high_wm, (uint32_t)idx + 1, __ATOMIC_RELAXED);
     return ts;
+}
+
+void
+p64_hazptr_reactivate(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	eprintf_not_registered(); abort();
+    }
+    __atomic_store_n(&TS->hpd->hpp[TS->idx], TS->hp, __ATOMIC_RELAXED);
+    //Ensure our hazard pointers are observable before any reads are observed
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
 void
@@ -163,6 +174,18 @@ p64_hazptr_register(p64_hpdomain_t *hpd)
     {
 	TS = alloc_ts(hpd);
     }
+    p64_hazptr_reactivate();
+}
+
+void
+p64_hazptr_deactivate(void)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	eprintf_not_registered(); abort();
+    }
+    //Mark thread as inactive, no references kept
+    __atomic_store_n(&TS->hpd->hpp[TS->idx], NULL, __ATOMIC_RELEASE);
 }
 
 void
@@ -170,7 +193,7 @@ p64_hazptr_unregister(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	return;
+	eprintf_not_registered(); abort();
     }
     if (TS->nobjs != 0)
     {
@@ -179,8 +202,7 @@ p64_hazptr_unregister(void)
 	fflush(stderr);
 	abort();
     }
-    //Mark thread as inactive, no references kept
-    __atomic_store_n(&TS->hpd->hpp[TS->idx], NULL, __ATOMIC_RELEASE);
+    p64_hazptr_deactivate();
     p64_idx_free(TS->idx);
     free(TS);
     TS = NULL;

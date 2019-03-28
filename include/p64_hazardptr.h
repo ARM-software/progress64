@@ -32,6 +32,16 @@ void p64_hazptr_register(p64_hpdomain_t *hdom);
 //Unregister a thread, free any per-thread resources
 void p64_hazptr_unregister(void);
 
+//Reactivate an inactive thread, it is again acquiring references to shared
+//objects
+void p64_hazptr_reactivate(void);
+
+//Deactive an active thread, any references to shared objects have been released
+//and the thread will not acquire any new references
+//p64_hazptr_deactivate() may called e.g. when the thread is going to block for
+//a long or indeterminate, it may speed up garbage collection
+void p64_hazptr_deactivate(void);
+
 //Acquire a reference to the object which '*pptr' points to
 //Return a pointer to the object or NULL (*pptr was NULL)
 //Re-use the specified hazard pointer (if *hp != P64_HAZARDPTR_NULL)
