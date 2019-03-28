@@ -126,8 +126,6 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
     {
 	perror("malloc"), exit(EXIT_FAILURE);
     }
-    //Conditionally update high watermark of indexes
-    lockfree_fetch_umax_4(&qsbr->high_wm, (uint32_t)idx + 1, __ATOMIC_RELAXED);
     ts->qsbr = qsbr;
     ts->interval = INFINITE;
     ts->recur = 0;
@@ -135,6 +133,8 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
     ts->nobjs = 0;
     ts->maxobjs = qsbr->nelems;
     assert(qsbr->intervals[idx] == INFINITE);
+    //Conditionally update high watermark of indexes
+    lockfree_fetch_umax_4(&qsbr->high_wm, (uint32_t)idx + 1, __ATOMIC_RELAXED);
     return ts;
 }
 
@@ -145,9 +145,9 @@ p64_qsbr_reactivate(void)
     {
 	eprintf_not_registered(); abort();
     }
-    uint64_t interval = __atomic_load_n(&TS->qsbr->current, __ATOMIC_RELAXED);
-    __atomic_store_n(&TS->qsbr->intervals[TS->idx], interval, __ATOMIC_RELAXED);
-    TS->interval = interval;
+    uint64_t current = __atomic_load_n(&TS->qsbr->current, __ATOMIC_RELAXED);
+    __atomic_store_n(&TS->qsbr->intervals[TS->idx], current, __ATOMIC_RELAXED);
+    TS->interval = current;
     //Ensure our interval is observable before any reads are observed
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
@@ -170,9 +170,8 @@ p64_qsbr_deactivate(void)
 	eprintf_not_registered(); abort();
     }
     //Mark thread as inactive, no references kept
-    uint64_t interval = INFINITE;
-    __atomic_store_n(&TS->qsbr->intervals[TS->idx], interval, __ATOMIC_RELEASE);
-    TS->interval = interval;
+    __atomic_store_n(&TS->qsbr->intervals[TS->idx], INFINITE, __ATOMIC_RELEASE);
+    TS->interval = INFINITE;
 }
 
 void
@@ -198,12 +197,12 @@ static inline void
 quiescent(void)
 {
     p64_qsbrdomain_t *qsbr = TS->qsbr;
-    uint64_t interval = __atomic_load_n(&qsbr->current, __ATOMIC_RELAXED);
-    if (interval != TS->interval)
+    uint64_t current = __atomic_load_n(&qsbr->current, __ATOMIC_RELAXED);
+    if (current != TS->interval)
     {
 	//Release order to contain all our previous access to shared objects
-	__atomic_store_n(&qsbr->intervals[TS->idx], interval, __ATOMIC_RELEASE);
-	TS->interval = interval;
+	__atomic_store_n(&qsbr->intervals[TS->idx], current, __ATOMIC_RELEASE);
+	TS->interval = current;
 	__atomic_thread_fence(__ATOMIC_SEQ_CST);
     }
 }
@@ -313,11 +312,11 @@ p64_qsbr_retire(void *ptr,
     //Create a new interval
     //Release order to ensure removal is observable before new interval is
     //created and can be observed
-    uint32_t new_interval = __atomic_fetch_add(&TS->qsbr->current,
-					       1,
-					       __ATOMIC_ACQ_REL);
+    uint64_t previous = __atomic_fetch_add(&TS->qsbr->current,
+					   1,
+					   __ATOMIC_RELEASE);
     //Retired object belongs to previous interval
-    TS->objs[i].interval = new_interval;
+    TS->objs[i].interval = previous;
     //The object can be reclaimed when all threads have observed
     //the new interval
     return true;
