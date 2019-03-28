@@ -58,10 +58,12 @@ static uint32_t NUMOBJS = 100;
 static struct object *OBJS;//Array of all objects
 static struct object **TABLE;//Pointer to array of object pointers
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
-static sem_t ALL_DONE;
-static struct timespec END_TIME;
-static bool VERBOSE = false;
 static bool USEHP = true;
+static bool VERBOSE = false;
+static sem_t ALL_DONE ALIGNED(CACHE_LINE);
+static struct timespec END_TIME;
+static uint32_t NUMNULL[MAXTHREADS];
+static uint32_t NUMFAIL[MAXTHREADS];
 
 //Wait for my signal to begin
 static void
@@ -147,6 +149,7 @@ thr_execute(uint32_t tidx)
     {
 	//Thread 0 is the writer
 	//It will remove and insert objects into different slots
+	uint32_t numwrites = 0;
 	uint32_t numnull = 0;
 	while (__atomic_load_n(&THREAD_BARRIER, __ATOMIC_RELAXED) != 1)
 	{
@@ -175,9 +178,11 @@ thr_execute(uint32_t tidx)
 		}
 	    }
 	    else
+	    {
 		numnull++;
+	    }
+	    numwrites++;
 	    //Try to reclaim pending objects
-	    //{
 	    if (USEHP)
 	    {
 		(void)p64_hazptr_reclaim();
@@ -213,7 +218,8 @@ thr_execute(uint32_t tidx)
 		abort();
 	    }
 	}
-	printf("Writer done: numnull %u\n", numnull);
+	NUMNULL[tidx] = numnull;
+	NUMFAIL[tidx] = numwrites;
     }
     else
     {
@@ -249,15 +255,25 @@ thr_execute(uint32_t tidx)
 		p64_hazptr_release(&hp);
 	    else
 		p64_qsbr_release();
-	    if (!USEHP)
+	    if (lap % 10 == 0)
 	    {
 		//Verify that active/inactive works
-		p64_qsbr_deactivate();
-		delay_loop(1);
-		p64_qsbr_reactivate();
+		if (USEHP)
+		{
+		    p64_hazptr_deactivate();
+		    delay_loop(1);
+		    p64_hazptr_reactivate();
+		}
+		else
+		{
+		    p64_qsbr_deactivate();
+		    delay_loop(1);
+		    p64_qsbr_reactivate();
+		}
 	    }
 	}
-	printf("Reader %u done: numfail %u, numnull %u\n", tidx, numfail, numnull);
+	NUMNULL[tidx] = numnull;
+	NUMFAIL[tidx] = numfail;
     }
 }
 
@@ -418,34 +434,48 @@ benchmark(uint32_t numthreads, uint64_t affinity)
 	}
     }
 
-    uint32_t numops = NUMOBJS * NUMLAPS;
-
-    if (VERBOSE)
-    {
-	printf("Total %u operations\n", numops);
-    }
-
     uint64_t elapsed_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec - start;
     uint32_t elapsed_s = elapsed_ns / 1000000000ULL;
-    printf("%u threads: %u.%04llu seconds, ",
-	    numthreads,
+    printf("%u.%04llu seconds\n",
 	    elapsed_s,
 	    (elapsed_ns % 1000000000LLU) / 100000LLU);
+
+    printf("Writer done: numnull %u, numwrites %u\n", NUMNULL[0], NUMFAIL[0]);
+    for (uint32_t t = 2; t < NUMTHREADS; t++)
+    {
+	printf("Reader %u done: numnull %u, numfail %u\n",
+	       t, NUMNULL[t], NUMFAIL[t]);
+    }
+
+    uint32_t numreads = NUMOBJS * NUMLAPS;
     uint32_t ops_per_sec = 0;
     if (elapsed_ns != 0)
     {
-	ops_per_sec = (uint32_t)(1000000000ULL * numops / elapsed_ns);
-	printf("%"PRIu32" ops/second", ops_per_sec);
+	ops_per_sec = (uint32_t)(1000000000ULL * numreads / elapsed_ns);
+	printf("%"PRIu32" reads/second", ops_per_sec);
     }
     else
     {
-	printf("INF ops/second");
+	printf("INF reads/second");
     }
-    if (numops != 0)//Explicit check against 0 to silence scan-build
+    if (numreads != 0)//Explicit check against 0 to silence scan-build
     {
-	printf(", %"PRIu32" nanoseconds/update", (uint32_t)(elapsed_ns / numops));
+	printf(", %"PRIu32" nanoseconds/read\n", (uint32_t)(elapsed_ns / numreads));
     }
-    printf("\n");
+    uint32_t numwrites = NUMFAIL[0];
+    if (elapsed_ns != 0)
+    {
+	ops_per_sec = (uint32_t)(1000000000ULL * numwrites / elapsed_ns);
+	printf("%"PRIu32" writes/second", ops_per_sec);
+    }
+    else
+    {
+	printf("INF writes/second");
+    }
+    if (numwrites != 0)//Explicit check against 0 to silence scan-build
+    {
+	printf(", %"PRIu32" nanoseconds/write\n", (uint32_t)(elapsed_ns / numwrites));
+    }
 }
 
 int
@@ -530,13 +560,14 @@ usage :
 	goto usage;
     }
 
-    printf("%s: %u objects, %u laps, %u thread%s, affinity mask=0x%lx\n",
+    printf("%s: %u objects, %u laps, %u thread%s, affinity mask=0x%lx, ",
 	    USEHP ? "HP" : "QSBR",
 	    NUMOBJS,
 	    NUMLAPS,
 	    NUMTHREADS,
 	    NUMTHREADS != 1 ? "s" : "",
 	    AFFINITY);
+    fflush(stdout);
 
     if (USEHP)
     {
