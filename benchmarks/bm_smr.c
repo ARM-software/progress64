@@ -166,7 +166,10 @@ thr_execute(uint32_t tidx)
 		assert(obj->idx == idx);
 		if (USEHP)
 		{
-		    p64_hazptr_retire(obj, callback);
+		    while(!p64_hazptr_retire(obj, callback))
+		    {
+			(void)p64_hazptr_reclaim();
+		    }
 		}
 		else
 		{
