@@ -5,6 +5,7 @@
 #ifndef _P64_HAZARDPTR_H
 #define _P64_HAZARDPTR_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,9 +20,10 @@ typedef void **p64_hazardptr_t;
 
 typedef struct p64_hpdomain p64_hpdomain_t;
 
-//Allocate a hazard pointer domain where each thread will be able to keep up
-//to 'nrefs' objects safe from premature reclamation
-p64_hpdomain_t *p64_hazptr_alloc(uint32_t nrefs);
+//Allocate a hazard pointer domain where each thread will be able to have up to
+//'maxobjs' objects waiting for reclamation and keep up to 'nrefs' objects safe
+//from premature reclamation
+p64_hpdomain_t *p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs);
 
 //Free a hazard pointer domain
 void p64_hazptr_free(p64_hpdomain_t *hdom);
@@ -78,7 +80,7 @@ void p64_hazptr_release_ro(p64_hazardptr_t *hp);
 
 //Retire a removed object
 //Call 'callback' when object is no longer referenced and can be destroyed
-void p64_hazptr_retire(void *ptr, void (*callback)(void *ptr));
+bool p64_hazptr_retire(void *ptr, void (*callback)(void *ptr));
 
 //Force garbage reclamation
 //Return number of remaining unreclamined objects

@@ -49,12 +49,13 @@ hp_to_index(userptr_t *hp, struct hazard_pointer *hp0)
 struct p64_hpdomain
 {
     uint32_t nrefs;//Number of references per thread
+    uint32_t maxobjs;
     uint32_t high_wm;//High watermark of thread index
     struct hazard_pointer *hpp[MAXTHREADS];//Ptrs to each threads' hazard pointers
 };
 
 p64_hpdomain_t *
-p64_hazptr_alloc(uint32_t nrefs)
+p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 {
     if (nrefs < 1 || nrefs > 32)
     {
@@ -67,6 +68,7 @@ p64_hazptr_alloc(uint32_t nrefs)
     if (hpd != NULL)
     {
 	hpd->nrefs = nrefs;
+	hpd->maxobjs = maxobjs;
 	hpd->high_wm = 0;
 	for (uint32_t i = 0; i < MAXTHREADS; i++)
 	{
@@ -127,9 +129,8 @@ alloc_ts(p64_hpdomain_t *hpd)
 	abort();
     }
 
-    uint32_t maxobjs = hpd->nrefs * MAXTHREADS + 1;
     size_t nbytes = ROUNDUP(sizeof(struct thread_state) +
-			    maxobjs * sizeof(struct object) +
+			    hpd->maxobjs * sizeof(struct object) +
 			    hpd->nrefs * sizeof(struct hazard_pointer),
 			    CACHE_LINE);
     struct thread_state *ts = aligned_alloc(CACHE_LINE, nbytes);
@@ -141,9 +142,9 @@ alloc_ts(p64_hpdomain_t *hpd)
     ts->idx = idx;
     ts->free = hpd->nrefs < 32 ? (1U << hpd->nrefs) - 1U : ~(uint32_t)0;
     ts->nrefs = hpd->nrefs;
-    ts->hp = (void *)&ts->objs[maxobjs];
+    ts->hp = (void *)&ts->objs[hpd->maxobjs];
     ts->nobjs = 0;
-    ts->maxobjs = maxobjs;
+    ts->maxobjs = hpd->maxobjs;
     for (uint32_t i = 0; i < hpd->nrefs; i++)
     {
 	ts->hp[i].ref = NULL;
@@ -229,6 +230,10 @@ hazptr_alloc(void)
 static inline void
 hazptr_free(p64_hazardptr_t hp)
 {
+    if (UNLIKELY(TS == NULL))
+    {
+	eprintf_not_registered(); abort();
+    }
     uint32_t idx = hp_to_index(hp, &TS->hp[0]);
     if (UNLIKELY(idx >= TS->nrefs))
     {
@@ -353,10 +358,6 @@ p64_hazptr_acquire(void **pptr,
 void
 p64_hazptr_release(p64_hazardptr_t *hp)
 {
-    if (UNLIKELY(TS == NULL))
-    {
-	eprintf_not_registered(); abort();
-    }
     if (*hp != P64_HAZARDPTR_NULL)
     {
 	//Reset hazard pointer
@@ -371,10 +372,6 @@ p64_hazptr_release(p64_hazardptr_t *hp)
 void
 p64_hazptr_release_ro(p64_hazardptr_t *hp)
 {
-    if (UNLIKELY(TS == NULL))
-    {
-	eprintf_not_registered(); abort();
-    }
     if (*hp != P64_HAZARDPTR_NULL)
     {
 	smp_fence(LoadStore);//Load-only barrier
@@ -456,13 +453,11 @@ find_ptr(userptr_t refs[],
 static uint32_t
 garbage_collect(void)
 {
-    userptr_t refs[TS->maxobjs];
+    uint32_t numthrs = __atomic_load_n(&TS->hpd->high_wm, __ATOMIC_ACQUIRE);
+    uint32_t maxrefs = numthrs * TS->nrefs;
+    userptr_t refs[maxrefs];
     //Get sorted list of active references
-    uint32_t nrefs = collect_refs(refs,
-				  TS->hpd->hpp,
-				  __atomic_load_n(&TS->hpd->high_wm,
-						  __ATOMIC_ACQUIRE),
-				  TS->hpd->nrefs);
+    uint32_t nrefs = collect_refs(refs, TS->hpd->hpp, numthrs, TS->nrefs);
     //Traverse list of pending objects
     uint32_t nobjs = 0;
     for (uint32_t i = 0; i < TS->nobjs; i++)
@@ -491,8 +486,8 @@ garbage_collect(void)
 }
 
 //Retire an object
-//Periodically perform garbage collection on retired objects
-void
+//If necessary, perform garbage collection on retired objects
+bool
 p64_hazptr_retire(void *ptr,
 		  void (*cb)(void *ptr))
 {
@@ -500,19 +495,19 @@ p64_hazptr_retire(void *ptr,
     {
 	eprintf_not_registered(); abort();
     }
-    //There is always space for one extra retired object
-    assert(TS->nobjs < TS->maxobjs);
-    TS->objs[TS->nobjs  ].ptr = ptr;
-    TS->objs[TS->nobjs++].cb  = cb;
-    if (TS->nobjs == TS->maxobjs)
+    if (UNLIKELY(TS->nobjs == TS->maxobjs))
     {
-	//Ensure all removals are visible before we read hazard pointers
-	smp_fence(StoreLoad);
-	//Try to reclaim objects
-	(void)garbage_collect();
-	//At least one object must have been reclaimed
-	assert(TS->nobjs < TS->maxobjs);
+	if (garbage_collect() == TS->maxobjs)
+	{
+	    return false;//No space for object
+	}
     }
+    assert(TS->nobjs < TS->maxobjs);
+    uint32_t i = TS->nobjs++;
+    TS->objs[i].ptr = ptr;
+    TS->objs[i].cb  = cb;
+    //The object can be reclaimed when no hazard pointer references the object
+    return true;
 }
 
 uint32_t

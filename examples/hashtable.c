@@ -61,7 +61,7 @@ compf(const p64_hashelem_t *he,
 
 int main(void)
 {
-    p64_hpdomain_t *hpd = p64_hazptr_alloc(NUM_HAZARD_POINTERS);
+    p64_hpdomain_t *hpd = p64_hazptr_alloc(10, NUM_HAZARD_POINTERS);
     EXPECT(hpd != NULL);
     p64_hazptr_register(hpd);
 

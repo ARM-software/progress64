@@ -571,7 +571,7 @@ usage :
 
     if (USEHP)
     {
-	HPDOM = p64_hazptr_alloc(1);
+	HPDOM = p64_hazptr_alloc(5, 1);
 	if (HPDOM == NULL)
 	{
 	    fprintf(stderr, "Failed to allocate HP domain\n");
