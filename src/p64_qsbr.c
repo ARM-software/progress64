@@ -28,7 +28,7 @@ eprintf_not_registered(void)
 struct p64_qsbrdomain
 {
     uint64_t current;//Current interval
-    uint32_t nelems;
+    uint32_t maxobjs;
     uint32_t high_wm;//High watermark of thread index
     uint64_t intervals[MAXTHREADS] ALIGNED(CACHE_LINE);//Each thread's last quiescent interval
 };
@@ -37,14 +37,14 @@ struct p64_qsbrdomain
 #define INFINITE (~(uint64_t)0)
 
 p64_qsbrdomain_t *
-p64_qsbr_alloc(uint32_t nelems)
+p64_qsbr_alloc(uint32_t maxobjs)
 {
     size_t nbytes = ROUNDUP(sizeof(p64_qsbrdomain_t), CACHE_LINE);
     p64_qsbrdomain_t *qsbr = aligned_alloc(CACHE_LINE, nbytes);
     if (qsbr != NULL)
     {
 	qsbr->current = 0;
-	qsbr->nelems = nelems;
+	qsbr->maxobjs = maxobjs;
 	qsbr->high_wm = 0;
 	for (uint32_t i = 0; i < MAXTHREADS; i++)
 	{
@@ -120,7 +120,7 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
 	abort();
     }
     size_t nbytes = ROUNDUP(sizeof(struct thread_state) +
-			    qsbr->nelems * sizeof(struct object), CACHE_LINE);
+			    qsbr->maxobjs * sizeof(struct object), CACHE_LINE);
     struct thread_state *ts = aligned_alloc(CACHE_LINE, nbytes);
     if (ts == NULL)
     {
@@ -131,7 +131,7 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
     ts->recur = 0;
     ts->idx = idx;
     ts->nobjs = 0;
-    ts->maxobjs = qsbr->nelems;
+    ts->maxobjs = qsbr->maxobjs;
     assert(qsbr->intervals[idx] == INFINITE);
     //Conditionally update high watermark of indexes
     lockfree_fetch_umax_4(&qsbr->high_wm, (uint32_t)idx + 1, __ATOMIC_RELAXED);
@@ -262,13 +262,13 @@ p64_qsbr_release(void)
 static uint32_t
 garbage_collect(void)
 {
-    p64_qsbrdomain_t *qsbr = TS->qsbr;
-    uint64_t interval = find_min(qsbr->intervals, qsbr->high_wm);
+    uint32_t numthrs = __atomic_load_n(&TS->qsbr->high_wm, __ATOMIC_ACQUIRE);
+    uint64_t interval = find_min(TS->qsbr->intervals, numthrs);
     //Traverse list of pending objects
     uint32_t nobjs = 0;
-    for (uint32_t i = 0; i < TS->nobjs; i++)
+    for (uint32_t i = 0; i < TS->nobjs;)
     {
-	struct object obj = TS->objs[i];
+	struct object obj = TS->objs[i++];
 	if (interval > obj.interval)
 	{
 	    //All threads have observed a later interval =>
@@ -279,6 +279,13 @@ garbage_collect(void)
 	{
 	    //Retired object still referenced, keep it in rlist
 	    TS->objs[nobjs++] = obj;
+	    //Keep the rest of the objects as well
+	    while (i < TS->nobjs)
+	    {
+		assert(TS->objs[i].interval >= TS->objs[i - 1].interval);
+		TS->objs[nobjs++] = TS->objs[i++];
+	    }
+	    break;
 	}
     }
     //Some objects may remain in the list of retired objects
@@ -296,11 +303,11 @@ p64_qsbr_retire(void *ptr,
 {
     if (UNLIKELY(TS == NULL))
     {
-	fprintf(stderr, "qsbr: p64_qsbr_acquire() not called\n"), abort();
+	eprintf_not_registered(); abort();
     }
     if (UNLIKELY(TS->nobjs == TS->maxobjs))
     {
-	if (p64_qsbr_reclaim() == TS->maxobjs)
+	if (garbage_collect() == TS->maxobjs)
 	{
 	    return false;//No space for object
 	}
