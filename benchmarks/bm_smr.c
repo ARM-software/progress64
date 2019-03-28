@@ -440,14 +440,14 @@ benchmark(uint32_t numthreads, uint64_t affinity)
 	    elapsed_s,
 	    (elapsed_ns % 1000000000LLU) / 100000LLU);
 
-    printf("Writer done: numnull %u, numwrites %u\n", NUMNULL[0], NUMFAIL[0]);
-    for (uint32_t t = 2; t < NUMTHREADS; t++)
+    printf("Writer  : numnull %u\n", NUMNULL[0]);
+    for (uint32_t t = 1; t < NUMTHREADS; t++)
     {
-	printf("Reader %u done: numnull %u, numfail %u\n",
+	printf("Reader %u: numnull %u, numfail %u\n",
 	       t, NUMNULL[t], NUMFAIL[t]);
     }
 
-    uint32_t numreads = NUMOBJS * NUMLAPS;
+    uint32_t numreads = NUMLAPS;
     uint32_t ops_per_sec = 0;
     if (elapsed_ns != 0)
     {
@@ -574,7 +574,7 @@ usage :
 	HPDOM = p64_hazptr_alloc(1);
 	if (HPDOM == NULL)
 	{
-	    fprintf(stderr, "Failed to allocate hazard pointer domain\n");
+	    fprintf(stderr, "Failed to allocate HP domain\n");
 	    exit(EXIT_FAILURE);
 	}
     }
@@ -583,7 +583,7 @@ usage :
 	QSBRDOM = p64_qsbr_alloc(5);
 	if (QSBRDOM == NULL)
 	{
-	    fprintf(stderr, "Failed to allocate qsbr domain\n");
+	    fprintf(stderr, "Failed to allocate QSBR domain\n");
 	    exit(EXIT_FAILURE);
 	}
     }
