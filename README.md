@@ -18,10 +18,10 @@ Functionality
 * barrier - thread barrier (blocking)
 * clhlock - CLH queue lock (blocking)
 * hashtable - hash table (lock-free)
-* hazardptr - MT-safe object reclamation (reader lock-free, writer blocking)
+* hazardptr - safe object reclamation using hazard pointers (reader lock-free, writer blocking/non-blocking)
 * laxrob - 'lax' reorder buffer (?)
 * lfring - ring buffer (lock-free)
-* qsbr - MT-safe object reclamation (reader wait-free, writer blocking)
+* qsbr - safe object reclamation using quiescent state based reclamation (reader wait-free, writer blocking)
 * reassemble - IP reassembly (lock-free)
 * reorder - 'strict' reorder buffer ("lockless")
 * ringbuf - classic ring buffer (blocking & "lockless", lock-free dequeue)
@@ -35,9 +35,10 @@ Functionality
 "Lockless" here means that individual operations will not block (wait for other
 threads) but the whole data structure is not lock-free in the academic sense
 (e.g. linearizable). Example, an acquired slot in a reorder buffer must
-eventually be released or the reorder buffer will fill up and later release
-slots will not be retired. Acquire and release operations are lockless but the
-reorder buffer as a whole is neither lock-free nor obstruction-free.
+eventually be released or the reorder buffer will fill up and later released
+slots will not be retired. Acquire and release operations never block (so
+lock-free in some limited sense) but the reorder buffer as a whole is neither
+lock-free nor obstruction-free.
 
 Requirements
 --------------
@@ -56,6 +57,13 @@ Hazardptr and qsbr support one domain only. This simplifies the API.
 
 Notes
 --------------
+The hazard pointer implementation is non-blocking (wait-free) when a thread has
+space for more retired objects than the total number of hazard pointers (for all
+threads).
+
+The hazard pointer API will use the QSBR implementation when 'nrefs' (number of
+hazard pointers per thread) is set to 0 when the hazard pointer domain is
+allocated.
 
 TODO
 --------------

@@ -23,6 +23,7 @@ typedef struct p64_hpdomain p64_hpdomain_t;
 //Allocate a hazard pointer domain where each thread will be able to have up to
 //'maxobjs' objects waiting for reclamation and keep up to 'nrefs' objects safe
 //from premature reclamation
+//If 'nrefs' equals 0, the QSBR implementation will be invoked instead
 p64_hpdomain_t *p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs);
 
 //Free a hazard pointer domain
