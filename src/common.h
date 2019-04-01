@@ -16,6 +16,16 @@
 #define LIKELY(x)    __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)  __builtin_expect(!!(x), 0)
 
+#ifdef NDEBUG
+#if defined __GNUC__ && __GNUC__ >= 8
+#define ASSUME(cond) do { if (!(cond)) __builtin_unreachable(); } while (0)
+#else
+#define ASSUME(cond) (void)(cond)
+#endif
+#else //Assertions enabled, check that assumptions are true
+#define ASSUME(cond) assert(cond)
+#endif
+
 //Hardware hints
 #define PREFETCH_FOR_READ(ptr) __builtin_prefetch((ptr), 0, 0)
 #define PREFETCH_FOR_WRITE(ptr) __builtin_prefetch((ptr), 1, 0)
