@@ -214,7 +214,6 @@ quiescent(void)
 	//Release order to contain all our previous access to shared objects
 	__atomic_store_n(&qsbr->intervals[TS->idx], current, __ATOMIC_RELEASE);
 	TS->interval = current;
-	__atomic_thread_fence(__ATOMIC_SEQ_CST);
     }
 }
 
