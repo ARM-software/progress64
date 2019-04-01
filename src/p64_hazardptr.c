@@ -14,16 +14,34 @@
 #undef p64_hazptr_acquire
 #include "build_config.h"
 
+#define HAS_MARK(ptr)          ((uintptr_t)(ptr) & 1)
+#define SET_MARK(ptr) ((void *)((uintptr_t)(ptr) | 1))
+#define CLR_MARK(ptr) ((void *)((uintptr_t)(ptr) & ~(uintptr_t)1))
+
 #include "arch.h"
 #include "lockfree.h"
 #include "common.h"
 #include "thr_idx.h"
+#define PRIVATE
+#include "p64_qsbr.c"
+#define object hp_object
+#define thread_state hp_thread_state
+#define TS hp_TS
+#define alloc_ts hp_alloc_ts
+#define garbage_collect hp_garbage_collect
+
+static inline uint32_t
+bitmask(uint32_t n)
+{
+    return n < 32 ? (1U << n) - 1U : ~(uint32_t)0;
+}
 
 static void
 eprintf_not_registered(void)
 {
     fprintf(stderr, "hazardptr: p64_hazptr_register() not called\n");
     fflush(stderr);
+    abort();
 }
 
 #define IS_NULL_PTR(ptr) ((uintptr_t)(ptr) < CACHE_LINE)
@@ -33,17 +51,12 @@ typedef void *userptr_t;
 struct hazard_pointer
 {
     userptr_t ref;
-    //File & line annotation for debugging
-    const char *file;
-    uintptr_t line;
 };
 
 static inline uint32_t
-hp_to_index(userptr_t *hp, struct hazard_pointer *hp0)
+roundup(uint32_t n)
 {
-    size_t offset = (uintptr_t)hp - (uintptr_t)&hp0->ref;
-    //Compiler will generate multiplication instead of division
-    return offset / sizeof(struct hazard_pointer);
+    return ROUNDUP(n, CACHE_LINE / sizeof(struct hazard_pointer));
 }
 
 struct p64_hpdomain
@@ -51,28 +64,40 @@ struct p64_hpdomain
     uint32_t nrefs;//Number of references per thread
     uint32_t maxobjs;
     uint32_t high_wm;//High watermark of thread index
-    struct hazard_pointer *hpp[MAXTHREADS];//Ptrs to each threads' hazard pointers
+    struct hazard_pointer hp[] ALIGNED(CACHE_LINE);
 };
 
 p64_hpdomain_t *
 p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 {
+    if (nrefs == 0)
+    {
+	void *qsbr = p64_qsbr_alloc(maxobjs);
+	if (qsbr != NULL)
+	{
+	    return SET_MARK(qsbr);
+	}
+	return NULL;
+    }
     if (nrefs < 1 || nrefs > 32)
     {
 	fprintf(stderr, "hazardptr: Invalid number of references\n");
 	fflush(stderr);
 	abort();
     }
-    size_t nbytes = ROUNDUP(sizeof(p64_hpdomain_t), CACHE_LINE);
+    uint32_t nrefs_rounded = roundup(nrefs);
+    size_t nbytes = ROUNDUP(sizeof(p64_hpdomain_t) +
+			    nrefs_rounded * MAXTHREADS * sizeof(struct hazard_pointer),
+			    CACHE_LINE);
     p64_hpdomain_t *hpd = aligned_alloc(CACHE_LINE, nbytes);
     if (hpd != NULL)
     {
 	hpd->nrefs = nrefs;
 	hpd->maxobjs = maxobjs;
 	hpd->high_wm = 0;
-	for (uint32_t i = 0; i < MAXTHREADS; i++)
+	for (uint32_t i = 0; i < nrefs_rounded * MAXTHREADS; i++)
 	{
-	    hpd->hpp[i] = NULL;
+	    hpd->hp[i].ref = NULL;
 	}
 	return hpd;
     }
@@ -82,14 +107,23 @@ p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 void
 p64_hazptr_free(p64_hpdomain_t *hpd)
 {
+    if (HAS_MARK(hpd))
+    {
+	p64_qsbr_free(CLR_MARK(hpd));
+	return;
+    }
+    uint32_t nrefs_rounded = roundup(hpd->nrefs);
     uint32_t nthreads = __atomic_load_n(&hpd->high_wm, __ATOMIC_ACQUIRE);
     for (uint32_t t = 0; t < nthreads; t++)
     {
-	if (__atomic_load_n(&hpd->hpp[t], __ATOMIC_RELAXED) != NULL)
+	for (uint32_t i = 0; i < hpd->nrefs; i++)
 	{
-	    fprintf(stderr, "hazardptr: Registered threads still present\n");
-	    fflush(stderr);
-	    abort();
+	    if (hpd->hp[t * nrefs_rounded + i].ref != NULL)
+	    {
+		fprintf(stderr, "hazardptr: References still present\n");
+		fflush(stderr);
+		abort();
+	    }
 	}
     }
     free(hpd);
@@ -101,6 +135,13 @@ struct object
     void (*cb)(userptr_t);
 };
 
+//File & line annotation for debugging
+struct file_line
+{
+    const char *file;
+    uintptr_t line;
+};
+
 struct thread_state
 {
     p64_hpdomain_t *hpd;
@@ -108,10 +149,12 @@ struct thread_state
     uint32_t free;
     uint32_t nrefs;
     struct hazard_pointer *hp;//Ptr to actual hazard pointer array
+    struct file_line *fl;
     //Removed but not yet reclaimed objects
     uint32_t nobjs;
     uint32_t maxobjs;
     struct object objs[];
+    //File&line array follows
 } ALIGNED(CACHE_LINE);
 
 static __thread struct thread_state *TS = NULL;
@@ -131,25 +174,26 @@ alloc_ts(p64_hpdomain_t *hpd)
 
     size_t nbytes = ROUNDUP(sizeof(struct thread_state) +
 			    hpd->maxobjs * sizeof(struct object) +
-			    hpd->nrefs * sizeof(struct hazard_pointer),
+			    hpd->nrefs * sizeof(struct file_line),
 			    CACHE_LINE);
     struct thread_state *ts = aligned_alloc(CACHE_LINE, nbytes);
     if (ts == NULL)
     {
 	perror("malloc"), exit(EXIT_FAILURE);
     }
+    uint32_t nrefs_rounded = roundup(hpd->nrefs);
     ts->hpd = hpd;
     ts->idx = idx;
-    ts->free = hpd->nrefs < 32 ? (1U << hpd->nrefs) - 1U : ~(uint32_t)0;
+    ts->free = bitmask(hpd->nrefs);
     ts->nrefs = hpd->nrefs;
-    ts->hp = (void *)&ts->objs[hpd->maxobjs];
+    ts->hp = &hpd->hp[idx * nrefs_rounded];
+    ts->fl = (void *)&ts->objs[hpd->maxobjs];
     ts->nobjs = 0;
     ts->maxobjs = hpd->maxobjs;
     for (uint32_t i = 0; i < hpd->nrefs; i++)
     {
-	ts->hp[i].ref = NULL;
-	ts->hp[i].file = NULL;
-	ts->hp[i].line = 0;
+	ts->fl[i].file = NULL;
+	ts->fl[i].line = 0;
     }
     //Conditionally update high watermark of indexes
     lockfree_fetch_umax_4(&hpd->high_wm, (uint32_t)idx + 1, __ATOMIC_RELAXED);
@@ -161,11 +205,14 @@ p64_hazptr_reactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
-    __atomic_store_n(&TS->hpd->hpp[TS->idx], TS->hp, __ATOMIC_RELAXED);
-    //Ensure our hazard pointers are observable before any reads are observed
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+    if (HAS_MARK(TS))
+    {
+	p64_qsbr_reactivate();
+	return;
+    }
+    //Nothing to do
 }
 
 void
@@ -173,6 +220,12 @@ p64_hazptr_register(p64_hpdomain_t *hpd)
 {
     if (UNLIKELY(TS == NULL))
     {
+	if (HAS_MARK(hpd))
+	{
+	    p64_qsbr_register(CLR_MARK(hpd));
+	    TS = SET_MARK(NULL);
+	    return;
+	}
 	TS = alloc_ts(hpd);
     }
     p64_hazptr_reactivate();
@@ -183,10 +236,20 @@ p64_hazptr_deactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
-    //Mark thread as inactive, no references kept
-    __atomic_store_n(&TS->hpd->hpp[TS->idx], NULL, __ATOMIC_RELEASE);
+    if (HAS_MARK(TS))
+    {
+	p64_qsbr_deactivate();
+	return;
+    }
+    //Nothing to do
+    if (TS->free != bitmask(TS->nrefs))
+    {
+	fprintf(stderr, "hazardptr: Thread has allocated hazard pointers\n");
+	fflush(stderr);
+	abort();
+    }
 }
 
 void
@@ -194,7 +257,13 @@ p64_hazptr_unregister(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
+    }
+    if (HAS_MARK(TS))
+    {
+	p64_qsbr_unregister();
+	TS = NULL;
+	return;
     }
     if (TS->nobjs != 0)
     {
@@ -232,21 +301,25 @@ hazptr_free(p64_hazardptr_t hp)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
-    uint32_t idx = hp_to_index(hp, &TS->hp[0]);
+    uint32_t idx = hp - &TS->hp[0].ref;
     if (UNLIKELY(idx >= TS->nrefs))
     {
-	fprintf(stderr, "Invalid hazard pointer %p\n", hp), abort();
+	fprintf(stderr, "Invalid hazard pointer %p\n", hp);
+	fflush(stderr);
+	abort();
     }
     assert(IS_NULL_PTR(*hp));
     if (UNLIKELY((TS->free & (1U << idx)) != 0))
     {
-	fprintf(stderr, "Hazard pointer %p already free\n", hp), abort();
+	fprintf(stderr, "Hazard pointer %p already free\n", hp);
+	fflush(stderr);
+	abort();
     }
     TS->free |= 1U << idx;
-    TS->hp[idx].file = NULL;
-    TS->hp[idx].line = 0;
+    TS->fl[idx].file = NULL;
+    TS->fl[idx].line = 0;
     //printf("hazptr_free(%u)\n", idx);
 }
 
@@ -257,16 +330,23 @@ p64_hazptr_annotate(p64_hazardptr_t hp,
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
+    }
+    if (HAS_MARK(TS))
+    {
+	return;
     }
     if (hp != P64_HAZARDPTR_NULL)
     {
-	uint32_t idx = hp_to_index(hp, &TS->hp[0]);
-	if (idx < TS->nrefs)
+	uint32_t idx = hp - &TS->hp[0].ref;
+	if (UNLIKELY(idx >= TS->nrefs))
 	{
-	    TS->hp[idx].file = file;
-	    TS->hp[idx].line = line;
+	    fprintf(stderr, "Invalid hazard pointer %p\n", hp);
+	    fflush(stderr);
+	    abort();
 	}
+	TS->fl[idx].file = file;
+	TS->fl[idx].line = line;
     }
 }
 
@@ -275,22 +355,29 @@ p64_hazptr_dump(FILE *fp)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
+    }
+    if (HAS_MARK(TS))
+    {
+	return 0;
     }
     for (uint32_t i = 0; i < TS->nrefs; i++)
     {
 	if ((TS->free & (1U << i)) == 0)
 	{
 	    fprintf(fp, "hp[%p]=%p", &TS->hp[i].ref, TS->hp[i].ref);
-	    if (TS->hp[i].file != NULL)
+	    if (TS->fl[i].file != NULL)
 	    {
-		fprintf(fp, " @ %s:%lu", TS->hp[i].file, TS->hp[i].line);
+		fprintf(fp, " @ %s:%lu", TS->fl[i].file, TS->fl[i].line);
 	    }
 	    fputc('\n', fp);
 	}
     }
     return __builtin_popcount(TS->free);
 }
+
+static __thread uint32_t _free_hp = ~0;
+static __thread void *_hp[32];
 
 //Safely acquire a reference to the object whose pointer is stored at the
 //specified location
@@ -303,7 +390,20 @@ p64_hazptr_acquire(void **pptr,
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
+    }
+    if (HAS_MARK(TS))
+    {
+	//Allocate hazard pointer if necessary
+	if (*hp == P64_HAZARDPTR_NULL)
+	{
+	    assert(_free_hp != 0);
+	    uint32_t idx = __builtin_ctz(_free_hp);
+	    _free_hp &= ~(1U << idx);
+	    *hp = &_hp[idx];
+	}
+	void *ptr = __atomic_load_n(pptr, __ATOMIC_ACQUIRE);
+	return ptr;
     }
     //Reset any existing hazard pointer
     if (*hp != P64_HAZARDPTR_NULL)
@@ -360,6 +460,17 @@ p64_hazptr_release(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
+	if (HAS_MARK(TS))
+	{
+	    uint32_t idx = _hp - *hp;
+	    _free_hp |= 1U << idx;
+	    if (_free_hp == ~0)
+	    {
+		p64_qsbr_quiescent();
+	    }
+	    *hp = P64_HAZARDPTR_NULL;
+	    return;
+	}
 	//Reset hazard pointer
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
 	//Release hazard pointer
@@ -374,6 +485,17 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
+	if (HAS_MARK(TS))
+	{
+	    uint32_t idx = _hp - *hp;
+	    _free_hp |= 1U << idx;
+	    if (_free_hp == ~0)
+	    {
+		p64_qsbr_quiescent();
+	    }
+	    *hp = P64_HAZARDPTR_NULL;
+	    return;
+	}
 	smp_fence(LoadStore);//Load-only barrier
 	//Reset hazard pointer
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
@@ -397,23 +519,46 @@ compare_ptr(const void *ppa,
 //Collect active references from all threads
 static uint32_t
 collect_refs(userptr_t refs[],
-	     struct hazard_pointer *vec[],
+	     struct hazard_pointer hp[],
 	     uint32_t nthreads,
 	     uint32_t maxrefs)
 {
     uint32_t nrefs = 0;
-    for (uint32_t t = 0; t < nthreads; t++)
+    uint32_t nrefs_rounded = roundup(maxrefs);
+    uint32_t t;
+    for (t = 0; t + 1 < nthreads;)
     {
-	struct hazard_pointer *hp = __atomic_load_n(&vec[t], __ATOMIC_ACQUIRE);
-	if (hp != NULL)
+	//Unroll loop to create some memory level parallelism
+	userptr_t *hp0 = &hp[t++ * nrefs_rounded].ref;
+	userptr_t *hp1 = &hp[t++ * nrefs_rounded].ref;
+	ASSUME(maxrefs != 0);
+	for (uint32_t i = 0; i < maxrefs; i++)
 	{
-	    for (uint32_t i = 0; i < maxrefs; i++)
+	    userptr_t ptr0 = __atomic_load_n(hp0, __ATOMIC_RELAXED);
+	    userptr_t ptr1 = __atomic_load_n(hp1, __ATOMIC_RELAXED);
+	    hp0++;
+	    hp1++;
+	    if (!IS_NULL_PTR(ptr0))
 	    {
-		userptr_t ptr = __atomic_load_n(&hp[i].ref, __ATOMIC_RELAXED);
-		if (!IS_NULL_PTR(ptr))
-		{
-		    refs[nrefs++] = ptr;
-		}
+		refs[nrefs++] = ptr0;
+	    }
+	    if (!IS_NULL_PTR(ptr1))
+	    {
+		refs[nrefs++] = ptr1;
+	    }
+	}
+    }
+    //Handle any trailing element
+    if (t < nthreads)
+    {
+	userptr_t *hp0 = &hp[t * nrefs_rounded].ref;
+	for (uint32_t i = 0; i < maxrefs; i++)
+	{
+	    userptr_t ptr0 = __atomic_load_n(hp0, __ATOMIC_RELAXED);
+	    hp0++;
+	    if (!IS_NULL_PTR(ptr0))
+	    {
+		refs[nrefs++] = ptr0;
 	    }
 	}
     }
@@ -427,18 +572,20 @@ collect_refs(userptr_t refs[],
 //Check if a specific reference exists in the array
 static bool
 find_ptr(userptr_t refs[],
-	 int nrefs,
+	 uint32_t nrefs,
 	 userptr_t ptr)
 {
-    if (nrefs > 0)
+    assert((int32_t)nrefs >= 0);
+    if (nrefs != 0)
     {
-	int half = nrefs / 2;
+	uint32_t half = nrefs / 2;
 	if (ptr < refs[half])
 	{
 	    return find_ptr(refs, half, ptr);
 	}
 	else if (ptr > refs[half])
 	{
+	    assert(nrefs >= half + 1);
 	    return find_ptr(refs + half + 1, nrefs - half - 1, ptr);
 	}
 	else//ptr == refs[half]
@@ -453,11 +600,13 @@ find_ptr(userptr_t refs[],
 static uint32_t
 garbage_collect(void)
 {
+    PREFETCH_FOR_READ(       &TS->hpd->hp[0]);
+    PREFETCH_FOR_READ((char*)&TS->hpd->hp[0] + CACHE_LINE);
     uint32_t numthrs = __atomic_load_n(&TS->hpd->high_wm, __ATOMIC_ACQUIRE);
     uint32_t maxrefs = numthrs * TS->nrefs;
     userptr_t refs[maxrefs];
     //Get sorted list of active references
-    uint32_t nrefs = collect_refs(refs, TS->hpd->hpp, numthrs, TS->nrefs);
+    uint32_t nrefs = collect_refs(refs, TS->hpd->hp, numthrs, TS->nrefs);
     //Traverse list of pending objects
     uint32_t nobjs = 0;
     for (uint32_t i = 0; i < TS->nobjs; i++)
@@ -493,7 +642,11 @@ p64_hazptr_retire(void *ptr,
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
+    }
+    if (HAS_MARK(TS))
+    {
+	return p64_qsbr_retire(ptr, cb);
     }
     if (UNLIKELY(TS->nobjs == TS->maxobjs))
     {
@@ -515,7 +668,15 @@ p64_hazptr_reclaim(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
+    }
+    if (HAS_MARK(TS))
+    {
+	if (_free_hp == ~0)
+	{
+	    p64_qsbr_quiescent();
+	}
+	return p64_qsbr_reclaim();
     }
     if (TS->nobjs == 0)
     {

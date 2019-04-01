@@ -10,7 +10,13 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#ifndef PRIVATE
 #include "p64_qsbr.h"
+#define PUBLIC
+#else
+typedef struct p64_qsbrdomain p64_qsbrdomain_t;
+#define PUBLIC static inline
+#endif
 #include "build_config.h"
 
 #include "arch.h"
@@ -18,12 +24,17 @@
 #include "common.h"
 #include "thr_idx.h"
 
+#ifndef PRIVATE
 static void
 eprintf_not_registered(void)
 {
     fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
     fflush(stderr);
+    abort();
 }
+#else
+#define eprintf_not_registered(x)
+#endif
 
 struct p64_qsbrdomain
 {
@@ -36,7 +47,7 @@ struct p64_qsbrdomain
 //Value larger than all possible intervals
 #define INFINITE (~(uint64_t)0)
 
-p64_qsbrdomain_t *
+PUBLIC p64_qsbrdomain_t *
 p64_qsbr_alloc(uint32_t maxobjs)
 {
     size_t nbytes = ROUNDUP(sizeof(p64_qsbrdomain_t), CACHE_LINE);
@@ -71,7 +82,7 @@ find_min(const uint64_t vec[], uint32_t num)
     return min;
 }
 
-void
+PUBLIC void
 p64_qsbr_free(p64_qsbrdomain_t *qsbr)
 {
     uint64_t interval = find_min(qsbr->intervals, qsbr->high_wm);
@@ -138,12 +149,12 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
     return ts;
 }
 
-void
+PUBLIC void
 p64_qsbr_reactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     uint64_t current = __atomic_load_n(&TS->qsbr->current, __ATOMIC_RELAXED);
     __atomic_store_n(&TS->qsbr->intervals[TS->idx], current, __ATOMIC_RELAXED);
@@ -152,7 +163,7 @@ p64_qsbr_reactivate(void)
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
 }
 
-void
+PUBLIC void
 p64_qsbr_register(p64_qsbrdomain_t *qsbr)
 {
     if (UNLIKELY(TS == NULL))
@@ -162,24 +173,24 @@ p64_qsbr_register(p64_qsbrdomain_t *qsbr)
     p64_qsbr_reactivate();
 }
 
-void
+PUBLIC void
 p64_qsbr_deactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     //Mark thread as inactive, no references kept
     __atomic_store_n(&TS->qsbr->intervals[TS->idx], INFINITE, __ATOMIC_RELEASE);
     TS->interval = INFINITE;
 }
 
-void
+PUBLIC void
 p64_qsbr_unregister(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     if (TS->nobjs != 0)
     {
@@ -207,12 +218,12 @@ quiescent(void)
     }
 }
 
-void
+PUBLIC void
 p64_qsbr_quiescent(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     if (UNLIKELY(TS->interval == INFINITE))
     {
@@ -223,12 +234,12 @@ p64_qsbr_quiescent(void)
     quiescent();
 }
 
-void
+PUBLIC void
 p64_qsbr_acquire(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     if (UNLIKELY(TS->interval == INFINITE))
     {
@@ -239,12 +250,12 @@ p64_qsbr_acquire(void)
     TS->recur++;
 }
 
-void
+PUBLIC void
 p64_qsbr_release(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     if (UNLIKELY(TS->recur == 0))
     {
@@ -297,13 +308,13 @@ garbage_collect(void)
 
 //Retire an object
 //If necessary, perform garbage collection on retired objects
-bool
+PUBLIC bool
 p64_qsbr_retire(void *ptr,
 		void (*cb)(void *ptr))
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     if (UNLIKELY(TS->nobjs == TS->maxobjs))
     {
@@ -329,12 +340,12 @@ p64_qsbr_retire(void *ptr,
     return true;
 }
 
-uint32_t
+PUBLIC uint32_t
 p64_qsbr_reclaim(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered(); abort();
+	eprintf_not_registered();
     }
     if (TS->nobjs == 0)
     {
@@ -345,3 +356,5 @@ p64_qsbr_reclaim(void)
     uint32_t nremaining = garbage_collect();
     return nremaining;
 }
+
+#undef eprintf_not_registered

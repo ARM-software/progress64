@@ -484,9 +484,10 @@ benchmark(uint32_t numthreads, uint64_t affinity)
 int
 main(int argc, char *argv[])
 {
+    uint32_t NREFS = 1;
     int c;
 
-    while ((c = getopt(argc, argv, "a:f:l:o:qt:v")) != -1)
+    while ((c = getopt(argc, argv, "a:f:l:o:qr:t:v")) != -1)
     {
 	switch (c)
 	{
@@ -530,6 +531,17 @@ main(int argc, char *argv[])
 	    case 'q' :
 		USEHP = false;
 		break;
+	    case 'r' :
+		{
+		    int numrefs = atoi(optarg);
+		    if (numrefs < 0 || numrefs > 32)
+		    {
+			fprintf(stderr, "Invalid number of references %d\n", numrefs);
+			exit(EXIT_FAILURE);
+		    }
+		    NREFS = (unsigned)numrefs;
+		    break;
+		}
 	    case 't' :
 		{
 		    int numthreads = atoi(optarg);
@@ -552,6 +564,7 @@ usage :
 			"-l <numlaps>     Number of laps\n"
 			"-o <numobjs>     Number of objects\n"
 			"-q               Use QSBR instead of hazard pointers\n"
+			"-r <numrefs>     Number of HP references\n"
 			"-t <numthr>      Number of threads\n"
 			"-v               Verbose\n"
 		       );
@@ -574,7 +587,8 @@ usage :
 
     if (USEHP)
     {
-	HPDOM = p64_hazptr_alloc(5, 1);
+	printf("%u HP/thread, ", NREFS);
+	HPDOM = p64_hazptr_alloc(5, NREFS);
 	if (HPDOM == NULL)
 	{
 	    fprintf(stderr, "Failed to allocate HP domain\n");
