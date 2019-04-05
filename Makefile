@@ -123,7 +123,7 @@ CC = $(CROSS_COMPILE)gcc
 CXX = $(CROSS_COMPILE)g++
 AS = $(CROSS_COMPILE)as
 AR = $(CROSS_COMPILE)ar
-LD = $(CROSS_COMPILE)g++
+LD = $(CROSS_COMPILE)gcc
 endif
 #GROUPSTART = -Wl,--start-group
 #GROUPEND = -Wl,--end-group
