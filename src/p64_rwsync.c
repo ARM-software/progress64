@@ -75,7 +75,9 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
     p64_rwsync_t cur = *sync;
     if (UNLIKELY(cur & RWSYNC_WRITER) == 0)
     {
-	fprintf(stderr, "Invalid write release of RW sync %p\n", sync), abort();
+	fprintf(stderr, "Invalid write release of RW sync %p\n", sync);
+	fflush(stderr);
+	abort();
     }
 
     //Increment, clearing writer flag

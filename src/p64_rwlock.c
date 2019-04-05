@@ -66,9 +66,12 @@ p64_rwlock_release_rd(p64_rwlock_t *lock)
     //Decrement number of readers
     prevl = __atomic_fetch_sub(lock, 1, __ATOMIC_RELAXED);
     //Check after lock is released but use pre-release lock value
-    if (UNLIKELY((prevl & RWLOCK_WRITER) != 0 || prevl == 0))
+    //if (UNLIKELY((prevl & RWLOCK_WRITER) != 0 || prevl == 0))
+    if (UNLIKELY((prevl & RWLOCK_READERS) == 0))
     {
-	fprintf(stderr, "Invalid read release of RW lock %p\n", lock), abort();
+	fprintf(stderr, "Invalid read release of RW lock %p\n", lock);
+	fflush(stderr);
+	abort();
     }
 }
 
@@ -96,7 +99,9 @@ p64_rwlock_release_wr(p64_rwlock_t *lock)
 {
     if (UNLIKELY(*lock != RWLOCK_WRITER))
     {
-	fprintf(stderr, "Invalid write release of RW lock %p\n", lock), abort();
+	fprintf(stderr, "Invalid write release of RW lock %p\n", lock);
+	fflush(stderr);
+	abort();
     }
     //Clear writer flag
 #ifdef USE_DMB
