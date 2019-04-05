@@ -30,6 +30,7 @@ Functionality
 * rwsync - lightweight reader/writer synchronisation aka 'seqlock' (blocking)
 * rwsync\_r - recursive rwsync (blocking)
 * spinlock - basic CAS-based spin lock (blocking)
+* tfrwlock - task fair reader/writer lock (blocking)
 * timer - timers (lock-free)
 
 "Lockless" here means that individual operations will not block (wait for other

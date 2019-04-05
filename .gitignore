@@ -10,6 +10,7 @@ hashtable
 laxrob
 lfring
 libprogress64.a
+bm_lock
 perf.data*
 qsbr
 reassemble
@@ -19,6 +20,7 @@ rwlock
 rwlock_r
 rwsync
 rwsync_r
+tfrwlock
 timer
 tags
 TAGS
