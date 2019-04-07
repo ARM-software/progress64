@@ -16,22 +16,38 @@ typedef struct p64_tfrwlock p64_tfrwlock_t;
 
 struct p64_tfrwlock
 {
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     union
     {
-	uint32_t word;
+	uint32_t rdwr;
 	struct
 	{
-	    uint16_t wr_ticket;//Bits 0..15
-	    uint16_t rd_enter;//Bits 16..31
-	};
-    };
-    uint16_t wr_serving;
-    uint16_t rd_leave;
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	    uint16_t wr;//Bits 0..15
+	    uint16_t rd;//Bits 16..31
 #elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	    uint16_t rd;//Bits 16..31
+	    uint16_t wr;//Bits 0..15
 #else
 #error
 #endif
+	};
+    } enter;
+    union
+    {
+	uint32_t rdwr;
+	struct
+	{
+#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
+	    uint16_t wr;//Bits 0..15
+	    uint16_t rd;//Bits 16..31
+#elif __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+	    uint16_t rd;//Bits 16..31
+	    uint16_t wr;//Bits 0..15
+#else
+#error
+#endif
+	};
+    } leave;
 };
 
 //Initialise a task fair reader/writer lock

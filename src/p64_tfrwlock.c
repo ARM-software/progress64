@@ -14,24 +14,22 @@
 #include "arch.h"
 #include "common.h"
 
-#define RD_ENTER_ONE   (1UL << 16)
-#define WR_TICKET_ONE  1
-#define WR_TICKET_MASK 0xFFFF
-
-#define WR_TICKET(x)  ((uint16_t) (x)       )
-#define RD_ENTER(x)   ((uint16_t)((x) >> 16))
+#define RD_ONE    (1U << 16)
+#define WR_ONE    1
+#define WR_MASK   0xFFFF
+#define TO_WR(x)  ((x) & WR_MASK)
 
 void
 p64_tfrwlock_init(p64_tfrwlock_t *lock)
 {
-    lock->wr_ticket = 0;
-    lock->rd_enter = 0;
-    lock->wr_serving = 0;
-    lock->rd_leave = 0;
+    lock->enter.wr = 0;
+    lock->enter.rd = 0;
+    lock->leave.wr = 0;
+    lock->leave.rd = 0;
 }
 
 static inline void
-wait_until_equal(uint16_t *loc, uint32_t val)
+wait_until_equal16(uint16_t *loc, uint32_t val)
 {
     if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
     {
@@ -43,22 +41,34 @@ wait_until_equal(uint16_t *loc, uint32_t val)
     }
 }
 
+static inline void
+wait_until_equal32(uint32_t *loc, uint32_t val)
+{
+    if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
+    {
+	SEVL();
+	while(WFE() && LDXR32(loc, __ATOMIC_ACQUIRE) != val)
+	{
+	    DOZE();
+	}
+    }
+}
+
 void
 p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
 {
-    //Increment lock->rd_enter to signal shared locker enters
-    uint32_t old_word = __atomic_fetch_add(&lock->word, RD_ENTER_ONE,
-					   __ATOMIC_RELAXED);
-    uint16_t wr_ticket = WR_TICKET(old_word);
-    //Wait for any previous exclusive lockers to go away
-    wait_until_equal(&lock->wr_serving, wr_ticket);
+    //Increment lock->enter.rd to record reader enters
+    uint32_t old_enter = __atomic_fetch_add(&lock->enter.rdwr, RD_ONE,
+					    __ATOMIC_RELAXED);
+    //Wait for any previous writers lockers to go away
+    wait_until_equal16(&lock->leave.wr, TO_WR(old_enter));
 }
 
 void
 p64_tfrwlock_release_rd(p64_tfrwlock_t *lock)
 {
-    //Increment lock->rd_leave to signal shared locker leaves
-    (void)__atomic_fetch_add(&lock->rd_leave, 1, __ATOMIC_RELEASE);
+    //Increment lock->leave.rd to record reader leaves
+    (void)__atomic_fetch_add(&lock->leave.rd, 1, __ATOMIC_RELEASE);
 }
 
 static inline uint32_t
@@ -97,22 +107,20 @@ atomic_add_w_mask(uint32_t *loc, uint32_t val, uint32_t mask)
 void
 p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock)
 {
-    //Increment lock->wr_ticket to acquire an exclusive ticket
-    uint32_t old_word = atomic_add_w_mask(&lock->word, WR_TICKET_ONE, WR_TICKET_MASK);
-    uint16_t my_tkt = WR_TICKET(old_word);//Pre-increment value
-    uint16_t rd_enter = RD_ENTER(old_word);
-    //Wait for my turn among exclusive lockers
-    //New exclusive lockers may arrive (will increment lock->wr_ticket)
-    //New shared lockers may arrive (will increment lock->rd_enter)
-    wait_until_equal(&lock->wr_serving, my_tkt);
-    //Wait for previously present shared lockers to go away
-    wait_until_equal(&lock->rd_leave, rd_enter);
+    //Increment lock->enter.wr to acquire a writer ticket
+    uint32_t old_enter = atomic_add_w_mask(&lock->enter.rdwr, WR_ONE, WR_MASK);
+    //Wait for my turn among writers and wait for previously present readers
+    //to leave
+    //New writers may arrive (will increment lock->enter.wr)
+    //New readers may arrive (will increment lock->enter.rd) but these
+    //will wait for me to leave and increment lock->leave.wr
+    wait_until_equal32(&lock->leave.rdwr, old_enter);
 }
 
 void
 p64_tfrwlock_release_wr(p64_tfrwlock_t *lock)
 {
-    //Increment lock->wr_serving to release exclusive ticket
-    uint32_t my_tkt = __atomic_load_n(&lock->wr_serving, __ATOMIC_RELAXED);
-    (void)__atomic_store_n(&lock->wr_serving, my_tkt + 1, __ATOMIC_RELEASE);
+    //Increment lock->leave.wr to release writer ticket
+    uint32_t my_tkt = __atomic_load_n(&lock->leave.wr, __ATOMIC_RELAXED);
+    (void)__atomic_store_n(&lock->leave.wr, my_tkt + 1, __ATOMIC_RELEASE);
 }
