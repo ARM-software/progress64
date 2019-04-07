@@ -11,6 +11,7 @@
 
 #include "p64_ringbuf.h"
 #include "build_config.h"
+#include "os_abstraction.h"
 
 #include "arch.h"
 #include "common.h"
@@ -90,8 +91,8 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	fprintf(stderr, "ringbuf: Invalid flags %#x\n", flags);
 	return NULL;
     }
-    size_t nbytes = ROUNDUP(sizeof(p64_ringbuf_t) + ringsz * esize, CACHE_LINE);
-    p64_ringbuf_t *rb = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(p64_ringbuf_t) + ringsz * esize;
+    p64_ringbuf_t *rb = p64_malloc(nbytes, CACHE_LINE);
     if (rb != NULL)
     {
 	rb->prod.head.cur = 0;
@@ -146,7 +147,7 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
 	{
 	    fprintf(stderr, "Ring buffer %p is not empty\n", rb);
 	}
-	free(rb);
+	p64_mfree(rb);
     }
 }
 

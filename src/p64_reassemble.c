@@ -10,6 +10,7 @@
 
 #include "p64_reassemble.h"
 #include "build_config.h"
+#include "os_abstraction.h"
 
 #include "common.h"
 #include "lockfree.h"
@@ -209,9 +210,9 @@ p64_reassemble_alloc(uint32_t nentries,
     {
         fprintf(stderr, "Invalid fragment table size %u\n", nentries), abort();
     }
-    size_t nbytes = ROUNDUP(sizeof(p64_reassemble_t) +
-			    nentries * sizeof(struct fraglist), CACHE_LINE);
-    p64_reassemble_t *fl = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(p64_reassemble_t) +
+		    nentries * sizeof(struct fraglist);
+    p64_reassemble_t *fl = p64_malloc(nbytes, CACHE_LINE);
     if (fl != NULL)
     {
 	fl->complete_cb = complete_cb;
@@ -244,7 +245,7 @@ p64_reassemble_free(p64_reassemble_t *fl)
 		fl->stale_cb(fl->arg, fl->fragtbl[i].head);
 	    }
 	}
-	free(fl);
+	p64_mfree(fl);
     }
 }
 

@@ -18,6 +18,7 @@ typedef struct p64_qsbrdomain p64_qsbrdomain_t;
 #define PUBLIC static inline
 #endif
 #include "build_config.h"
+#include "os_abstraction.h"
 
 #include "arch.h"
 #include "lockfree.h"
@@ -50,8 +51,7 @@ struct p64_qsbrdomain
 PUBLIC p64_qsbrdomain_t *
 p64_qsbr_alloc(uint32_t maxobjs)
 {
-    size_t nbytes = ROUNDUP(sizeof(p64_qsbrdomain_t), CACHE_LINE);
-    p64_qsbrdomain_t *qsbr = aligned_alloc(CACHE_LINE, nbytes);
+    p64_qsbrdomain_t *qsbr = p64_malloc(sizeof(p64_qsbrdomain_t), CACHE_LINE);
     if (qsbr != NULL)
     {
 	qsbr->current = 0;
@@ -92,7 +92,7 @@ p64_qsbr_free(p64_qsbrdomain_t *qsbr)
 	fflush(stderr);
 	abort();
     }
-    free(qsbr);
+    p64_mfree(qsbr);
 }
 
 typedef void *userptr_t;
@@ -130,9 +130,9 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
 	fflush(stderr);
 	abort();
     }
-    size_t nbytes = ROUNDUP(sizeof(struct thread_state) +
-			    qsbr->maxobjs * sizeof(struct object), CACHE_LINE);
-    struct thread_state *ts = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(struct thread_state) +
+		    qsbr->maxobjs * sizeof(struct object);
+    struct thread_state *ts = p64_malloc(nbytes, CACHE_LINE);
     if (ts == NULL)
     {
 	perror("malloc"), exit(EXIT_FAILURE);
@@ -200,7 +200,7 @@ p64_qsbr_unregister(void)
     }
     p64_qsbr_deactivate();
     p64_idx_free(TS->idx);
-    free(TS);
+    p64_mfree(TS);
     TS = NULL;
 }
 

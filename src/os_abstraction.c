@@ -2,14 +2,16 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-#include "os_abstraction.h"
-
 #ifdef _WIN32
 #include <processthreadsapi.h>
 #elif defined __APPLE__ || defined __linux__
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif
+#include <stdlib.h>
+
+#include "os_abstraction.h"
+#include "common.h"
 
 uint64_t
 p64_gettid(void)
@@ -23,4 +25,25 @@ p64_gettid(void)
 #else
 #error Unsupported OS
 #endif
+}
+
+void *
+p64_malloc(size_t size, size_t alignment)
+{
+    void *ptr;
+    if (alignment > 1)
+    {
+	ptr = aligned_alloc(alignment, ROUNDUP(size, alignment));
+    }
+    else
+    {
+	ptr = malloc(size);
+    }
+    return ptr;
+}
+
+void
+p64_mfree(void *ptr)
+{
+    free(ptr);
 }

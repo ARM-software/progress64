@@ -11,6 +11,7 @@
 
 #include "p64_lfring.h"
 #include "build_config.h"
+#include "os_abstraction.h"
 
 #include "arch.h"
 #include "lockfree.h"
@@ -58,9 +59,8 @@ p64_lfring_alloc(uint32_t nelems, uint32_t flags)
 	fprintf(stderr, "Invalid flags %x\n", flags), abort();
     }
 
-    size_t nbytes = ROUNDUP(sizeof(p64_lfring_t) + ringsz * sizeof(struct element),
-			    CACHE_LINE);
-    p64_lfring_t *lfr = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(p64_lfring_t) + ringsz * sizeof(struct element);
+    p64_lfring_t *lfr = p64_malloc(nbytes, CACHE_LINE);
     if (lfr != NULL)
     {
 	lfr->head = 0;
@@ -86,7 +86,7 @@ p64_lfring_free(p64_lfring_t *lfr)
 	{
 	    fprintf(stderr, "Lock-free ring %p is not empty\n", lfr);
 	}
-	free(lfr);
+	p64_mfree(lfr);
     }
 }
 

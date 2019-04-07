@@ -11,6 +11,7 @@
 
 #include "lockfree.h"
 #include "common.h"
+#include "os_abstraction.h"
 
 struct p64_antireplay
 {
@@ -26,10 +27,9 @@ p64_antireplay_alloc(uint32_t winsize, bool swizzle)
     {
 	fprintf(stderr, "Invalid window size %u\n", winsize), abort();
     }
-    size_t nbytes = ROUNDUP(sizeof(p64_antireplay_t) +
-			    winsize * sizeof(p64_antireplay_sn_t),
-			    CACHE_LINE);
-    p64_antireplay_t *ar = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(p64_antireplay_t) +
+		    winsize * sizeof(p64_antireplay_sn_t);
+    p64_antireplay_t *ar = p64_malloc(nbytes, CACHE_LINE);
     if (ar != NULL)
     {
 	//Clear all sequence numbers
@@ -44,7 +44,7 @@ p64_antireplay_alloc(uint32_t winsize, bool swizzle)
 void
 p64_antireplay_free(p64_antireplay_t *ar)
 {
-    free(ar);
+    p64_mfree(ar);
 }
 
 static inline uint32_t

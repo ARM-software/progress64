@@ -13,6 +13,7 @@
 #include "p64_hazardptr.h"
 #undef p64_hazptr_acquire
 #include "build_config.h"
+#include "os_abstraction.h"
 
 #define HAS_MARK(ptr)          ((uintptr_t)(ptr) & 1)
 #define SET_MARK(ptr) ((void *)((uintptr_t)(ptr) | 1))
@@ -21,6 +22,7 @@
 #include "arch.h"
 #include "lockfree.h"
 #include "common.h"
+
 #include "thr_idx.h"
 #define PRIVATE
 #include "p64_qsbr.c"
@@ -86,10 +88,9 @@ p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 	abort();
     }
     uint32_t nrefs_rounded = roundup(nrefs);
-    size_t nbytes = ROUNDUP(sizeof(p64_hpdomain_t) +
-			    nrefs_rounded * MAXTHREADS * sizeof(struct hazard_pointer),
-			    CACHE_LINE);
-    p64_hpdomain_t *hpd = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(p64_hpdomain_t) +
+		    nrefs_rounded * MAXTHREADS * sizeof(struct hazard_pointer);
+    p64_hpdomain_t *hpd = p64_malloc(nbytes, CACHE_LINE);
     if (hpd != NULL)
     {
 	hpd->nrefs = nrefs;
@@ -126,7 +127,7 @@ p64_hazptr_free(p64_hpdomain_t *hpd)
 	    }
 	}
     }
-    free(hpd);
+    p64_mfree(hpd);
 }
 
 struct object
@@ -172,11 +173,10 @@ alloc_ts(p64_hpdomain_t *hpd)
 	abort();
     }
 
-    size_t nbytes = ROUNDUP(sizeof(struct thread_state) +
-			    hpd->maxobjs * sizeof(struct object) +
-			    hpd->nrefs * sizeof(struct file_line),
-			    CACHE_LINE);
-    struct thread_state *ts = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(struct thread_state) +
+		    hpd->maxobjs * sizeof(struct object) +
+		    hpd->nrefs * sizeof(struct file_line);
+    struct thread_state *ts = p64_malloc(nbytes, CACHE_LINE);
     if (ts == NULL)
     {
 	perror("malloc"), exit(EXIT_FAILURE);
@@ -274,7 +274,7 @@ p64_hazptr_unregister(void)
     }
     p64_hazptr_deactivate();
     p64_idx_free(TS->idx);
-    free(TS);
+    p64_mfree(TS);
     TS = NULL;
 }
 

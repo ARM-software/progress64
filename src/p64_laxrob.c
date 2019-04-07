@@ -15,6 +15,7 @@
 
 #include "arch.h"
 #include "common.h"
+#include "os_abstraction.h"
 
 struct p64_laxrob
 {
@@ -59,10 +60,9 @@ p64_laxrob_alloc(uint32_t nslots,
 	abort();
     }
     unsigned long ringsize = ROUNDUP_POW2(nslots);
-    size_t nbytes = ROUNDUP(sizeof(p64_laxrob_t) +
-			    (ringsize + vecsz) * sizeof(p64_laxrob_elem_t *),
-			    CACHE_LINE);
-    p64_laxrob_t *rob = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(p64_laxrob_t) +
+		    (ringsize + vecsz) * sizeof(p64_laxrob_elem_t *);
+    p64_laxrob_t *rob = p64_malloc(nbytes, CACHE_LINE);
     if (rob != NULL)
     {
 	rob->pending = (p64_laxrob_elem_t *)IDLE;
@@ -98,7 +98,7 @@ p64_laxrob_free(p64_laxrob_t *rob)
 		abort();
 	    }
 	}
-	free(rob);
+	p64_mfree(rob);
     }
 }
 

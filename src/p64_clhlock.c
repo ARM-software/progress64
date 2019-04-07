@@ -13,6 +13,7 @@
 
 #include "common.h"
 #include "arch.h"
+#include "os_abstraction.h"
 
 struct p64_clhnode
 {
@@ -23,10 +24,10 @@ struct p64_clhnode
 static p64_clhnode_t *
 alloc_clhnode(void)
 {
-    p64_clhnode_t *node = aligned_alloc(CACHE_LINE, sizeof(p64_clhnode_t));
+    p64_clhnode_t *node = p64_malloc(sizeof(p64_clhnode_t), CACHE_LINE);
     if (node == NULL)
     {
-	perror("aligned_alloc");
+	perror("p64_malloc");
 	exit(EXIT_FAILURE);
     }
     node->prev = NULL;
@@ -46,7 +47,7 @@ p64_clhlock_init(p64_clhlock_t *lock)
 void
 p64_clhlock_fini(p64_clhlock_t *lock)
 {
-    free(lock->tail);
+    p64_mfree(lock->tail);
 }
 
 void

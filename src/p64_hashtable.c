@@ -17,6 +17,7 @@
 
 #include "common.h"
 #include "lockfree.h"
+#include "os_abstraction.h"
 
 #define MARK_REMOVE 1UL
 #define HAS_MARK(ptr) (((uintptr_t)(ptr) & MARK_REMOVE) != 0)
@@ -97,8 +98,7 @@ p64_hashtable_alloc(uint32_t nelems)
     size_t nbkts = (nelems + BKT_SIZE - 1) / BKT_SIZE;
     size_t sz = sizeof(p64_hashtable_t) +
 		sizeof(struct hash_bucket) * nbkts;
-    sz = ROUNDUP(sz, CACHE_LINE);
-    p64_hashtable_t *ht = aligned_alloc(CACHE_LINE, sz);
+    p64_hashtable_t *ht = p64_malloc(sz, CACHE_LINE);
     if (ht != NULL)
     {
 	memset(ht, 0, sz);
@@ -120,7 +120,7 @@ p64_hashtable_free(p64_hashtable_t *ht)
 	    fprintf(stderr, "Hash table %p is not empty\n", ht), abort();
 	}
 #endif
-	free(ht);
+	p64_mfree(ht);
     }
 }
 

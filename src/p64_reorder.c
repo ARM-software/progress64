@@ -12,6 +12,7 @@
 
 #include "p64_reorder.h"
 #include "build_config.h"
+#include "os_abstraction.h"
 
 #include "arch.h"
 #include "common.h"
@@ -48,9 +49,8 @@ p64_reorder_alloc(uint32_t nelems,
 	fprintf(stderr, "Invalid reorder buffer size %u\n", nelems), abort();
     }
     unsigned long ringsize = ROUNDUP_POW2(nelems);
-    size_t nbytes = ROUNDUP(sizeof(p64_reorder_t) + ringsize * sizeof(void *),
-			    CACHE_LINE);
-    p64_reorder_t *rob = aligned_alloc(CACHE_LINE, nbytes);
+    size_t nbytes = sizeof(p64_reorder_t) + ringsize * sizeof(void *);
+    p64_reorder_t *rob = p64_malloc(nbytes, CACHE_LINE);
     if (rob != NULL)
     {
 	//Clear the ring pointers
@@ -80,7 +80,7 @@ p64_reorder_free(p64_reorder_t *rob)
 	{
 	    fprintf(stderr, "Reorder buffer %p is not empty\n", rob), abort();
 	}
-	free(rob);
+	p64_mfree(rob);
     }
 }
 
