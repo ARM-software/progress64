@@ -24,6 +24,8 @@
 #include "p64_rwlock.h"
 #include "p64_spinlock.h"
 #include "p64_tfrwlock.h"
+#include "p64_pfrwlock.h"
+#include "p64_tktlock.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -45,10 +47,12 @@ xorshift64star(uint64_t xor_state[1])
 
 struct object
 {
-    p64_spinlock_t spl;
-    p64_rwlock_t rwl;
-    p64_tfrwlock_t tfrwl;
-    p64_clhlock_t clhl;
+    p64_tfrwlock_t tfrwl;//Size 8
+    p64_clhlock_t clhl;//Size 8 (pointer)
+    p64_pfrwlock_t pfrwl;//Size 10
+    p64_tktlock_t tktl;//Size 4
+    p64_rwlock_t rwl;//Size 4
+    p64_spinlock_t spl;//Size 1
     volatile uint32_t count_rd ALIGNED(CACHE_LINE);
     volatile uint32_t count_wr ALIGNED(CACHE_LINE);
 } ALIGNED(CACHE_LINE);
@@ -63,10 +67,19 @@ static uint32_t NUMLAPS = 1000000;
 static uint32_t NUMOBJS = 0;
 static struct object *OBJS;//Pointer to array of aligned locks
 static bool VERBOSE = false;
-static enum { PLAIN, RW, TFRW, CLH } LOCKTYPE = PLAIN;
+static enum { PLAIN, RW, TFRW, PFRW, CLH, TKT } LOCKTYPE = -1;
 static const char *const type_name[] =
 {
-    "plain spin", "read/write", "task fair read/write", "CLH"
+    "plain spin",//mutex
+    "read/write",//sh/excl
+    "task fair read/write",//sh/excl + FIFO
+    "phase fair read/write",//sh/excl + FIFO
+    "CLH",//mutex + FIFO
+    "ticket"//mutex + FIFO
+};
+static const char *const abbr_name[] =
+{
+    "plain", "rw", "tfrw", "pfrw", "clh", "tkt"
 };
 static volatile bool QUIT = false;
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
@@ -139,7 +152,8 @@ delay_loop(uint32_t niter)
 static void
 thr_execute(uint32_t tidx)
 {
-    p64_clhnode_t *clhnode = NULL;
+    p64_clhnode_t *clhnode = NULL;//For CLH lock
+    uint16_t tkt;//For task fair RW lock and ticket lock
     uint32_t numfailrd = 0;
     uint32_t numfailwr = 0;
     uint32_t nummultrd = 0;
@@ -163,8 +177,14 @@ thr_execute(uint32_t tidx)
 		case TFRW :
 		    p64_tfrwlock_acquire_rd(&obj->tfrwl);
 		    break;
+		case PFRW :
+		    p64_pfrwlock_acquire_rd(&obj->pfrwl);
+		    break;
 		case CLH :
 		    p64_clhlock_acquire(&obj->clhl, &clhnode);
+		    break;
+		case TKT :
+		    p64_tktlock_acquire(&obj->tktl, &tkt);
 		    break;
 	    }
 	    if (obj->count_wr != 0)
@@ -192,8 +212,14 @@ thr_execute(uint32_t tidx)
 		case TFRW :
 		    p64_tfrwlock_release_rd(&obj->tfrwl);
 		    break;
+		case PFRW :
+		    p64_pfrwlock_release_rd(&obj->pfrwl);
+		    break;
 		case CLH :
 		    p64_clhlock_release(&clhnode);
+		    break;
+		case TKT :
+		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
 	    }
 	}
@@ -209,10 +235,16 @@ thr_execute(uint32_t tidx)
 		    p64_rwlock_acquire_wr(&obj->rwl);
 		    break;
 		case TFRW :
-		    p64_tfrwlock_acquire_wr(&obj->tfrwl);
+		    p64_tfrwlock_acquire_wr(&obj->tfrwl, &tkt);
+		    break;
+		case PFRW :
+		    p64_pfrwlock_acquire_wr(&obj->pfrwl);
 		    break;
 		case CLH :
 		    p64_clhlock_acquire(&obj->clhl, &clhnode);
+		    break;
+		case TKT :
+		    p64_tktlock_acquire(&obj->tktl, &tkt);
 		    break;
 	    }
 	    if (obj->count_wr++ != 0)
@@ -241,10 +273,16 @@ thr_execute(uint32_t tidx)
 		    p64_rwlock_release_wr(&obj->rwl);
 		    break;
 		case TFRW :
-		    p64_tfrwlock_release_wr(&obj->tfrwl);
+		    p64_tfrwlock_release_wr(&obj->tfrwl, tkt);
+		    break;
+		case PFRW :
+		    p64_pfrwlock_release_wr(&obj->pfrwl);
 		    break;
 		case CLH :
 		    p64_clhlock_release(&clhnode);
+		    break;
+		case TKT :
+		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
 	    }
 	}
@@ -451,7 +489,7 @@ main(int argc, char *argv[])
 {
     int c;
 
-    while ((c = getopt(argc, argv, "a:cfl:o:rt:v")) != -1)
+    while ((c = getopt(argc, argv, "a:l:o:t:v")) != -1)
     {
 	switch (c)
 	{
@@ -464,12 +502,6 @@ main(int argc, char *argv[])
 		{
 		    AFFINITY = strtoul(optarg, NULL, 2);
 		}
-		break;
-	    case 'c' :
-		LOCKTYPE = CLH;
-		break;
-	    case 'f' :
-		LOCKTYPE = TFRW;
 		break;
 	    case 'l' :
 		{
@@ -493,9 +525,6 @@ main(int argc, char *argv[])
 		    NUMOBJS = (unsigned)numobjs;
 		    break;
 		}
-	    case 'r' :
-		LOCKTYPE = RW;
-		break;
 	    case 't' :
 		{
 		    int numthreads = atoi(optarg);
@@ -512,21 +541,35 @@ main(int argc, char *argv[])
 		break;
 	    default :
 usage :
-		fprintf(stderr, "Usage: scheduler <options>\n"
+		fprintf(stderr, "Usage: scheduler [<options>] <locktype>\n"
 			"-a <binmask>     CPU affinity mask (default base 2)\n"
-			"-c               Use CLH lock\n"
-			"-f               Use task fair RW lock\n"
 			"-l <numlaps>     Number of laps\n"
 			"-o <numobjs>     Number of objects (locks)\n"
-			"-r               Use RW lock (writer preference)\n"
 			"-t <numthr>      Number of threads\n"
 			"-v               Verbose\n"
-			"Default: use plain spin lock\n"
+			"Lock types: "
 		       );
+		for (int i = PLAIN; i <= TKT; i++)
+		{
+		    fprintf(stderr, "%s%c", abbr_name[i], i != TKT ? ' ' : '\n');
+		}
 		exit(EXIT_FAILURE);
 	}
     }
-    if (optind != argc)
+    //Need one
+    if (optind != argc - 1)
+    {
+	goto usage;
+    }
+    for (int i = PLAIN; i <= TKT; i++)
+    {
+	if (strcmp(abbr_name[i], argv[optind]) == 0)
+	{
+	    LOCKTYPE = i;
+	    break;
+	}
+    }
+    if (LOCKTYPE == -1)
     {
 	goto usage;
     }
@@ -555,7 +598,9 @@ usage :
 	p64_spinlock_init(&OBJS[i].spl);
 	p64_rwlock_init(&OBJS[i].rwl);
 	p64_tfrwlock_init(&OBJS[i].tfrwl);
+	p64_pfrwlock_init(&OBJS[i].pfrwl);
 	p64_clhlock_init(&OBJS[i].clhl);
+	p64_tktlock_init(&OBJS[i].tktl);
 	OBJS[i].count_rd = 0;
 	OBJS[i].count_wr = 0;
     }
