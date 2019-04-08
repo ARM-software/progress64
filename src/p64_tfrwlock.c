@@ -29,7 +29,7 @@ p64_tfrwlock_init(p64_tfrwlock_t *lock)
 }
 
 static inline void
-wait_until_equal16(uint16_t *loc, uint32_t val)
+wait_until_equal16(uint16_t *loc, uint16_t val)
 {
     if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
     {
@@ -105,10 +105,11 @@ atomic_add_w_mask(uint32_t *loc, uint32_t val, uint32_t mask)
 }
 
 void
-p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock)
+p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock, uint16_t *tkt)
 {
     //Increment lock->enter.wr to acquire a writer ticket
     uint32_t old_enter = atomic_add_w_mask(&lock->enter.rdwr, WR_ONE, WR_MASK);
+    *tkt = TO_WR(old_enter);
     //Wait for my turn among writers and wait for previously present readers
     //to leave
     //New writers may arrive (will increment lock->enter.wr)
@@ -118,9 +119,8 @@ p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock)
 }
 
 void
-p64_tfrwlock_release_wr(p64_tfrwlock_t *lock)
+p64_tfrwlock_release_wr(p64_tfrwlock_t *lock, uint16_t tkt)
 {
     //Increment lock->leave.wr to release writer ticket
-    uint32_t my_tkt = __atomic_load_n(&lock->leave.wr, __ATOMIC_RELAXED);
-    (void)__atomic_store_n(&lock->leave.wr, my_tkt + 1, __ATOMIC_RELEASE);
+    (void)__atomic_store_n(&lock->leave.wr, tkt + 1, __ATOMIC_RELEASE);
 }

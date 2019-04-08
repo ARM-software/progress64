@@ -62,10 +62,10 @@ void p64_tfrwlock_release_rd(p64_tfrwlock_t *lock);
 
 //Acquire a writer (exclusive) lock
 //Block until earlier shared & exclusive locks have been released
-void p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock);
+void p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock, uint16_t *tkt);
 
 //Release a writer lock
-void p64_tfrwlock_release_wr(p64_tfrwlock_t *lock);
+void p64_tfrwlock_release_wr(p64_tfrwlock_t *lock, uint16_t tkt);
 
 #ifdef __cplusplus
 }
