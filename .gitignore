@@ -12,6 +12,7 @@ lfring
 libprogress64.a
 bm_lock
 perf.data*
+pfrwlock
 qsbr
 reassemble
 reorder
