@@ -152,13 +152,13 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
 	      ((uint64_t)enter_rd << ENTER_RD_SHIFT);
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx64(loc, neu, __ATOMIC_RELAXED)));
+    while (UNLIKELY(stx64(loc, neu, __ATOMIC_RELEASE)));
 #else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
 					/*weak=*/true,
-					__ATOMIC_RELAXED,
+					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
 #endif
 }
