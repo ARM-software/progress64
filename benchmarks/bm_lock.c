@@ -26,6 +26,7 @@
 #include "p64_tfrwlock.h"
 #include "p64_pfrwlock.h"
 #include "p64_tktlock.h"
+#include "p64_rwsync.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -45,6 +46,26 @@ xorshift64star(uint64_t xor_state[1])
     return x * 0x2545F4914F6CDD1D;
 }
 
+union x_b
+{
+    uint64_t x[8];
+    uint8_t b[64];
+};
+
+static inline uint64_t
+sum_x(volatile union x_b *p)
+{
+    uint64_t sum = p->x[0] + p->x[1] + p->x[2] + p->x[3] +
+		   p->x[4] + p->x[5] + p->x[6] + p->x[7];
+    sum = (sum >> 32) + (uint32_t)sum;
+    sum = (sum >> 32) + (uint32_t)sum;
+    sum = (sum >> 16) + (uint16_t)sum;
+    sum = (sum >> 16) + (uint16_t)sum;
+    sum = (sum >>  8) + (uint8_t)sum;
+    sum = (sum >>  8) + (uint8_t)sum;
+    return sum;
+}
+
 struct object
 {
     p64_tfrwlock_t tfrwl;//Size 8
@@ -52,9 +73,10 @@ struct object
     p64_pfrwlock_t pfrwl;//Size 10
     p64_tktlock_t tktl;//Size 4
     p64_rwlock_t rwl;//Size 4
+    p64_rwsync_t rws;//Size 4
     p64_spinlock_t spl;//Size 1
-    volatile uint32_t count_rd ALIGNED(CACHE_LINE);
-    volatile uint32_t count_wr ALIGNED(CACHE_LINE);
+    volatile union x_b count_rd ALIGNED(CACHE_LINE);
+    volatile union x_b count_wr ALIGNED(CACHE_LINE);
 } ALIGNED(CACHE_LINE);
 
 
@@ -67,7 +89,8 @@ static uint32_t NUMLAPS = 1000000;
 static uint32_t NUMOBJS = 0;
 static struct object *OBJS;//Pointer to array of aligned locks
 static bool VERBOSE = false;
-static enum { PLAIN, RW, TFRW, PFRW, CLH, TKT } LOCKTYPE = -1;
+static bool DOCHECKS = false;
+static enum { PLAIN, RW, TFRW, PFRW, CLH, TKT, RWSYNC } LOCKTYPE = -1;
 static const char *const type_name[] =
 {
     "plain spin",//mutex
@@ -75,18 +98,20 @@ static const char *const type_name[] =
     "task fair read/write",//sh/excl + FIFO
     "phase fair read/write",//sh/excl + FIFO
     "CLH",//mutex + FIFO
-    "ticket"//mutex + FIFO
+    "ticket",//mutex + FIFO
+    "read/write synchroniser"
 };
 static const char *const abbr_name[] =
 {
-    "plain", "rw", "tfrw", "pfrw", "clh", "tkt"
+    "plain", "rw", "tfrw", "pfrw", "clh", "tkt", "rwsync"
 };
 static volatile bool QUIT = false;
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static sem_t ALL_DONE ALIGNED(CACHE_LINE);
 static struct timespec END_TIME;
-static uint32_t NUMFAILRD[MAXTHREADS];
-static uint32_t NUMFAILWR[MAXTHREADS];
+static uint32_t NUMFAILRD_WR[MAXTHREADS];
+static uint32_t NUMFAILWR_WR[MAXTHREADS];
+static uint32_t NUMFAILWR_RD[MAXTHREADS];
 static uint32_t NUMMULTRD[MAXTHREADS];
 static uint32_t NUMOPSDONE[MAXTHREADS];
 
@@ -153,9 +178,11 @@ static void
 thr_execute(uint32_t tidx)
 {
     p64_clhnode_t *clhnode = NULL;//For CLH lock
+    p64_rwsync_t rws = 0;
     uint16_t tkt;//For task fair RW lock and ticket lock
-    uint32_t numfailrd = 0;
-    uint32_t numfailwr = 0;
+    uint32_t numfailrd_wr = 0;
+    uint32_t numfailwr_wr = 0;
+    uint32_t numfailwr_rd = 0;
     uint32_t nummultrd = 0;
     uint32_t lap;
     uint64_t xor_state[] = { tidx + 1 };//Must be != 0
@@ -165,6 +192,9 @@ thr_execute(uint32_t tidx)
 	struct object *obj = &OBJS[idx];
 	if (lap % 8 != 0)
 	{
+	    uint32_t _numfailwr_rd;
+restart:
+	    _numfailwr_rd = 0;
 	    //Shared critical section - reader lock
 	    switch (LOCKTYPE)
 	    {
@@ -186,20 +216,30 @@ thr_execute(uint32_t tidx)
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
 		    break;
+		case RWSYNC :
+		    rws = p64_rwsync_acquire_rd(&obj->rws);
+		    break;
 	    }
-	    if (obj->count_wr != 0)
+	    if (DOCHECKS)
 	    {
-		numfailwr++;
-	    }
-	    if (__atomic_fetch_add(&obj->count_rd, 1, __ATOMIC_RELAXED) != 0)
-	    {
-		nummultrd++;
+		if (sum_x(&obj->count_wr) != 0)
+		{
+		    _numfailwr_rd++;//Writer present while reading
+		}
+		if (sum_x(&obj->count_rd) != 0)
+		{
+		    nummultrd++;
+		}
+		obj->count_rd.b[tidx % 64]++;
 	    }
 	    delay_loop(10);
-	    __atomic_fetch_sub(&obj->count_rd, 1, __ATOMIC_RELAXED);
-	    if (obj->count_wr != 0)
+	    if (DOCHECKS)
 	    {
-		numfailwr++;
+		obj->count_rd.b[tidx % 64]--;
+		if (sum_x(&obj->count_wr) != 0)
+		{
+		    _numfailwr_rd++;//Writer present while reading
+		}
 	    }
 	    switch (LOCKTYPE)
 	    {
@@ -221,7 +261,17 @@ thr_execute(uint32_t tidx)
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
+		case RWSYNC :
+		    if (DOCHECKS)
+		    {
+			__atomic_thread_fence(__ATOMIC_RELEASE);
+		    }
+		    if (!p64_rwsync_release_rd(&obj->rws, rws))
+			goto restart;
+		    break;
 	    }
+	    //Only update real numfailwr_rd after successful release_rd()
+	    numfailwr_rd += _numfailwr_rd;
 	}
 	else
 	{
@@ -246,23 +296,34 @@ thr_execute(uint32_t tidx)
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
 		    break;
+		case RWSYNC :
+		    p64_rwsync_acquire_wr(&obj->rws);
+		    break;
 	    }
-	    if (obj->count_wr++ != 0)
+	    if (DOCHECKS)
 	    {
-		numfailwr++;
-	    }
-	    if (obj->count_rd != 0)
-	    {
-		numfailrd++;
+		obj->count_wr.b[tidx % 64]++;
+		if (sum_x(&obj->count_wr) != 1)
+		{
+		    numfailwr_wr++;//Writer present while writing
+		}
+		if (LOCKTYPE != RWSYNC && sum_x(&obj->count_rd) != 0)
+		{
+		    numfailrd_wr++;//Reader present while writing
+		}
 	    }
 	    delay_loop(10);
-	    if (--obj->count_wr != 0)
+	    if (DOCHECKS)
 	    {
-		numfailwr++;
-	    }
-	    if (obj->count_rd != 0)
-	    {
-		numfailrd++;
+		if (sum_x(&obj->count_wr) != 1)
+		{
+		    numfailwr_wr++;//Writer present while writing
+		}
+		if (LOCKTYPE != RWSYNC && sum_x(&obj->count_rd) != 0)
+		{
+		    numfailrd_wr++;//Reader present while writing
+		}
+		obj->count_wr.b[tidx % 64]--;
 	    }
 	    switch (LOCKTYPE)
 	    {
@@ -284,13 +345,17 @@ thr_execute(uint32_t tidx)
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
+		case RWSYNC :
+		    p64_rwsync_release_wr(&obj->rws);
+		    break;
 	    }
 	}
 	delay_loop(10);
     }
     QUIT = true;
-    NUMFAILRD[tidx] = numfailrd;
-    NUMFAILWR[tidx] = numfailwr;
+    NUMFAILRD_WR[tidx] = numfailrd_wr;
+    NUMFAILWR_WR[tidx] = numfailwr_wr;
+    NUMFAILWR_RD[tidx] = numfailwr_rd;
     NUMMULTRD[tidx] = nummultrd;
     NUMOPSDONE[tidx] = lap;
     free(clhnode);
@@ -447,8 +512,14 @@ benchmark(uint32_t numthreads, uint64_t affinity)
     uint64_t totalops = 0;
     for (uint32_t t = 0; t < NUMTHREADS; t++)
     {
-	printf("%u: numfailrd %u, numfailwr %u, nummultrd %u, numops %u\n",
-	       t, NUMFAILRD[t], NUMFAILWR[t], NUMMULTRD[t], NUMOPSDONE[t]);
+	printf("%u: ", t);
+	if (DOCHECKS)
+	{
+	    printf("failrd_wr %u, failwr_wr %u, failwr_rd %u, multrd %u, ",
+		   NUMFAILRD_WR[t], NUMFAILWR_WR[t],
+		   NUMFAILRD_WR[t], NUMMULTRD[t]);
+	}
+	printf("numops %u\n", NUMOPSDONE[t]);
 	totalops += NUMOPSDONE[t];
     }
 
@@ -489,7 +560,7 @@ main(int argc, char *argv[])
 {
     int c;
 
-    while ((c = getopt(argc, argv, "a:l:o:t:v")) != -1)
+    while ((c = getopt(argc, argv, "a:cl:o:t:v")) != -1)
     {
 	switch (c)
 	{
@@ -502,6 +573,9 @@ main(int argc, char *argv[])
 		{
 		    AFFINITY = strtoul(optarg, NULL, 2);
 		}
+		break;
+	    case 'c' :
+		DOCHECKS = true;
 		break;
 	    case 'l' :
 		{
@@ -543,15 +617,16 @@ main(int argc, char *argv[])
 usage :
 		fprintf(stderr, "Usage: scheduler [<options>] <locktype>\n"
 			"-a <binmask>     CPU affinity mask (default base 2)\n"
+			"-c               Perform lock checks\n"
 			"-l <numlaps>     Number of laps\n"
 			"-o <numobjs>     Number of objects (locks)\n"
 			"-t <numthr>      Number of threads\n"
 			"-v               Verbose\n"
 			"Lock types: "
 		       );
-		for (int i = PLAIN; i <= TKT; i++)
+		for (int i = PLAIN; i <= RWSYNC; i++)
 		{
-		    fprintf(stderr, "%s%c", abbr_name[i], i != TKT ? ' ' : '\n');
+		    fprintf(stderr, "%s%c", abbr_name[i], i != RWSYNC ? ' ' : '\n');
 		}
 		exit(EXIT_FAILURE);
 	}
@@ -561,7 +636,7 @@ usage :
     {
 	goto usage;
     }
-    for (int i = PLAIN; i <= TKT; i++)
+    for (int i = PLAIN; i <= RWSYNC; i++)
     {
 	if (strcmp(abbr_name[i], argv[optind]) == 0)
 	{
@@ -601,8 +676,9 @@ usage :
 	p64_pfrwlock_init(&OBJS[i].pfrwl);
 	p64_clhlock_init(&OBJS[i].clhl);
 	p64_tktlock_init(&OBJS[i].tktl);
-	OBJS[i].count_rd = 0;
-	OBJS[i].count_wr = 0;
+	p64_rwsync_init(&OBJS[i].rws);
+	memset((void *)&OBJS[i].count_rd, 0, sizeof(OBJS[i].count_rd));
+	memset((void *)&OBJS[i].count_wr, 0, sizeof(OBJS[i].count_wr));
     }
 
     int res = sem_init(&ALL_DONE, 0, 0);
