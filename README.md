@@ -8,7 +8,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 
 Functionality
 ----
-### Not locks
+### Not Locks
 | Name | Description | Properties |
 | ---- | ---- | :----: |
 | antireplay | replay protection | lock-free/wait-free
@@ -24,7 +24,7 @@ Functionality
 | timer | timers | lock-free
 
 "lockless" means that individual operations will not block (wait for other threads) but the whole data structure is not lock-free in the academic sense (e.g. linearizable, kill-tolerant). Example, an acquired slot in a reorder buffer must eventually be released or the reorder buffer will fill up and later released slots will not be retired. Acquire and release operations never block (so non-blocking in some limited sense) but the reorder buffer as a whole is neither lock-free nor obstruction-free.
-### Locks
+### Spin Locks & similar
 ----
 | Name | Description | Properties |
 | ---- | ---- | :----: |
@@ -34,14 +34,15 @@ Functionality
 | rwlock\_r | recursive version of rwlock | rw |
 | rwsync | lightweight reader/writer synchronisation aka 'seqlock' (writer preference) | rw |
 | rwsync\_r | recursive version of rwsync | rw |
+| semaphore | counting semaphore | rw, fcfs |
 | spinlock | basic CAS-based spin lock | mutex |
 | tfrwlock | task fair reader/writer lock | rw, fcfs |
 | tktlock | ticket lock | mutex, fcfs |
 
-"mutex" - mutual exclusion, only one thread at a time can acquire lock.
-"rw" - multiple threads may concurrently acquire lock in shared mode.
-"queue" - each waiting thread spins on a separate location.
-"fcfs" - first come, first served.
+"mutex" - mutual exclusion, only one thread at a time can acquire lock.  
+"rw" - multiple threads may concurrently acquire lock in reader (shared) mode.  
+"queue" - each waiting thread spins on a separate location.  
+"fcfs" - first come, first served.  
 
 Requirements
 ----
@@ -55,7 +56,7 @@ Restrictions
 ----
 * PROGRESS64 currently only supports ARMv8/AArch64 and x86-64 architectures.
 * Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the hardware.
-* Hazardptr and qsbr support one domain only. This simplifies the API and implementation.
+* Hazardptr and qsbr support one reclamation domain only. This simplifies the API and implementation.
 
 Notes
 ----

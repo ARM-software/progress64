@@ -27,6 +27,7 @@
 #include "p64_pfrwlock.h"
 #include "p64_tktlock.h"
 #include "p64_rwsync.h"
+#include "p64_semaphore.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -72,6 +73,7 @@ struct object
     p64_clhlock_t clhl;//Size 8 (pointer)
     p64_pfrwlock_t pfrwl;//Size 10
     p64_tktlock_t tktl;//Size 4
+    p64_semaphore_t sem;//Size 4
     p64_rwlock_t rwl;//Size 4
     p64_rwsync_t rws;//Size 4
     p64_spinlock_t spl;//Size 1
@@ -90,7 +92,7 @@ static uint32_t NUMOBJS = 0;
 static struct object *OBJS;//Pointer to array of aligned locks
 static bool VERBOSE = false;
 static bool DOCHECKS = false;
-static enum { PLAIN, RW, TFRW, PFRW, CLH, TKT, RWSYNC } LOCKTYPE = -1;
+static enum { PLAIN, RW, TFRW, PFRW, CLH, TKT, SEM, RWSYNC } LOCKTYPE = -1;
 static const char *const type_name[] =
 {
     "plain spin",//mutex
@@ -99,11 +101,12 @@ static const char *const type_name[] =
     "phase fair read/write",//sh/excl + FIFO
     "CLH",//mutex + FIFO
     "ticket",//mutex + FIFO
+    "semaphore",
     "read/write synchroniser"
 };
 static const char *const abbr_name[] =
 {
-    "plain", "rw", "tfrw", "pfrw", "clh", "tkt", "rwsync"
+    "plain", "rw", "tfrw", "pfrw", "clh", "tkt", "sem", "rwsync"
 };
 static volatile bool QUIT = false;
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
@@ -216,6 +219,9 @@ restart:
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
 		    break;
+		case SEM :
+		    p64_sem_acquire(&obj->sem);
+		    break;
 		case RWSYNC :
 		    rws = p64_rwsync_acquire_rd(&obj->rws);
 		    break;
@@ -261,6 +267,9 @@ restart:
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
+		case SEM :
+		    p64_sem_release(&obj->sem);
+		    break;
 		case RWSYNC :
 		    if (DOCHECKS)
 		    {
@@ -295,6 +304,9 @@ restart:
 		    break;
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
+		    break;
+		case SEM :
+		    p64_sem_acquire_n(&obj->sem, NUMTHREADS);
 		    break;
 		case RWSYNC :
 		    p64_rwsync_acquire_wr(&obj->rws);
@@ -344,6 +356,9 @@ restart:
 		    break;
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
+		    break;
+		case SEM :
+		    p64_sem_release_n(&obj->sem, NUMTHREADS);
 		    break;
 		case RWSYNC :
 		    p64_rwsync_release_wr(&obj->rws);
@@ -677,6 +692,7 @@ usage :
 	p64_clhlock_init(&OBJS[i].clhl);
 	p64_tktlock_init(&OBJS[i].tktl);
 	p64_rwsync_init(&OBJS[i].rws);
+	p64_sem_init(&OBJS[i].sem, NUMTHREADS);
 	memset((void *)&OBJS[i].count_rd, 0, sizeof(OBJS[i].count_rd));
 	memset((void *)&OBJS[i].count_wr, 0, sizeof(OBJS[i].count_wr));
     }

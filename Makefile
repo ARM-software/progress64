@@ -13,7 +13,7 @@
 #List of executable files to build
 TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock lfring qsbr bm_ringbuf bm_smr tfrwlock bm_lock pfrwlock
 #List object files for each target
-OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tktlock.o p64_pfrwlock.o
+OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tktlock.o p64_pfrwlock.o p64_semaphore.o
 OBJECTS_hashtable = hashtable.o
 OBJECTS_timer = timer.o
 OBJECTS_rwlock = rwlock.o
