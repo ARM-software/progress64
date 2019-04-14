@@ -15,10 +15,13 @@
 #include "arch.h"
 #include "os_abstraction.h"
 
+#define GO 0
+#define WAIT 1
+
 struct p64_clhnode
 {
     struct p64_clhnode *prev;
-    uint32_t wait;
+    uint8_t wait;
 };
 
 static p64_clhnode_t *
@@ -31,8 +34,7 @@ alloc_clhnode(void)
 	exit(EXIT_FAILURE);
     }
     node->prev = NULL;
-    __atomic_store_n(&node->wait, 1, __ATOMIC_RELAXED);
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    node->wait = WAIT;
     return node;
 }
 
@@ -41,7 +43,7 @@ p64_clhlock_init(p64_clhlock_t *lock)
 {
     lock->tail = alloc_clhnode();
     lock->tail->prev = NULL;
-    __atomic_store_n(&lock->tail->wait, 0, __ATOMIC_RELAXED);
+    lock->tail->wait = GO;
 }
 
 void
@@ -50,39 +52,48 @@ p64_clhlock_fini(p64_clhlock_t *lock)
     p64_mfree(lock->tail);
 }
 
-void
-p64_clhlock_acquire(p64_clhlock_t *lock, p64_clhnode_t **nodep)
+static inline void
+wait_for_prev(uint8_t *loc, int mo)
 {
-    PREFETCH_FOR_WRITE(&lock->tail);
+    //Wait for previous thread to signal us (using their node)
+    if (__atomic_load_n(loc, mo))
+    {
+	SEVL();
+	while (WFE() && LDXR8(loc, mo))
+	{
+	    DOZE();
+	}
+    }
+}
 
+static inline p64_clhnode_t *
+enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
+{
     //When called first time, we will not have a node yet so allocate one
     if (*nodep == NULL)
     {
 	*nodep = alloc_clhnode();
     }
-    assert((*nodep)->wait == 1);
+    (*nodep)->wait = WAIT;
 
     //Insert our node last in queue, get back previous last (tail) node
     p64_clhnode_t *prev = __atomic_exchange_n(&lock->tail,
 					      *nodep,
-					      __ATOMIC_ACQUIRE);
+					      __ATOMIC_ACQ_REL);
 
     //Save previous node in (what is still) "our" node for later use
     (*nodep)->prev = prev;
+    return prev;
+}
+
+void
+p64_clhlock_acquire(p64_clhlock_t *lock, p64_clhnode_t **nodep)
+{
+    p64_clhnode_t *prev = enqueue(lock, nodep);
 
     //Wait for previous thread to signal us (using their node)
-    if (__atomic_load_n(&prev->wait, __ATOMIC_ACQUIRE))
-    {
-	SEVL();
-	while (WFE() && LDXR32(&prev->wait, __ATOMIC_ACQUIRE))
-	{
-	    DOZE();
-	}
-    }
+    wait_for_prev(&prev->wait,__ATOMIC_ACQUIRE);
     //Now we own the previous node
-
-    //Ensure the next thread will wait for us
-    __atomic_store_n(&prev->wait, 1, __ATOMIC_RELAXED);
 }
 
 void
@@ -95,9 +106,9 @@ p64_clhlock_release(p64_clhnode_t **nodep)
     //old node
 #ifdef USE_DMB
     __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(&(*nodep)->wait, 0, __ATOMIC_RELAXED);
+    __atomic_store_n(&(*nodep)->wait, GO, __ATOMIC_RELAXED);
 #else
-    __atomic_store_n(&(*nodep)->wait, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&(*nodep)->wait, GO, __ATOMIC_RELEASE);
 #endif
     //Now when we have signaled the next thread, it will own "our" old node
 
