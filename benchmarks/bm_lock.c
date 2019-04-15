@@ -28,6 +28,7 @@
 #include "p64_tktlock.h"
 #include "p64_rwsync.h"
 #include "p64_semaphore.h"
+#include "p64_rwclhlock.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -69,6 +70,7 @@ sum_x(volatile union x_b *p)
 
 struct object
 {
+    p64_rwclhlock_t rwclh;//Size 8
     p64_tfrwlock_t tfrwl;//Size 8
     p64_clhlock_t clhl;//Size 8 (pointer)
     p64_pfrwlock_t pfrwl;//Size 10
@@ -92,21 +94,22 @@ static uint32_t NUMOBJS = 0;
 static struct object *OBJS;//Pointer to array of aligned locks
 static bool VERBOSE = false;
 static bool DOCHECKS = false;
-static enum { PLAIN, RW, TFRW, PFRW, CLH, TKT, SEM, RWSYNC } LOCKTYPE = -1;
+static enum { PLAIN, RW, TFRW, PFRW, CLH, RWCLH, TKT, SEM, RWSYNC } LOCKTYPE = -1;
 static const char *const type_name[] =
 {
     "plain spin",//mutex
-    "read/write",//sh/excl
+    "read/write (w-pref)",//sh/excl
     "task fair read/write",//sh/excl + FIFO
     "phase fair read/write",//sh/excl + FIFO
     "CLH",//mutex + FIFO
+    "RWCLH",//rw + FIFO
     "ticket",//mutex + FIFO
-    "semaphore",
-    "read/write synchroniser"
+    "semaphore",//sh/excl + FIFO
+    "read/write synchroniser"//sh/excl + FIFO
 };
 static const char *const abbr_name[] =
 {
-    "plain", "rw", "tfrw", "pfrw", "clh", "tkt", "sem", "rwsync"
+    "plain", "rw", "tfrw", "pfrw", "clh", "rwclh", "tkt", "sem", "rwsync"
 };
 static volatile bool QUIT = false;
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
@@ -181,6 +184,7 @@ static void
 thr_execute(uint32_t tidx)
 {
     p64_clhnode_t *clhnode = NULL;//For CLH lock
+    p64_rwclhnode_t *rwclhnode = NULL;//For RWCLH lock
     p64_rwsync_t rws = 0;
     uint16_t tkt;//For task fair RW lock and ticket lock
     uint32_t numfailrd_wr = 0;
@@ -215,6 +219,9 @@ restart:
 		    break;
 		case CLH :
 		    p64_clhlock_acquire(&obj->clhl, &clhnode);
+		    break;
+		case RWCLH :
+		    p64_rwclhlock_acquire_rd(&obj->rwclh, &rwclhnode);
 		    break;
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
@@ -264,6 +271,9 @@ restart:
 		case CLH :
 		    p64_clhlock_release(&clhnode);
 		    break;
+		case RWCLH :
+		    p64_rwclhlock_release_rd(&rwclhnode);
+		    break;
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
@@ -301,6 +311,9 @@ restart:
 		    break;
 		case CLH :
 		    p64_clhlock_acquire(&obj->clhl, &clhnode);
+		    break;
+		case RWCLH :
+		    p64_rwclhlock_acquire_wr(&obj->rwclh, &rwclhnode);
 		    break;
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
@@ -354,6 +367,9 @@ restart:
 		case CLH :
 		    p64_clhlock_release(&clhnode);
 		    break;
+		case RWCLH :
+		    p64_rwclhlock_release_wr(&rwclhnode);
+		    break;
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
@@ -374,6 +390,7 @@ restart:
     NUMMULTRD[tidx] = nummultrd;
     NUMOPSDONE[tidx] = lap;
     free(clhnode);
+    free(rwclhnode);
 }
 
 static void *
@@ -690,6 +707,7 @@ usage :
 	p64_tfrwlock_init(&OBJS[i].tfrwl);
 	p64_pfrwlock_init(&OBJS[i].pfrwl);
 	p64_clhlock_init(&OBJS[i].clhl);
+	p64_rwclhlock_init(&OBJS[i].rwclh);
 	p64_tktlock_init(&OBJS[i].tktl);
 	p64_rwsync_init(&OBJS[i].rws);
 	p64_sem_init(&OBJS[i].sem, NUMTHREADS);
@@ -718,6 +736,7 @@ usage :
     for (uint32_t i = 0; i < NUMOBJS; i++)
     {
 	p64_clhlock_fini(&OBJS[i].clhl);
+	p64_rwclhlock_fini(&OBJS[i].rwclh);
     }
     free(OBJS);
     return 0;

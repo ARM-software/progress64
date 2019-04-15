@@ -30,6 +30,7 @@ Functionality
 | ---- | ---- | :----: |
 | clhlock | CLH queue lock | mutex, queue, fcfs |
 | pfrwlock | phase fair reader/writer lock | rw, fcfs |
+| rwclhlock | reader/writer CLH queue lock | rw, queue, fcfs |
 | rwlock | reader/writer lock (writer preference) | rw |
 | rwlock\_r | recursive version of rwlock | rw |
 | rwsync | lightweight reader/writer synchronisation aka 'seqlock' (writer preference) | rw |
@@ -42,7 +43,7 @@ Functionality
 "mutex" - mutual exclusion, only one thread at a time can acquire lock.  
 "rw" - multiple threads may concurrently acquire lock in reader (shared) mode.  
 "queue" - each waiting thread spins on a separate location.  
-"fcfs" - first come, first served.  
+"fcfs" - first come, first served. FCFS locks can be considered fair.  
 
 Requirements
 ----
