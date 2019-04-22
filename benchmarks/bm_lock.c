@@ -524,7 +524,7 @@ benchmark(uint32_t numthreads, uint64_t affinity)
 		int l = read(fd, buf, sizeof buf);
 		if (l > 0)
 		{
-		    cpufreq[thr] = atol(buf);
+		    cpufreq[thr] = atol(buf) / 1000;//Convert to MHz
 		}
 		close(fd);
 	    }
@@ -532,12 +532,12 @@ benchmark(uint32_t numthreads, uint64_t affinity)
 	CPUFREQ = 0;
 	for (uint32_t thr = 0; thr < NUMTHREADS; thr++)
 	{
-	    //printf("Thread %u current CPU frequency %lukHz\n", thr, cpufreq[thr]);
+	    //printf("Thread %u current CPU frequency %luMHz\n", thr, cpufreq[thr]);
 	    CPUFREQ += cpufreq[thr] / NUMTHREADS;
 	}
 	if (CPUFREQ != 0)
 	{
-	    printf("Average CPU frequency %lukHz\n", CPUFREQ);
+	    printf("Average CPU frequency %luMHz\n", CPUFREQ);
 	}
     }
 
@@ -583,7 +583,13 @@ benchmark(uint32_t numthreads, uint64_t affinity)
     }
     if (totalops != 0)//Explicit check against 0 to silence scan-build
     {
-	printf(", %"PRIu32" nanoseconds/lock op\n", (uint32_t)(elapsed_ns / totalops));
+	uint32_t ns_per_op = elapsed_ns / totalops;
+	printf(", %"PRIu32" nanoseconds/lock op", ns_per_op);
+	if (CPUFREQ != 0)
+	{
+	    printf(", %"PRIu32" cycles/lock op", (uint32_t)(ns_per_op * CPUFREQ / 1000));
+	}
+	printf("\n");
     }
 }
 
@@ -592,7 +598,7 @@ main(int argc, char *argv[])
 {
     int c;
 
-    while ((c = getopt(argc, argv, "a:cl:o:t:v")) != -1)
+    while ((c = getopt(argc, argv, "a:cf:l:o:t:v")) != -1)
     {
 	switch (c)
 	{
@@ -608,6 +614,9 @@ main(int argc, char *argv[])
 		break;
 	    case 'c' :
 		DOCHECKS = true;
+		break;
+	    case 'f' :
+		CPUFREQ = atoi(optarg);
 		break;
 	    case 'l' :
 		{
@@ -649,6 +658,7 @@ main(int argc, char *argv[])
 usage :
 		fprintf(stderr, "Usage: scheduler [<options>] <locktype>\n"
 			"-a <binmask>     CPU affinity mask (default base 2)\n"
+			"-f <megahz>      CPU frequency in MHz\n"
 			"-c               Perform lock checks\n"
 			"-l <numlaps>     Number of laps\n"
 			"-o <numobjs>     Number of objects (locks)\n"
