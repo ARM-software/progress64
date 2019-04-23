@@ -5,6 +5,10 @@
 #ifndef _OS_ABSTRACTION_H
 #define _OS_ABSTRACTION_H
 
+#if defined __APPLE__ || defined __linux__
+	#define _GNU_SOURCE
+#endif
+
 #include <stddef.h>
 #include <stdint.h>
 
