@@ -33,6 +33,7 @@ wait_until_equal16(uint16_t *loc, uint16_t val)
 void
 p64_tktlock_acquire(p64_tktlock_t *lock, uint16_t *tkt)
 {
+    PREFETCH_ATOMIC(lock);
     //Get a ticket
     *tkt = __atomic_fetch_add(&lock->enter, 1, __ATOMIC_RELAXED);
     //Wait for any previous lockers to go away

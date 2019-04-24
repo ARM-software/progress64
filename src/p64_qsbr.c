@@ -329,6 +329,7 @@ p64_qsbr_retire(void *ptr,
     //Create a new interval
     //Release order to ensure removal is observable before new interval is
     //created and can be observed
+    PREFETCH_ATOMIC(&TS->qsbr->current);
     uint64_t previous = __atomic_fetch_add(&TS->qsbr->current,
 					   1,
 					   __ATOMIC_RELEASE);

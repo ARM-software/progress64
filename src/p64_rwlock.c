@@ -64,6 +64,7 @@ p64_rwlock_release_rd(p64_rwlock_t *lock)
     p64_rwlock_t prevl;
     smp_fence(LoadStore);//Load-only barrier due to reader-lock
     //Decrement number of readers
+    PREFETCH_ATOMIC(lock);
     prevl = __atomic_fetch_sub(lock, 1, __ATOMIC_RELAXED);
     //Check after lock is released but use pre-release lock value
     //if (UNLIKELY((prevl & RWLOCK_WRITER) != 0 || prevl == 0))

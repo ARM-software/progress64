@@ -23,6 +23,24 @@
 #define USE_DMB
 #endif
 
+#ifdef __aarch64__
+//Use PREFETCH_ATOMIC() before __atomic calls when not generating ARMv8.1 LSE
+//instructions (i.e. __atomic calls implemented using exclusives)
+#ifndef __ARM_FEATURE_ATOMICS
+#define PREFETCH_ATOMIC(p) __builtin_prefetch((p), 1, 3);
+#endif
+//Use PREFETCH_LDXSTX() before explicit exclusives (ldx/stx) usage
+#define PREFETCH_LDXSTX(p) __builtin_prefetch((p), 1, 3);
+#endif
+
+//Default null definitions
+#ifndef PREFETCH_ATOMIC
+#define PREFETCH_ATOMIC(p) (void)(p)
+#endif
+#ifndef PREFETCH_LDXSTX
+#define PREFETCH_LDXSTX(p) (void)(p)
+#endif
+
 #define CACHE_LINE 64
 #define MAXTHREADS 128
 #define MAXHPREFS 3

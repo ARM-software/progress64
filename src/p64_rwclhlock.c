@@ -70,17 +70,19 @@ wait_for_go(uint8_t *loc, uint32_t lvl)
 static inline p64_rwclhnode_t *
 enqueue(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep, bool reader)
 {
+    p64_rwclhnode_t *node = *nodep;
     //When called first time, we will not have a node yet so allocate one
-    if (*nodep == NULL)
+    if (node == NULL)
     {
-	*nodep = alloc_rwclhnode();
+	*nodep = node = alloc_rwclhnode();
     }
-    (*nodep)->reader = reader;
-    (*nodep)->ready = WAIT;
+    node->reader = reader;
+    node->ready = WAIT;
 
     //Insert our node last in queue, get back previous last (tail) node
+    PREFETCH_ATOMIC(lock);
     p64_rwclhnode_t *prev = __atomic_exchange_n(&lock->tail,
-						*nodep,
+						node,
 						__ATOMIC_ACQ_REL);
 
     //Save previous node in (what is still) "our" node for later use

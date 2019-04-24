@@ -63,7 +63,10 @@ static inline uint64_t
 atomic_incr_enter_or_pend(uint64_t *loc)
 {
     uint64_t old, neu;
-#ifndef USE_LDXSTX
+#ifdef USE_LDXSTX
+    PREFETCH_LDXSTX(loc);
+#else
+    PREFETCH_ATOMIC(loc);
     old = __atomic_load_n(loc, __ATOMIC_RELAXED);
 #endif
     do
@@ -111,6 +114,7 @@ p64_pfrwlock_acquire_rd(p64_pfrwlock_t *lock)
 void
 p64_pfrwlock_release_rd(p64_pfrwlock_t *lock)
 {
+    PREFETCH_ATOMIC(lock);
     //Increment 'leave_rd' to record reader leaves
     (void)__atomic_fetch_add(&lock->leave_rd, 1, __ATOMIC_RELEASE);
 }
@@ -118,6 +122,7 @@ p64_pfrwlock_release_rd(p64_pfrwlock_t *lock)
 void
 p64_pfrwlock_acquire_wr(p64_pfrwlock_t *lock)
 {
+    PREFETCH_ATOMIC(lock);
     //Increment 'enter_wr' to acquire a writer ticket
     uint64_t old = __atomic_fetch_add(&lock->word,
 				      ENTER_WR_ONE, __ATOMIC_RELAXED);
@@ -134,7 +139,10 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
 {
     uint64_t *loc = (uint64_t *)lock;
     uint64_t old, neu;
-#ifndef USE_LDXSTX
+#ifdef USE_LDXSTX
+    PREFETCH_LDXSTX(loc);
+#else
+    PREFETCH_ATOMIC(loc);
     old = __atomic_load_n(loc, __ATOMIC_RELAXED);
 #endif
     do

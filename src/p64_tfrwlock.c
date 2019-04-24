@@ -57,6 +57,7 @@ wait_until_equal32(uint32_t *loc, uint32_t val)
 void
 p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
 {
+    PREFETCH_ATOMIC(lock);
     //Increment lock->enter.rd to record reader enters
     uint32_t old_enter = __atomic_fetch_add(&lock->enter.rdwr, RD_ONE,
 					    __ATOMIC_RELAXED);
@@ -67,6 +68,7 @@ p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
 void
 p64_tfrwlock_release_rd(p64_tfrwlock_t *lock)
 {
+    PREFETCH_ATOMIC(lock);
     //Increment lock->leave.rd to record reader leaves
     (void)__atomic_fetch_add(&lock->leave.rd, 1, __ATOMIC_RELEASE);
 }
@@ -81,7 +83,10 @@ static inline uint32_t
 atomic_add_w_mask(uint32_t *loc, uint32_t val, uint32_t mask)
 {
     uint32_t old, neu;
-#ifndef USE_LDXSTX
+#ifdef USE_LDXSTX
+    PREFETCH_LDXSTX(loc);
+#else
+    PREFETCH_ATOMIC(loc);
     old = __atomic_load_n(loc, __ATOMIC_RELAXED);
 #endif
     do

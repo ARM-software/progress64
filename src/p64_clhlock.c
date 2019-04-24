@@ -69,20 +69,22 @@ wait_for_prev(uint8_t *loc, int mo)
 static inline p64_clhnode_t *
 enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
 {
+    p64_clhnode_t *node = *nodep;
     //When called first time, we will not have a node yet so allocate one
-    if (*nodep == NULL)
+    if (node == NULL)
     {
-	*nodep = alloc_clhnode();
+	*nodep = node = alloc_clhnode();
     }
-    (*nodep)->wait = WAIT;
+    node->wait = WAIT;
 
     //Insert our node last in queue, get back previous last (tail) node
+    PREFETCH_ATOMIC(lock);
     p64_clhnode_t *prev = __atomic_exchange_n(&lock->tail,
-					      *nodep,
+					      node,
 					      __ATOMIC_ACQ_REL);
 
     //Save previous node in (what is still) "our" node for later use
-    (*nodep)->prev = prev;
+    node->prev = prev;
     return prev;
 }
 
