@@ -28,7 +28,7 @@ struct p64_reorder
     //Written by p64_reorder_release()
     struct hi hi ALIGNED(CACHE_LINE);//head and chgi
     //Constants
-    uint32_t mask;
+    uint32_t mask ALIGNED(CACHE_LINE);
     bool user_acquire;
     p64_reorder_cb cb;
     void *arg;
@@ -91,7 +91,7 @@ p64_reorder_acquire(p64_reorder_t *rob,
 {
     uint32_t head, tail;
     int32_t actual;
-    PREFETCH_FOR_WRITE(&rob->tail);
+    PREFETCH_ATOMIC(&rob->tail);
     tail = __atomic_load_n(&rob->tail, __ATOMIC_RELAXED);
     do
     {

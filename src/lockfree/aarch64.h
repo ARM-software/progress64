@@ -76,6 +76,7 @@ static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128
     int stx_mo = MO_STORE(mo_success);
     register __int128 old, expected = *exp;
     __asm __volatile("" ::: "memory");
+    PREFETCH_LDXSTX(var);
     do
     {
 	//Atomicity of LDX16 is not guaranteed
@@ -105,6 +106,7 @@ static inline bool lockfree_compare_exchange_16_frail(register __int128 *var, __
     int stx_mo = MO_STORE(mo_success);
     register __int128 expected = *exp;
     __asm __volatile("" ::: "memory");
+    PREFETCH_LDXSTX(var);
     //Atomicity of LDX16 is not guaranteed
     register __int128 old = ldx128(var, ldx_mo);
     if (LIKELY(old == expected && !stx128(var, neu, stx_mo)))
@@ -145,6 +147,7 @@ static inline void lockfree_store_16(__int128 *var, __int128 neu, int mo)
 #else
     int ldx_mo = __ATOMIC_ACQUIRE;
     int stx_mo = MO_STORE(mo);
+    PREFETCH_LDXSTX(var);
     do
     {
 	(void)ldx128(var, ldx_mo);
@@ -169,6 +172,7 @@ static inline __int128 lockfree_exchange_16(__int128 *var, __int128 neu, int mo)
     int ldx_mo = MO_LOAD(mo);
     int stx_mo = MO_STORE(mo);
     register __int128 old;
+    PREFETCH_LDXSTX(var);
     do
     {
 	old = ldx128(var, ldx_mo);
@@ -194,6 +198,7 @@ static inline __int128 lockfree_fetch_and_16(__int128 *var, __int128 mask, int m
     int ldx_mo = MO_LOAD(mo);
     int stx_mo = MO_STORE(mo);
     register __int128 old;
+    PREFETCH_LDXSTX(var);
     do
     {
 	old = ldx128(var, ldx_mo);
@@ -219,6 +224,7 @@ static inline __int128 lockfree_fetch_or_16(__int128 *var, __int128 mask, int mo
     int ldx_mo = MO_LOAD(mo);
     int stx_mo = MO_STORE(mo);
     register __int128 old;
+    PREFETCH_LDXSTX(var);
     do
     {
 	old = ldx128(var, ldx_mo);
@@ -268,6 +274,7 @@ lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo)
 	abort();
     }
 #else
+    PREFETCH_LDXSTX(var);
     do
     {
 	old = ldx32(var, MO_LOAD(mo));
@@ -322,6 +329,7 @@ lockfree_fetch_umax_8(uint64_t *var, uint64_t val, int mo)
 	abort();
     }
 #else
+    PREFETCH_LDXSTX(var);
     do
     {
 	old = ldx64(var, MO_LOAD(mo));
