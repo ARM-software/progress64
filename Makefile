@@ -51,7 +51,6 @@ CCFLAGS += -fsanitize=address -fsanitize=undefined
 LDFLAGS += -fsanitize=address -fsanitize=undefined
 LDFLAGS += -static-libasan -static-libubsan
 endif
-DEFINE += -D_GNU_SOURCE
 CCFLAGS += -std=c99
 #CCFLAGS += -march=armv8.1-a
 CCFLAGS += -g -ggdb -Wall

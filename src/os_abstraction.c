@@ -5,6 +5,9 @@
 #ifdef _WIN32
 #include <processthreadsapi.h>
 #elif defined __APPLE__ || defined __linux__
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <sys/syscall.h>
 #include <unistd.h>
 #endif

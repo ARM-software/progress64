@@ -31,6 +31,7 @@
 #define TS hp_TS
 #define alloc_ts hp_alloc_ts
 #define garbage_collect hp_garbage_collect
+#define userptr_t hp_userptr_t
 
 static inline uint32_t
 bitmask(uint32_t n)
