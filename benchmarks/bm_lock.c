@@ -102,7 +102,7 @@ static const char *const type_name[] =
     "task fair read/write",//sh/excl + FIFO
     "phase fair read/write",//sh/excl + FIFO
     "CLH",//mutex + FIFO
-    "RWCLH",//rw + FIFO
+    "RWCLH",//rw + FIFO + optional sleep
     "ticket",//mutex + FIFO
     "semaphore",//sh/excl + FIFO
     "read/write synchroniser"//sh/excl + FIFO
@@ -717,7 +717,7 @@ usage :
 	p64_tfrwlock_init(&OBJS[i].tfrwl);
 	p64_pfrwlock_init(&OBJS[i].pfrwl);
 	p64_clhlock_init(&OBJS[i].clhl);
-	p64_rwclhlock_init(&OBJS[i].rwclh);
+	p64_rwclhlock_init(&OBJS[i].rwclh, P64_RWCLHLOCK_SPIN_FOREVER);
 	p64_tktlock_init(&OBJS[i].tktl);
 	p64_rwsync_init(&OBJS[i].rws);
 	p64_sem_init(&OBJS[i].sem, NUMTHREADS);

@@ -8,7 +8,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 
 Functionality
 ----
-### Not Locks
+### Higher Level Functionality
 | Name | Description | Properties |
 | ---- | ---- | :----: |
 | antireplay | replay protection | lock-free/wait-free
@@ -28,9 +28,9 @@ Functionality
 ----
 | Name | Description | Properties |
 | ---- | ---- | :----: |
-| clhlock | CLH queue lock | mutex, queue, fcfs |
+| clhlock | CLH queue lock | mutex, fcfs, queue |
 | pfrwlock | phase fair reader/writer lock | rw, fcfs |
-| rwclhlock | reader/writer CLH queue lock | rw, queue, fcfs |
+| rwclhlock | reader/writer CLH queue lock | rw, fcfs, queue, sleep |
 | rwlock | reader/writer lock (writer preference) | rw |
 | rwlock\_r | recursive version of rwlock | rw |
 | rwsync | lightweight reader/writer synchronisation aka 'seqlock' (writer preference) | rw |
@@ -42,8 +42,9 @@ Functionality
 
 "mutex" - mutual exclusion, only one thread at a time can acquire lock.  
 "rw" - multiple threads may concurrently acquire lock in reader (shared) mode.  
-"queue" - each waiting thread spins on a separate location.  
 "fcfs" - first come, first served. FCFS locks can be considered fair.  
+"queue" - each waiting thread spins on a separate location. Queue locks generally scale better with high lock contention.  
+"sleep" - waiting thread will sleep after spinning has timed out.
 
 Requirements
 ----

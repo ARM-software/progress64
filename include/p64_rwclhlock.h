@@ -17,10 +17,16 @@ typedef struct p64_rwclhnode p64_rwclhnode_t;
 typedef struct
 {
     p64_rwclhnode_t *tail;
+    uint32_t spin_tmo;
 } p64_rwclhlock_t;
 
+#define P64_RWCLHLOCK_SPIN_FOREVER (~(uint32_t)0)
+
 //Initialise a reader/writer CLH lock
-void p64_rwclhlock_init(p64_rwclhlock_t *lock);
+//Specify spin timeout (in nanoseconds), after spinning for this amount of time,
+//the thread will sleep (yield to the OS) until woken up
+//Note that actual resolution is platform specific
+void p64_rwclhlock_init(p64_rwclhlock_t *lock, uint32_t spin_tmo_ns);
 
 //Finish a reader/writer CLH lock
 void p64_rwclhlock_fini(p64_rwclhlock_t *lock);
