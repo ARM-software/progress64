@@ -561,7 +561,7 @@ main(int argc, char *argv[])
 		break;
 	    default :
 usage :
-		fprintf(stderr, "Usage: scheduler <options>\n"
+		fprintf(stderr, "Usage: bm_smr <options>\n"
 			"-a <binmask>     CPU affinity mask (default base 2)\n"
 			"-f <cpufreq>     CPU frequency in kHz\n"
 			"-l <numlaps>     Number of laps\n"

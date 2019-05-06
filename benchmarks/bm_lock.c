@@ -659,7 +659,7 @@ main(int argc, char *argv[])
 		break;
 	    default :
 usage :
-		fprintf(stderr, "Usage: scheduler [<options>] <locktype>\n"
+		fprintf(stderr, "Usage: bm_lock [<options>] <locktype>\n"
 			"-a <binmask>     CPU affinity mask (default base 2)\n"
 			"-f <megahz>      CPU frequency in MHz\n"
 			"-c               Perform lock checks\n"
