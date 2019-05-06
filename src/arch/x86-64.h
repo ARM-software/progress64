@@ -8,7 +8,22 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-static inline void doze(void)
+static inline uint64_t
+counter_freq(void)
+{
+    return 3000000000;//FIXME
+}
+
+static inline uint64_t
+counter_read(void)
+{
+    uint32_t lo, hi;
+    __asm__ volatile("rdtsc" : "=a" (lo), "=d" (hi));
+    return (uint64_t)hi << 32 | lo;
+}
+
+static inline void
+doze(void)
 {
     __asm__ volatile("rep; nop" : : : );
 }

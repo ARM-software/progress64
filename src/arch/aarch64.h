@@ -8,18 +8,37 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-static inline void sevl(void)
+static inline uint64_t
+counter_freq(void)
+{
+    uint64_t freq;
+    __asm__ volatile("mrs %0,cntfrq_el0" : "=r" (freq));
+    return freq;
+}
+
+static inline uint64_t
+counter_read(void)
+{
+    uint64_t cnt;
+    __asm__ volatile("mrs %0,cntvct_el0" : "=r" (cnt));
+    return cnt;
+}
+
+static inline void
+sevl(void)
 {
     __asm__ volatile("sevl" : : : );
 }
 
-static inline int wfe(void)
+static inline int
+wfe(void)
 {
     __asm__ volatile("wfe" : : : "memory");
     return 1;
 }
 
-static inline void doze(void)
+static inline void
+doze(void)
 {
     __asm__ volatile("isb" : : : );//isb better than nop
 }
