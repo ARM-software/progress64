@@ -15,9 +15,9 @@
 #include "build_config.h"
 #include "os_abstraction.h"
 
-#define HAS_MARK(ptr)          ((uintptr_t)(ptr) & 1)
-#define SET_MARK(ptr) ((void *)((uintptr_t)(ptr) | 1))
-#define CLR_MARK(ptr) ((void *)((uintptr_t)(ptr) & ~(uintptr_t)1))
+#define HAS_QSBR(ptr)          ((uintptr_t)(ptr) & 1)
+#define SET_QSBR(ptr) ((void *)((uintptr_t)(ptr) | 1))
+#define CLR_QSBR(ptr) ((void *)((uintptr_t)(ptr) & ~(uintptr_t)1))
 
 #include "arch.h"
 #include "lockfree.h"
@@ -78,7 +78,7 @@ p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 	void *qsbr = p64_qsbr_alloc(maxobjs);
 	if (qsbr != NULL)
 	{
-	    return SET_MARK(qsbr);
+	    return SET_QSBR(qsbr);
 	}
 	return NULL;
     }
@@ -109,9 +109,9 @@ p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 void
 p64_hazptr_free(p64_hpdomain_t *hpd)
 {
-    if (HAS_MARK(hpd))
+    if (HAS_QSBR(hpd))
     {
-	p64_qsbr_free(CLR_MARK(hpd));
+	p64_qsbr_free(CLR_QSBR(hpd));
 	return;
     }
     uint32_t nrefs_rounded = roundup(hpd->nrefs);
@@ -208,7 +208,7 @@ p64_hazptr_reactivate(void)
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
 	p64_qsbr_reactivate();
 	return;
@@ -221,10 +221,10 @@ p64_hazptr_register(p64_hpdomain_t *hpd)
 {
     if (UNLIKELY(TS == NULL))
     {
-	if (HAS_MARK(hpd))
+	if (HAS_QSBR(hpd))
 	{
-	    p64_qsbr_register(CLR_MARK(hpd));
-	    TS = SET_MARK(NULL);
+	    p64_qsbr_register(CLR_QSBR(hpd));
+	    TS = SET_QSBR(NULL);
 	    return;
 	}
 	TS = alloc_ts(hpd);
@@ -239,7 +239,7 @@ p64_hazptr_deactivate(void)
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
 	p64_qsbr_deactivate();
 	return;
@@ -260,7 +260,7 @@ p64_hazptr_unregister(void)
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
 	p64_qsbr_unregister();
 	TS = NULL;
@@ -333,7 +333,7 @@ p64_hazptr_annotate(p64_hazardptr_t hp,
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
 	return;
     }
@@ -358,7 +358,7 @@ p64_hazptr_dump(FILE *fp)
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
 	return 0;
     }
@@ -393,7 +393,7 @@ p64_hazptr_acquire(void **pptr,
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
 	//Allocate hazard pointer if necessary
 	if (*hp == P64_HAZARDPTR_NULL)
@@ -461,11 +461,11 @@ p64_hazptr_release(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
-	if (HAS_MARK(TS))
+	if (HAS_QSBR(TS))
 	{
 	    uint32_t idx = _hp - *hp;
 	    _free_hp |= 1U << idx;
-	    if (_free_hp == ~0)
+	    if (_free_hp == ~0U)
 	    {
 		p64_qsbr_quiescent();
 	    }
@@ -486,11 +486,11 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
-	if (HAS_MARK(TS))
+	if (HAS_QSBR(TS))
 	{
 	    uint32_t idx = _hp - *hp;
 	    _free_hp |= 1U << idx;
-	    if (_free_hp == ~0)
+	    if (_free_hp == ~0U)
 	    {
 		p64_qsbr_quiescent();
 	    }
@@ -645,7 +645,7 @@ p64_hazptr_retire(void *ptr,
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
 	return p64_qsbr_retire(ptr, cb);
     }
@@ -671,9 +671,9 @@ p64_hazptr_reclaim(void)
     {
 	eprintf_not_registered();
     }
-    if (HAS_MARK(TS))
+    if (HAS_QSBR(TS))
     {
-	if (_free_hp == ~0)
+	if (_free_hp == ~0U)
 	{
 	    p64_qsbr_quiescent();
 	}

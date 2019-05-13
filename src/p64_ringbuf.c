@@ -388,6 +388,7 @@ release_slots_nblk(struct headtail *rb,
 #ifdef USE_CACHED_LIMES
 	    ringidx_t limes = old.cur + 1 + LIMES(old.pend, mask);
 	    assert(limes <= __atomic_load_n(limit, __ATOMIC_RELAXED));
+	    (void)limit;
 #else
 	    ringidx_t limes = __atomic_load_n(limit, __ATOMIC_RELAXED);
 #endif

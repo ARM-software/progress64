@@ -15,8 +15,8 @@
 #include "arch.h"
 #include "os_abstraction.h"
 
-#define GO 0
-#define WAIT 1
+#define CLH_GO 0
+#define CLH_WAIT 1
 
 struct p64_clhnode
 {
@@ -34,7 +34,7 @@ alloc_clhnode(void)
 	exit(EXIT_FAILURE);
     }
     node->prev = NULL;
-    node->wait = WAIT;
+    node->wait = CLH_WAIT;
     return node;
 }
 
@@ -43,7 +43,7 @@ p64_clhlock_init(p64_clhlock_t *lock)
 {
     lock->tail = alloc_clhnode();
     lock->tail->prev = NULL;
-    lock->tail->wait = GO;
+    lock->tail->wait = CLH_GO;
 }
 
 void
@@ -75,7 +75,7 @@ enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
     {
 	*nodep = node = alloc_clhnode();
     }
-    node->wait = WAIT;
+    node->wait = CLH_WAIT;
 
     //Insert our node last in queue, get back previous last (tail) node
     PREFETCH_ATOMIC(lock);
@@ -108,9 +108,9 @@ p64_clhlock_release(p64_clhnode_t **nodep)
     //old node
 #ifdef USE_DMB
     __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(&(*nodep)->wait, GO, __ATOMIC_RELAXED);
+    __atomic_store_n(&(*nodep)->wait, CLH_GO, __ATOMIC_RELAXED);
 #else
-    __atomic_store_n(&(*nodep)->wait, GO, __ATOMIC_RELEASE);
+    __atomic_store_n(&(*nodep)->wait, CLH_GO, __ATOMIC_RELEASE);
 #endif
     //Now when we have signaled the next thread, it will own "our" old node
 

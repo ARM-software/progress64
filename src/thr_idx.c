@@ -63,7 +63,7 @@ destructor(void *ptr)
 		       __ATOMIC_RELEASE);
 }
 
-void
+static void
 very_first_time(void)
 {
     if ((errno = pthread_key_create(&key, destructor)) != 0)
