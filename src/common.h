@@ -15,6 +15,8 @@
 #define INIT_FUNCTION __attribute__((constructor))
 #define LIKELY(x)    __builtin_expect(!!(x), 1)
 #define UNLIKELY(x)  __builtin_expect(!!(x), 0)
+#define COMPILER_MEMORY_FENCE() __asm __volatile("" ::: "memory")
+#define UNREACHABLE() __builtin_unreachable()
 
 #ifdef NDEBUG
 #if defined __GNUC__ && __GNUC__ >= 8
@@ -27,8 +29,8 @@
 #endif
 
 //Hardware hints
-#define PREFETCH_FOR_READ(ptr) __builtin_prefetch((ptr), 0, 0)
-#define PREFETCH_FOR_WRITE(ptr) __builtin_prefetch((ptr), 1, 0)
+#define PREFETCH_FOR_READ(ptr) __builtin_prefetch((ptr), 0, 3)
+#define PREFETCH_FOR_WRITE(ptr) __builtin_prefetch((ptr), 1, 3)
 
 #define ALIGNED(x) __attribute__((__aligned__(x)))
 
