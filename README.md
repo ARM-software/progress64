@@ -20,6 +20,7 @@ Functionality
 | reassemble | IP reassembly | lock-free, resizeable
 | reorder | 'strict' reorder buffer | lock-less
 | ringbuf | classic ring buffer, support for user-defined element type | blocking & lock-less, lock-free dequeue
+| stack | Treiber stack with configurable ABA workaround (lock/tag/smr/llsc) | blocking & lock-free
 | timer | timers | lock-free
 
 "Lock-less" means that individual operations will not block (wait for other threads) but the whole data structure is not lock-free in the academic sense (e.g. linearizable, kill-tolerant). Example, an acquired slot in a reorder buffer must eventually be released or later released slots will not be retired and the reorder buffer will fill up. Acquire and release operations never block (so non-blocking in some limited sense) but the reorder buffer as a whole is neither lock-free nor obstruction-free.
@@ -65,14 +66,16 @@ Restrictions
 
 Notes
 ----
-The hazard pointer implementation is non-blocking (wait-free) when a thread has space for more retired objects than the total number of hazard pointers (for all threads).
-The hazard pointer API will actually use the QSBR implementation when 'nrefs' (number of hazard pointers per thread) is set to 0 when the hazard pointer domain is allocated.
-The resizeable reassembly function is experimental and have not yet endured a stress test.
+* The hazard pointer implementation is non-blocking (wait-free) when a thread has space for more retired objects than the total number of hazard pointers (for all threads).
+* The hazard pointer API will actually use the QSBR implementation when 'nrefs' (number of hazard pointers per thread) is set to 0 when the hazard pointer domain is allocated.
+* The resizeable reassembly function is experimental and has not yet endured a stress test.
+* The Treiber stack is experimental. The major purpose of the Treiber stack is to demonstrate different types of ABA workarounds.
+* When using Safe Memory Reclamation for ABA workaround with the Treiber stack, LIFO order is not guaranteed (so not really a stack...)
 
 TODO
 ----
 * Some missing examples
-* Multithreaded test programs for e.g. hash table, reassembly, reorder
+* Multithreaded stress test programs for e.g. hash table, reassembly, reorder
 
 License
 ----
