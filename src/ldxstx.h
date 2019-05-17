@@ -28,7 +28,7 @@ static inline uint8_t ldx8(const uint8_t *var, int mm)
     __asm volatile("ldxrb %w0, [%1]"
                    : "=&r" (old)
                    : "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return old;
@@ -46,7 +46,7 @@ static inline uint16_t ldx16(const uint16_t *var, int mm)
     __asm volatile("ldxrh %w0, [%1]"
                    : "=&r" (old)
                    : "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return old;
@@ -64,7 +64,7 @@ static inline uint32_t ldx32(const uint32_t *var, int mm)
     __asm volatile("ldxr %w0, [%1]"
                    : "=&r" (old)
                    : "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return old;
@@ -83,7 +83,7 @@ static inline uint32_t stx32(uint32_t *var, uint32_t neu, int mm)
     __asm volatile("stxr %w0, %w1, [%2]"
                    : "=&r" (ret)
                    : "r" (neu), "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return ret;
@@ -101,7 +101,7 @@ static inline uint64_t ldx64(const uint64_t *var, int mm)
     __asm volatile("ldxr %0, [%1]"
                    : "=&r" (old)
                    : "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return old;
@@ -120,7 +120,7 @@ static inline uint32_t stx64(uint64_t *var, uint64_t neu, int mm)
     __asm volatile("stxr %w0, %1, [%2]"
                    : "=&r" (ret)
                    : "r" (neu), "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return ret;
@@ -138,7 +138,7 @@ static inline __int128 ldx128(const __int128 *var, int mm)
     __asm volatile("ldxp %0, %H0, [%1]"
                    : "=&r" (old)
                    : "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return old;
@@ -157,7 +157,7 @@ static inline uint32_t stx128(__int128 *var, __int128 neu, int mm)
     __asm volatile("stxp %w0, %1, %H1, [%2]"
                    : "=&r" (ret)
                    : "r" (neu), "r" (var)
-                   : );
+                   : "memory");
     else
 	abort();
     return ret;
