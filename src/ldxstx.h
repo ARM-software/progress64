@@ -163,4 +163,7 @@ static inline uint32_t stx128(__int128 *var, __int128 neu, int mm)
     return ret;
 }
 
+#define ldxptr(loc, mm) (void *)ldx64((uint64_t *)(loc), (mm));
+#define stxptr(loc, val, mm) stx64((uint64_t *)(loc), (uintptr_t)(val), (mm))
+
 #endif

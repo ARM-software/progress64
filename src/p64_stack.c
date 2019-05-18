@@ -121,17 +121,15 @@ enqueue_smr(p64_stack_t *stk, p64_stack_elem_t *elem)
 static void
 enqueue_llsc(p64_stack_t *stk, p64_stack_elem_t *elem)
 {
-    uint64_t *loc = (uint64_t *)&stk->head;
     p64_stack_elem_t *old, *head;
     do
     {
 	head = __atomic_load_n(&stk->head, __ATOMIC_RELAXED);
 	//Perform write outside of exclusives section
 	elem->next = head;
-	old = (p64_stack_elem_t *)ldx64(loc, __ATOMIC_RELAXED);
+	old = ldxptr(&stk->head, __ATOMIC_RELAXED);
     }
-    while (LIKELY(old == head) &&
-	   UNLIKELY(stx64(loc, (uintptr_t)elem, __ATOMIC_RELEASE)));
+    while (UNLIKELY(old != head || stxptr(&stk->head, elem, __ATOMIC_RELEASE)));
 }
 #endif
 
@@ -242,11 +240,10 @@ dequeue_smr(p64_stack_t *stk)
 static p64_stack_elem_t *
 dequeue_llsc(p64_stack_t *stk)
 {
-    uint64_t *loc = (uint64_t *)&stk->head;
     p64_stack_elem_t *old, *neu;
     do
     {
-	old = (void *)ldx64(loc, __ATOMIC_ACQUIRE);
+	old = ldxptr(&stk->head, __ATOMIC_ACQUIRE);
 	if (old == NULL)
 	{
 	    return NULL;
@@ -254,7 +251,7 @@ dequeue_llsc(p64_stack_t *stk)
 	//Load in exclusives section is not kosher on Arm
 	neu = old->next;
     }
-    while (UNLIKELY(stx64(loc, (uintptr_t)neu, __ATOMIC_RELAXED)));
+    while (UNLIKELY(stxptr(&stk->head, neu, __ATOMIC_RELAXED)));
     return old;
 }
 #endif
