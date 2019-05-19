@@ -24,6 +24,8 @@
 
 #include "p64_ringbuf.h"
 #include "p64_lfring.h"
+#include "p64_stack.h"
+#include "p64_hazardptr.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -42,6 +44,7 @@
 
 struct element_s
 {
+    p64_stack_elem_t *elem;
     uint32_t lap;
     uint32_t number;
 };
@@ -58,6 +61,7 @@ static pthread_t tid[MAXTHREADS];
 static uint32_t NUMTHREADS = 0;
 static uint32_t MAXNUMTHREADS = 4;
 static uint32_t NUMRINGBUFS = 1;
+static p64_hpdomain_t *HPD = NULL;
 static int cpus[MAXTHREADS];
 static uint32_t FAILENQ[MAXTHREADS];
 static uint32_t FAILDEQ[MAXTHREADS];
@@ -76,6 +80,25 @@ static sem_t ALL_DONE;
 static struct timespec END_TIME;
 static bool VERBOSE = false;
 static bool LFRING = false;
+static bool STACK = false;
+
+static p64_stack_t *
+stack_alloc(uint32_t aba)
+{
+     p64_stack_t *stk = aligned_alloc(CACHE_LINE, sizeof(p64_stack_t));
+     if (stk == NULL)
+     {
+	 perror("malloc"), abort();
+     }
+     p64_stack_init(stk, aba);
+     return stk;
+}
+
+static void
+stack_free(p64_stack_t *stk)
+{
+    free(stk);
+}
 
 //Wait for my signal to begin
 static void barrier_thr_begin(uint32_t idx)
@@ -128,6 +151,11 @@ enqueue(void *rb, void *elem)
     {
 	return p64_lfring_enqueue(rb, &elem, 1) == 1;
     }
+    else if (STACK)
+    {
+	p64_stack_enqueue((p64_stack_t *)rb, elem);
+	return true;
+    }
     else
     {
 	return p64_ringbuf_enqueue(rb, &elem, 1) == 1;
@@ -145,6 +173,11 @@ dequeue(void *rb)
 	{
 	    return elem;
 	}
+    }
+    else if (STACK)
+    {
+	elem = p64_stack_dequeue((p64_stack_t *)rb);
+	return elem;
     }
     else
     {
@@ -246,6 +279,10 @@ done:
 static void *entrypoint(void *arg)
 {
     unsigned tidx = (uintptr_t)arg;
+    if (HPD != NULL)
+    {
+	p64_hazptr_register(HPD);
+    }
 
     for (;;)
     {
@@ -256,6 +293,10 @@ static void *entrypoint(void *arg)
 
 	//Signal I am done
 	barrier_thr_done(tidx);
+    }
+    if (HPD != NULL)
+    {
+	p64_hazptr_unregister();
     }
 
     return NULL;
@@ -401,7 +442,11 @@ static void benchmark(uint32_t numthreads, uint64_t affinity)
 	CPUFREQ = 0;
 	for (uint32_t thr = 0; thr < NUMTHREADS; thr++)
 	{
-	    printf("Thread %u current CPU frequency %lukHz\n", thr, cpufreq[thr]);
+	    if (VERBOSE)
+	    {
+		printf("Thread %u current CPU frequency %lukHz\n",
+			thr, cpufreq[thr]);
+	    }
 	    CPUFREQ += cpufreq[thr] / NUMTHREADS;
 	}
 	if (CPUFREQ != 0)
@@ -511,12 +556,13 @@ int main(int argc, char *argv[])
 	    case 'm' :
 		{
 		    rbmode = atoi(optarg);
-		    if (rbmode < 0 || rbmode > 5)
+		    if (rbmode < 0 || rbmode > 9)
 		    {
 			fprintf(stderr, "Invalid ring buffer mode %d\n", rbmode);
 			exit(EXIT_FAILURE);
 		    }
 		    LFRING = rbmode == 5;
+		    STACK = rbmode >= 6;
 		    break;
 		}
 	    case 'r' :
@@ -576,6 +622,7 @@ usage :
 		fprintf(stderr, "mode 3: non-blocking enqueue/non-blocking dequeue\n");
 		fprintf(stderr, "mode 4: blocking enqueue/lock-free dequeue\n");
 		fprintf(stderr, "mode 5: lock-free enqueue/lock-free dequeue (lfring)\n");
+		fprintf(stderr, "modes 6-9: Treiber stack with different ABA workarounds\n");
 		exit(EXIT_FAILURE);
 	}
     }
@@ -584,12 +631,22 @@ usage :
 	goto usage;
     }
 
-    printf("%u elems, %u ringbuf%s, mode %c/%c, %u laps, %u thread%s, affinity mask=0x%lx\n",
+    printf("%u elems, %u ringbuf%s, ",
 	    NUMELEMS,
 	    NUMRINGBUFS,
-	    NUMRINGBUFS != 1 ? "s" : "",
-	     rbmode == 5 ? 'L' : (rbmode & 2) ? 'N' : 'B',
-	    (rbmode & 4) ? 'L' : (rbmode & 1) ? 'N' : 'B',
+	    NUMRINGBUFS != 1 ? "s" : "");
+    if (rbmode >= 6)
+    {
+	const char *const aba[] = { "lock", "tag", "smr", "llsc" };
+	printf("Treiber stack (aba %s), ", aba[rbmode - 6]);
+    }
+    else
+    {
+	printf("mode %c/%c, ",
+	       rbmode == 5 ? 'L' : (rbmode & 2) ? 'N' : 'B',
+	       (rbmode & 4) ? 'L' : (rbmode & 1) ? 'N' : 'B');
+    }
+    printf("%u laps, %u thread%s, affinity mask=0x%lx\n",
 	    NUMLAPS,
 	    NUMTHREADS,
 	    NUMTHREADS != 1 ? "s" : "",
@@ -601,14 +658,20 @@ usage :
 	randtable[i    ] = (r & 0xffff) % NUMRINGBUFS;
 	randtable[i + 1] = (r >> 16) % NUMRINGBUFS;
     }
+    if (STACK && rbmode == 8)
+    {
+        HPD = p64_hazptr_alloc(10, 1);
+        p64_hazptr_register(HPD);
+    }
+
     for (unsigned i = 0; i < NUMRINGBUFS; i++)
     {
 	uint32_t flags = 0;
 	flags |= (rbmode & 1) ? P64_RINGBUF_F_NBDEQ : 0;
 	flags |= (rbmode & 2) ? P64_RINGBUF_F_NBENQ : 0;
 	flags |= (rbmode & 4) ? P64_RINGBUF_F_LFDEQ : 0;
-	void *q = LFRING ?
-		  (void *)p64_lfring_alloc(RINGSIZE, 0) :
+	void *q = LFRING ?  (void *)p64_lfring_alloc(RINGSIZE, 0) :
+		  STACK ? (void *)stack_alloc(rbmode - 6) :
 		  (void *)p64_ringbuf_alloc(RINGSIZE, flags, sizeof(void *));
 	if (q == NULL)
 	{
@@ -681,7 +744,24 @@ usage :
     }
     for (unsigned i = 0; i < NUMRINGBUFS; i++)
     {
-	(void)p64_ringbuf_free(RINGBUFS[i]);
+	if (LFRING)
+	{
+	    p64_lfring_free(RINGBUFS[i]);
+	}
+	else if (STACK)
+	{
+	    stack_free(RINGBUFS[i]);
+	}
+	else
+	{
+	    p64_ringbuf_free(RINGBUFS[i]);
+	}
     }
+    if (STACK && rbmode == 8)
+    {
+	p64_hazptr_unregister();
+	p64_hazptr_free(HPD);
+    }
+
     return 0;
 }
