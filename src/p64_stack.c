@@ -11,7 +11,11 @@
 #include "p64_hazardptr.h"
 #include "p64_spinlock.h"
 #include "build_config.h"
+#include "arch.h"
 #include "lockfree.h"
+#ifndef __aarch64__
+#define lockfree_compare_exchange_16_frail lockfree_compare_exchange_16
+#endif
 #ifdef __aarch64__
 #include "ldxstx.h"
 #endif
@@ -64,20 +68,20 @@ enqueue_tag(p64_stack_t *stk, p64_stack_elem_t *elem)
 	__int128 i128;
 	p64_stack_t st;
     } old, neu;
-    __atomic_load(&stk->head, &old.st.head, __ATOMIC_RELAXED);
-    __atomic_load(&stk->tag, &old.st.tag, __ATOMIC_RELAXED);
     do
     {
+	__atomic_load(&stk->head, &old.st.head, __ATOMIC_RELAXED);
+	__atomic_load(&stk->tag, &old.st.tag, __ATOMIC_RELAXED);
 	elem->next = old.st.head;
 	neu.st.head = elem;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (!lockfree_compare_exchange_16((__int128 *)&stk->head,
-					 &old.i128,
-					 neu.i128,
-					 /*weak=*/true,
-					 __ATOMIC_RELEASE,
-					 __ATOMIC_RELAXED));
+    while (!lockfree_compare_exchange_16_frail((__int128 *)&stk->head,
+					       &old.i128,
+					       neu.i128,
+					       /*weak=*/true,
+					       __ATOMIC_RELEASE,
+					       __ATOMIC_RELAXED));
 
 }
 
@@ -90,9 +94,10 @@ callback_smr(void *ptr)
     //Restore the stack "pointer" from the element
     p64_stack_t *stk = (p64_stack_t *)elem->next;
     //Perform actual enqueue
-    p64_stack_elem_t *old = __atomic_load_n(&stk->head, __ATOMIC_RELAXED);
+    p64_stack_elem_t *old;
     do
     {
+	old = __atomic_load_n(&stk->head, __ATOMIC_RELAXED);
 	elem->next = old;
     }
     while (UNLIKELY(!__atomic_compare_exchange_n(&stk->head,
@@ -112,7 +117,12 @@ enqueue_smr(p64_stack_t *stk, p64_stack_elem_t *elem)
     //Retire element, defer actual enqueue to the reclaim callback when there
     //are no more references to the element
     //This deferred enqueue means LIFO order is not guaranteed
-    p64_hazptr_retire(elem, callback_smr);
+    while (!p64_hazptr_retire(elem, callback_smr))
+    {
+	//The internal retire buffer may be full, retry until there is space
+	//for another element
+	doze();
+    }
     //Attempt immediate reclamation
     p64_hazptr_reclaim();
 }
@@ -183,10 +193,10 @@ dequeue_tag(p64_stack_t *stk)
 	__int128 i128;
 	p64_stack_t st;
     } old, neu;
-    __atomic_load(&stk->head, &old.st.head, __ATOMIC_ACQUIRE);
-    __atomic_load(&stk->tag, &old.st.tag, __ATOMIC_RELAXED);
     do
     {
+	__atomic_load(&stk->head, &old.st.head, __ATOMIC_ACQUIRE);
+	__atomic_load(&stk->tag, &old.st.tag, __ATOMIC_RELAXED);
 	if (old.st.head == NULL)
 	{
 	    return NULL;
@@ -196,12 +206,12 @@ dequeue_tag(p64_stack_t *stk)
 	neu.st.head = old.st.head->next;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (!lockfree_compare_exchange_16((__int128 *)&stk->head,
-					 &old.i128,//Updated on failure
-					 neu.i128,
-					 /*weak=*/true,
-					 __ATOMIC_ACQUIRE,
-					 __ATOMIC_RELAXED));
+    while (!lockfree_compare_exchange_16_frail((__int128 *)&stk->head,
+					       &old.i128,//Updated on failure
+					       neu.i128,
+					       /*weak=*/true,
+					       __ATOMIC_RELAXED,
+					       __ATOMIC_RELAXED));
 
     return old.st.head;
 }
@@ -216,7 +226,11 @@ dequeue_smr(p64_stack_t *stk)
 	old = (p64_stack_elem_t *)p64_hazptr_acquire((void **)&stk->head, &hp);
 	if (old == NULL)
 	{
-	    return NULL;
+	    //If the stack is empty but the user expects to be able to dequeue
+	    //an element, it could mean elements are stuck in the retire queue,
+	    //waiting for reclamation to complete
+	    p64_hazptr_reclaim();
+	    break;
 	}
 	//'old' is guaranteed to be valid due to hazard pointer protection
 	//The 'old->next' field might be overwritten if other thread dequeued
