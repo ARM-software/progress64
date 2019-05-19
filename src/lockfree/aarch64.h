@@ -76,7 +76,6 @@ static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128
     int stx_mo = MO_STORE(mo_success);
     register __int128 old, expected = *exp;
     __asm __volatile("" ::: "memory");
-    PREFETCH_LDXSTX(var);
     do
     {
 	//Atomicity of LDX16 is not guaranteed
@@ -106,7 +105,6 @@ static inline bool lockfree_compare_exchange_16_frail(register __int128 *var, __
     int stx_mo = MO_STORE(mo_success);
     register __int128 expected = *exp;
     __asm __volatile("" ::: "memory");
-    PREFETCH_LDXSTX(var);
     //Atomicity of LDX16 is not guaranteed
     register __int128 old = ldx128(var, ldx_mo);
     if (LIKELY(old == expected && !stx128(var, neu, stx_mo)))
