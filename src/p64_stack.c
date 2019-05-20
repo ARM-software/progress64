@@ -146,9 +146,6 @@ enqueue_llsc(p64_stack_t *stk, p64_stack_elem_t *elem)
 void
 p64_stack_enqueue(p64_stack_t *stk, p64_stack_elem_t *elem)
 {
-    PREFETCH_ATOMIC(stk);
-    //Prevent reordering of prefetch instruction and later memory accesses
-    COMPILER_MEMORY_FENCE();
     switch (stk->tag % TAG_INCREMENT)
     {
 	case P64_ABA_LOCK :
@@ -230,7 +227,12 @@ dequeue_smr(p64_stack_t *stk)
 	    //an element, it could mean elements are stuck in the retire queue,
 	    //waiting for reclamation to complete
 	    p64_hazptr_reclaim();
-	    break;
+	    old = (p64_stack_elem_t *)p64_hazptr_acquire((void **)&stk->head,
+							 &hp);
+	    if (old == NULL)
+	    {
+		break;//Exit CAS-loop
+	    }
 	}
 	//'old' is guaranteed to be valid due to hazard pointer protection
 	//The 'old->next' field might be overwritten if other thread dequeued
