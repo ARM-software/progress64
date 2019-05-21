@@ -29,6 +29,20 @@ try_lock(p64_spinlock_t *lock, bool weak)
 void
 p64_spinlock_acquire(p64_spinlock_t *lock)
 {
+#ifdef USE_LDXSTX
+    SEVL();
+wait_for_event:
+    WFE();
+    do
+    {
+	if (ldx(lock, __ATOMIC_ACQUIRE) != 0)
+	{
+	    //Lock already taken, wait until updated
+	    goto wait_for_event;
+	}
+    }
+    while (UNLIKELY(stx(lock, 1, __ATOMIC_RELAXED)));
+#else
     //Wait until lock is available
     do
     {
@@ -43,6 +57,7 @@ p64_spinlock_acquire(p64_spinlock_t *lock)
 	//*lock == 0
     }
     while (!try_lock(lock, /*weak=*/true));
+#endif
 }
 
 bool
