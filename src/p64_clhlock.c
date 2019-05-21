@@ -59,7 +59,7 @@ wait_for_prev(uint8_t *loc, int mo)
     if (__atomic_load_n(loc, mo))
     {
 	SEVL();
-	while (WFE() && LDXR8(loc, mo))
+	while (WFE() && LDX(loc, mo))
 	{
 	    DOZE();
 	}

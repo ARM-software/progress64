@@ -45,11 +45,7 @@ smp_fence(unsigned int mask)
 
 #define SEVL() (void)0
 #define WFE() 1
-#define LDXR8(a, b)  __atomic_load_n(a, b)
-#define LDXR16(a, b) __atomic_load_n(a, b)
-#define LDXR32(a, b) __atomic_load_n(a, b)
-#define LDXR64(a, b) __atomic_load_n(a, b)
-#define LDXR128(a, b) __atomic_load_n(a, b)
+#define LDX(a, b)  __atomic_load_n(a, b)
 #define DOZE() doze()
 
 #endif

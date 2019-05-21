@@ -35,7 +35,7 @@ p64_spinlock_acquire(p64_spinlock_t *lock)
 	if (__atomic_load_n(lock, __ATOMIC_RELAXED) != 0)
 	{
 	    SEVL();
-	    while (WFE() && LDXR8(lock, __ATOMIC_RELAXED) != 0)
+	    while (WFE() && LDX(lock, __ATOMIC_RELAXED) != 0)
 	    {
 		DOZE();
 	    }

@@ -198,7 +198,7 @@ acquire_slots_mtsafe(struct headtail *rb,
     do
     {
 #ifdef USE_LDXSTX
-	tail = ldx32(&rb->tail, __ATOMIC_RELAXED);
+	tail = ldx(&rb->tail, __ATOMIC_RELAXED);
 #endif
 	actual = MIN(n, (int)(ring_size + head - tail));
 	if (UNLIKELY(actual <= 0))
@@ -207,7 +207,7 @@ acquire_slots_mtsafe(struct headtail *rb,
 	}
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx32(&rb->tail, tail + actual, __ATOMIC_RELAXED)));
+    while (UNLIKELY(stx(&rb->tail, tail + actual, __ATOMIC_RELAXED)));
 #else
     while (!__atomic_compare_exchange_n(&rb->tail,
 					&tail,//Updated on failure
@@ -234,7 +234,7 @@ release_slots(ringidx_t *loc,
 	if (UNLIKELY(__atomic_load_n(loc, __ATOMIC_RELAXED) != idx))
 	{
 	    SEVL();
-	    while (WFE() && LDXR32(loc, __ATOMIC_RELAXED) != idx)
+	    while (WFE() && LDX(loc, __ATOMIC_RELAXED) != idx)
 	    {
 		DOZE();
 	    }
@@ -296,7 +296,7 @@ atomic_rb_release(struct headtail *rb,
     do
     {
 #ifdef USE_LDXSTX
-	old.u = ldx64((uint64_t *)&rb->head, mo_load);
+	old.u = ldx((uint64_t *)&rb->head, mo_load);
 #endif
 #ifdef USE_CACHED_LIMES
 	ringidx_t mask = rb->mask;//Shouldn't really load in LDX/STX section
@@ -349,7 +349,7 @@ atomic_rb_release(struct headtail *rb,
 #endif
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx64((uint64_t *)&rb->head, neu.u, mo_store)));
+    while (UNLIKELY(stx((uint64_t *)&rb->head, neu.u, mo_store)));
 #else
     while (!__atomic_compare_exchange(&rb->head,
 				      &old.p,//Updated on failure

@@ -30,7 +30,7 @@ wait_for_no_writer(const p64_rwsync_t *sync, int mo)
     {
 	SEVL();
 	while (WFE() &&
-	       ((l = LDXR32(sync, mo)) & RWSYNC_WRITER) != 0)
+	       ((l = LDX(sync, mo)) & RWSYNC_WRITER) != 0)
 	{
 	    DOZE();
 	}

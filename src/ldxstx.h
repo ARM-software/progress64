@@ -163,7 +163,30 @@ static inline uint32_t stx128(__int128 *var, __int128 neu, int mm)
     return ret;
 }
 
-#define ldxptr(loc, mm) (void *)ldx64((uint64_t *)(loc), (mm));
-#define stxptr(loc, val, mm) stx64((uint64_t *)(loc), (uintptr_t)(val), (mm))
+#define ldx(var, mm) \
+_Generic((var), \
+    uint8_t *: ldx8, \
+    uint16_t *: ldx16, \
+    uint32_t *: ldx32, \
+    const uint32_t *: ldx32, \
+    uint64_t *: ldx64, \
+    __int128 *: ldx128 \
+    )((var), (mm))
+
+#define stx(var, val, mm) \
+_Generic((var), \
+    uint32_t *: stx32, \
+    uint64_t *: stx64, \
+    __int128 *: stx128 \
+)((var), (val), (mm))
+
+static inline void *ldxptr(const void *var, int mm)
+{
+    return (void *)ldx((uintptr_t *)var, mm);
+}
+static inline uint32_t stxptr(const void *var, void *val, int mm)
+{
+    return stx((uintptr_t *)var, (uintptr_t)val, mm);
+}
 
 #endif

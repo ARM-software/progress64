@@ -106,7 +106,7 @@ cond_update(ringidx_t *loc, ringidx_t neu)
     do
     {
 #ifdef USE_LDXSTX
-	ringidx_t old = ldx64(loc, __ATOMIC_RELAXED);
+	ringidx_t old = ldx(loc, __ATOMIC_RELAXED);
 #endif
 	if (before(neu, old))//neu < old
 	{
@@ -115,7 +115,7 @@ cond_update(ringidx_t *loc, ringidx_t neu)
 	//Else neu > old, need to update *loc
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx64(loc, neu, __ATOMIC_RELEASE)));
+    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELEASE)));
 #else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
@@ -195,7 +195,7 @@ restart:
 	do
 	{
 #ifdef USE_LDXSTX
-	    old.ui = ldx128((__int128 *)slot, __ATOMIC_RELAXED);
+	    old.ui = ldx((__int128 *)slot, __ATOMIC_RELAXED);
 #endif
 	    if (UNLIKELY(old.e.idx != tail - size))
 	    {
@@ -218,7 +218,7 @@ restart:
 	    neu.e.idx = tail;//Set idx on enqueue
 	}
 #ifdef USE_LDXSTX
-	while (UNLIKELY(stx128((__int128 *)slot, neu.ui, __ATOMIC_RELEASE)));
+	while (UNLIKELY(stx((__int128 *)slot, neu.ui, __ATOMIC_RELEASE)));
 #else
 	while (!lockfree_compare_exchange_16_frail((__int128 *)slot,
 						   &old.ui,//Updated on failure

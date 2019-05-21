@@ -33,7 +33,7 @@ p64_rwlock_t wait_for_no(p64_rwlock_t *lock,
     {
 	SEVL();
 	while (WFE() &&
-	       ((l = LDXR32(lock, mo)) & mask) != 0)
+	       ((l = LDX(lock, mo)) & mask) != 0)
 	{
 	    DOZE();
 	}

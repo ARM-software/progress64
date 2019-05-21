@@ -39,7 +39,7 @@ p64_barrier_wait(p64_barrier_t *br)
 	uint32_t cur_lap = LAP(before, numthr);
 	SEVL();
 	while (WFE() &&
-	       LAP(LDXR32(&br->waiting, __ATOMIC_ACQUIRE), numthr) == cur_lap)
+	       LAP(LDX(&br->waiting, __ATOMIC_ACQUIRE), numthr) == cur_lap)
 	{
 	    DOZE();
 	}

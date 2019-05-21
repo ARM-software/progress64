@@ -121,7 +121,7 @@ wait_prev(int *loc, int sig, uint32_t spin_tmo)
 	//Wait indefinite time using Wait-For-Event
 	//Handle spurious wake-ups
 	SEVL();
-	while (WFE() && LDXR32((uint32_t *)loc, __ATOMIC_ACQUIRE) < sig)
+	while (WFE() && LDX((uint32_t *)loc, __ATOMIC_ACQUIRE) < sig)
 	{
 	    DOZE();
 	}

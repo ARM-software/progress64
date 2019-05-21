@@ -69,11 +69,7 @@ smp_fence(unsigned int mask)
 
 #define SEVL() sevl()
 #define WFE() wfe()
-#define LDXR8(a, b)  ldx8(a, b)
-#define LDXR16(a, b) ldx16(a, b)
-#define LDXR32(a, b) ldx32(a, b)
-#define LDXR64(a, b) ldx64(a, b)
-#define LDXR128(a, b) ldx128(a, b)
+#define LDX(a, b)  ldx(a, b)
 //When using WFE do not stall the pipeline using other means (e.g. NOP or ISB)
 #define DOZE() (void)0
 
@@ -83,11 +79,7 @@ smp_fence(unsigned int mask)
 
 #define SEVL() (void)0
 #define WFE() 1
-#define LDXR8(a, b)  __atomic_load_n(a, b)
-#define LDXR16(a, b) __atomic_load_n(a, b)
-#define LDXR32(a, b) __atomic_load_n(a, b)
-#define LDXR64(a, b) __atomic_load_n(a, b)
-#define LDXR128(a, b) __atomic_load_n(a, b)
+#define LDX(a, b)  __atomic_load_n(a, b)
 #define DOZE() doze()
 
 #endif

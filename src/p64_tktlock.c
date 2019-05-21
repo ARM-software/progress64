@@ -23,7 +23,7 @@ wait_until_equal16(uint16_t *loc, uint16_t val)
     if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
     {
 	SEVL();
-	while(WFE() && LDXR16(loc, __ATOMIC_ACQUIRE) != val)
+	while(WFE() && LDX(loc, __ATOMIC_ACQUIRE) != val)
 	{
 	    DOZE();
 	}

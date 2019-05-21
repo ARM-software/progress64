@@ -28,31 +28,17 @@ p64_tfrwlock_init(p64_tfrwlock_t *lock)
     lock->leave.rd = 0;
 }
 
-static inline void
-wait_until_equal16(uint16_t *loc, uint16_t val)
-{
-    if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
-    {
-	SEVL();
-	while(WFE() && LDXR16(loc, __ATOMIC_ACQUIRE) != val)
-	{
-	    DOZE();
-	}
-    }
-}
-
-static inline void
-wait_until_equal32(uint32_t *loc, uint32_t val)
-{
-    if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
-    {
-	SEVL();
-	while(WFE() && LDXR32(loc, __ATOMIC_ACQUIRE) != val)
-	{
-	    DOZE();
-	}
-    }
-}
+#define wait_until_equal(loc, val) \
+({ \
+    if (__atomic_load_n((loc), __ATOMIC_ACQUIRE) != (val)) \
+    { \
+	SEVL(); \
+	while(WFE() && LDX((loc), __ATOMIC_ACQUIRE) != (val)) \
+	{ \
+	    DOZE(); \
+	} \
+    } \
+})
 
 void
 p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
@@ -62,7 +48,7 @@ p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
     uint32_t old_enter = __atomic_fetch_add(&lock->enter.rdwr, RD_ONE,
 					    __ATOMIC_RELAXED);
     //Wait for any previous writers lockers to go away
-    wait_until_equal16(&lock->leave.wr, TO_WR(old_enter));
+    wait_until_equal(&lock->leave.wr, TO_WR(old_enter));
 }
 
 void
@@ -92,12 +78,12 @@ atomic_add_w_mask(uint32_t *loc, uint32_t val, uint32_t mask)
     do
     {
 #ifdef USE_LDXSTX
-	old = ldx32(loc, __ATOMIC_RELAXED);
+	old = ldx(loc, __ATOMIC_RELAXED);
 #endif
 	neu = add_w_mask(old, val, mask);
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx32(loc, neu, __ATOMIC_RELAXED)));
+    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELAXED)));
 #else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
@@ -120,7 +106,7 @@ p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock, uint16_t *tkt)
     //New writers may arrive (will increment lock->enter.wr)
     //New readers may arrive (will increment lock->enter.rd) but these
     //will wait for me to leave and increment lock->leave.wr
-    wait_until_equal32(&lock->leave.rdwr, old_enter);
+    wait_until_equal(&lock->leave.rdwr, old_enter);
 }
 
 void

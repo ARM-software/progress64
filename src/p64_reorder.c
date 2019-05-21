@@ -148,7 +148,7 @@ p64_reorder_release(p64_reorder_t *rob,
 	    //will fit inside the ROB window
 	    SEVL();
 	    while (WFE() && AFTER(sn + nelems,
-				  LDXR32(&rob->hi.head, __ATOMIC_ACQUIRE) + sz))
+				  LDX(&rob->hi.head, __ATOMIC_ACQUIRE) + sz))
 	    {
 		DOZE();
 	    }

@@ -22,7 +22,7 @@ static inline void
 wait_until_gteq32(uint32_t *loc, uint32_t a)
 {
     SEVL();
-    while(WFE() && (int32_t)(LDXR32(loc, __ATOMIC_ACQUIRE) - a) < 0)
+    while(WFE() && (int32_t)(LDX(loc, __ATOMIC_ACQUIRE) - a) < 0)
     {
 	DOZE();
     }

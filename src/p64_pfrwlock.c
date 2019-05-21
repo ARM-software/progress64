@@ -46,7 +46,7 @@ wait_until_equal16(uint16_t *loc, uint16_t val)
     if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
     {
 	SEVL();
-	while(WFE() && LDXR16(loc, __ATOMIC_ACQUIRE) != val)
+	while(WFE() && LDX(loc, __ATOMIC_ACQUIRE) != val)
 	{
 	    DOZE();
 	}
@@ -72,7 +72,7 @@ atomic_incr_enter_or_pend(uint64_t *loc)
     do
     {
 #ifdef USE_LDXSTX
-	old = ldx64(loc, __ATOMIC_ACQUIRE);
+	old = ldx(loc, __ATOMIC_ACQUIRE);
 #endif
 	if (ENTER_WR(old) == LEAVE_WR(old))
 	{
@@ -86,7 +86,7 @@ atomic_incr_enter_or_pend(uint64_t *loc)
 	}
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx64(loc, neu, __ATOMIC_RELAXED)));
+    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELAXED)));
 #else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
@@ -148,7 +148,7 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
     do
     {
 #ifdef USE_LDXSTX
-	old = ldx64(loc, __ATOMIC_RELAXED);
+	old = ldx(loc, __ATOMIC_RELAXED);
 #endif
 	//Compute new values
 	uint16_t enter_wr = ENTER_WR(old);
@@ -160,7 +160,7 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
 	      ((uint64_t)enter_rd << ENTER_RD_SHIFT);
     }
 #ifdef USE_LDXSTX
-    while (UNLIKELY(stx64(loc, neu, __ATOMIC_RELEASE)));
+    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELEASE)));
 #else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
