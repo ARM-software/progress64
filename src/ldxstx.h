@@ -16,9 +16,9 @@
  * ARMv8/A64 load/store exclusive primitives
  *****************************************************************************/
 
-static inline uint8_t ldx8(const uint8_t *var, int mm)
+static inline uint32_t ldx8(const uint8_t *var, int mm)
 {
-    uint8_t old;
+    uint32_t old;
     if (mm == __ATOMIC_ACQUIRE)
     __asm volatile("ldaxrb %w0, [%1]"
                    : "=&r" (old)
@@ -34,9 +34,28 @@ static inline uint8_t ldx8(const uint8_t *var, int mm)
     return old;
 }
 
-static inline uint16_t ldx16(const uint16_t *var, int mm)
+//Return 0 on success, 1 on failure
+static inline uint32_t stx8(uint8_t *var, uint32_t neu, int mm)
 {
-    uint16_t old;
+    uint32_t ret;
+    if (mm == __ATOMIC_RELEASE)
+    __asm volatile("stlxrb %w0, %w1, [%2]"
+                   : "=&r" (ret)
+                   : "r" (neu), "r" (var)
+                   : "memory");
+    else if (mm == __ATOMIC_RELAXED)
+    __asm volatile("stxrb %w0, %w1, [%2]"
+                   : "=&r" (ret)
+                   : "r" (neu), "r" (var)
+                   : "memory");
+    else
+	abort();
+    return ret;
+}
+
+static inline uint32_t ldx16(const uint16_t *var, int mm)
+{
+    uint32_t old;
     if (mm == __ATOMIC_ACQUIRE)
     __asm volatile("ldaxrh %w0, [%1]"
                    : "=&r" (old)
@@ -50,6 +69,25 @@ static inline uint16_t ldx16(const uint16_t *var, int mm)
     else
 	abort();
     return old;
+}
+
+//Return 0 on success, 1 on failure
+static inline uint32_t stx16(uint16_t *var, uint32_t neu, int mm)
+{
+    uint32_t ret;
+    if (mm == __ATOMIC_RELEASE)
+    __asm volatile("stlxrh %w0, %w1, [%2]"
+                   : "=&r" (ret)
+                   : "r" (neu), "r" (var)
+                   : "memory");
+    else if (mm == __ATOMIC_RELAXED)
+    __asm volatile("stxrh %w0, %w1, [%2]"
+                   : "=&r" (ret)
+                   : "r" (neu), "r" (var)
+                   : "memory");
+    else
+	abort();
+    return ret;
 }
 
 static inline uint32_t ldx32(const uint32_t *var, int mm)
@@ -175,6 +213,8 @@ _Generic((var), \
 
 #define stx(var, val, mm) \
 _Generic((var), \
+    uint8_t *: stx8, \
+    uint16_t *: stx16, \
     uint32_t *: stx32, \
     uint64_t *: stx64, \
     __int128 *: stx128 \
