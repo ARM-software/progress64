@@ -52,20 +52,6 @@ p64_clhlock_fini(p64_clhlock_t *lock)
     p64_mfree(lock->tail);
 }
 
-static inline void
-wait_for_prev(uint8_t *loc, int mo)
-{
-    //Wait for previous thread to signal us (using their node)
-    if (__atomic_load_n(loc, mo))
-    {
-	SEVL();
-	while (WFE() && LDX(loc, mo))
-	{
-	    DOZE();
-	}
-    }
-}
-
 static inline p64_clhnode_t *
 enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
 {
@@ -94,7 +80,7 @@ p64_clhlock_acquire(p64_clhlock_t *lock, p64_clhnode_t **nodep)
     p64_clhnode_t *prev = enqueue(lock, nodep);
 
     //Wait for previous thread to signal us (using their node)
-    wait_for_prev(&prev->wait,__ATOMIC_ACQUIRE);
+    wait_until_equal(&prev->wait, CLH_GO, __ATOMIC_ACQUIRE);
     //Now we own the previous node
 }
 

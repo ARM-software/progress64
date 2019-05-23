@@ -17,19 +17,6 @@ p64_tktlock_init(p64_tktlock_t *lock)
     lock->leave = 0;
 }
 
-static inline void
-wait_until_equal16(uint16_t *loc, uint16_t val)
-{
-    if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
-    {
-	SEVL();
-	while(WFE() && LDX(loc, __ATOMIC_ACQUIRE) != val)
-	{
-	    DOZE();
-	}
-    }
-}
-
 void
 p64_tktlock_acquire(p64_tktlock_t *lock, uint16_t *tkt)
 {
@@ -37,7 +24,7 @@ p64_tktlock_acquire(p64_tktlock_t *lock, uint16_t *tkt)
     //Get a ticket
     *tkt = __atomic_fetch_add(&lock->enter, 1, __ATOMIC_RELAXED);
     //Wait for any previous lockers to go away
-    wait_until_equal16(&lock->leave, *tkt);
+    wait_until_equal(&lock->leave, *tkt, __ATOMIC_ACQUIRE);
 }
 
 void

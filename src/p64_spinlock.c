@@ -47,18 +47,10 @@ wait_for_event:
     }
     while (UNLIKELY(stx(lock, 1, __ATOMIC_RELAXED)));
 #else
-    //Wait until lock is available
     do
     {
-	if (__atomic_load_n(lock, __ATOMIC_RELAXED) != 0)
-	{
-	    SEVL();
-	    while (WFE() && LDX(lock, __ATOMIC_RELAXED) != 0)
-	    {
-		DOZE();
-	    }
-	}
-	//*lock == 0
+	//Wait until lock is available
+	wait_until_equal(lock, 0, __ATOMIC_RELAXED);
     }
     while (!try_lock(lock, /*weak=*/true));
 #endif

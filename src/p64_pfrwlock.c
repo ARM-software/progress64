@@ -43,19 +43,6 @@ p64_pfrwlock_init(p64_pfrwlock_t *lock)
     lock->leave_rd = 0;
 }
 
-static inline void
-wait_until_equal16(uint16_t *loc, uint16_t val)
-{
-    if (__atomic_load_n(loc, __ATOMIC_ACQUIRE) != val)
-    {
-	SEVL();
-	while(WFE() && LDX(loc, __ATOMIC_ACQUIRE) != val)
-	{
-	    DOZE();
-	}
-    }
-}
-
 static inline uint64_t
 add_w_mask(uint64_t x, uint64_t y, uint64_t mask)
 {
@@ -109,7 +96,7 @@ p64_pfrwlock_acquire_rd(p64_pfrwlock_t *lock)
     if (ENTER_WR(old) != LEAVE_WR(old))
     {
 	//Writer(s) present, wait for next reader phase
-	wait_until_equal16(&lock->leave_wr, LEAVE_WR(old) + 1);
+	wait_until_equal(&lock->leave_wr, LEAVE_WR(old) + 1, __ATOMIC_ACQUIRE);
     }
     //Else no writers present, return immediately
 }
@@ -130,11 +117,11 @@ p64_pfrwlock_acquire_wr(p64_pfrwlock_t *lock)
     uint64_t old = __atomic_fetch_add(&lock->word,
 				      ENTER_WR_ONE, __ATOMIC_RELAXED);
     //Wait for previous writer to end write phase and update 'enter_rd'
-    wait_until_equal16(&lock->leave_wr, ENTER_WR(old));
+    wait_until_equal(&lock->leave_wr, ENTER_WR(old), __ATOMIC_ACQUIRE);
     //'enter_rd' now updated from 'pend_rd'
     uint16_t enter_rd = __atomic_load_n(&lock->enter_rd, __ATOMIC_RELAXED);
     //Wait for all previous readers to leave
-    wait_until_equal16(&lock->leave_rd, enter_rd);
+    wait_until_equal(&lock->leave_rd, enter_rd, __ATOMIC_RELAXED);
 }
 
 void

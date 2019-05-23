@@ -231,14 +231,7 @@ release_slots(ringidx_t *loc,
     if (flags & FLAG_BLK)
     {
 	//Wait for our turn to signal consumers (producers)
-	if (UNLIKELY(__atomic_load_n(loc, __ATOMIC_RELAXED) != idx))
-	{
-	    SEVL();
-	    while (WFE() && LDX(loc, __ATOMIC_RELAXED) != idx)
-	    {
-		DOZE();
-	    }
-	}
+	wait_until_equal(loc, idx, __ATOMIC_RELAXED);
     }
 
     //Release elements to consumers (producers)

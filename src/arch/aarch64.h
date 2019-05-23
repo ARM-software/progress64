@@ -8,6 +8,10 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#if defined USE_WFE
+#include "ldxstx.h"
+#endif
+
 static inline uint64_t
 counter_freq(void)
 {
@@ -65,21 +69,78 @@ smp_fence(unsigned int mask)
     }
 }
 
+static inline void
+wait_until_equal8(uint8_t *loc, uint8_t val, int mm)
+{
+#ifdef USE_WFE
+    if (__atomic_load_n(loc, mm) != val)
+    {
+	sevl();
+	while(wfe() && ldx(loc, mm) != val)
+	{
+	}
+    }
+#else
+    while (__atomic_load_n(loc, mm) != val)
+    {
+	doze();
+    }
+#endif
+}
+
+static inline void
+wait_until_equal16(uint16_t *loc, uint16_t val, int mm)
+{
+#ifdef USE_WFE
+    if (__atomic_load_n(loc, mm) != val)
+    {
+	sevl();
+	while(wfe() && ldx(loc, mm) != val)
+	{
+	}
+    }
+#else
+    while (__atomic_load_n(loc, mm) != val)
+    {
+	doze();
+    }
+#endif
+}
+
+static inline void
+wait_until_equal32(uint32_t *loc, uint32_t val, int mm)
+{
+#ifdef USE_WFE
+    if (__atomic_load_n(loc, mm) != val)
+    {
+	sevl();
+	while(wfe() && ldx(loc, mm) != val)
+	{
+	}
+    }
+#else
+    while (__atomic_load_n(loc, mm) != val)
+    {
+	doze();
+    }
+#endif
+}
+
 #if defined USE_WFE
 
 #define SEVL() sevl()
 #define WFE() wfe()
-#define LDX(a, b)  ldx(a, b)
+#define LDX(a, b) ldx((a), (b))
+#define LDXPTR(a, b) (__typeof(*a))ldx((uintptr_t *)(a), (b))
 //When using WFE do not stall the pipeline using other means (e.g. NOP or ISB)
 #define DOZE() (void)0
-
-#include "ldxstx.h"
 
 #else
 
 #define SEVL() (void)0
 #define WFE() 1
-#define LDX(a, b)  __atomic_load_n(a, b)
+#define LDX(a, b)  __atomic_load_n((a), (b))
+#define LDXPTR(a, b)  __atomic_load_n((a), (b))
 #define DOZE() doze()
 
 #endif

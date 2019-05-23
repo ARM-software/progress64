@@ -285,7 +285,7 @@ acquire_rob(p64_laxrob_t *rob)
 	    //ROB is busy, wait until idle
 	    SEVL();
 	    while (WFE() &&
-		   IS_BUSY(old = (p64_laxrob_elem_t*)LDX((uintptr_t *)&rob->pending, __ATOMIC_ACQUIRE)))
+		   IS_BUSY(old = LDXPTR(&rob->pending, __ATOMIC_ACQUIRE)))
 	    {
 		DOZE();
 	    }

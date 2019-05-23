@@ -43,9 +43,37 @@ smp_fence(unsigned int mask)
     //Else no fence specified
 }
 
+static inline void
+wait_until_equal8(uint8_t *loc, uint8_t val, int mm)
+{
+    while (__atomic_load_n(loc, mm) != val)
+    {
+	doze();
+    }
+}
+
+static inline void
+wait_until_equal16(uint16_t *loc, uint16_t val, int mm)
+{
+    while (__atomic_load_n(loc, mm) != val)
+    {
+	doze();
+    }
+}
+
+static inline void
+wait_until_equal32(uint32_t *loc, uint32_t val, int mm)
+{
+    while (__atomic_load_n(loc, mm) != val)
+    {
+	doze();
+    }
+}
+
 #define SEVL() (void)0
 #define WFE() 1
-#define LDX(a, b)  __atomic_load_n(a, b)
+#define LDX(a, b)  __atomic_load_n((a), (b))
+#define LDXPTR(a, b)  __atomic_load_n((a), (b))
 #define DOZE() doze()
 
 #endif

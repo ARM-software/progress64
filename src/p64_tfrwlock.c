@@ -31,18 +31,6 @@ p64_tfrwlock_init(p64_tfrwlock_t *lock)
     lock->leave.rd = 0;
 }
 
-#define wait_until_equal(loc, val) \
-({ \
-    if (__atomic_load_n((loc), __ATOMIC_ACQUIRE) != (val)) \
-    { \
-	SEVL(); \
-	while(WFE() && LDX((loc), __ATOMIC_ACQUIRE) != (val)) \
-	{ \
-	    DOZE(); \
-	} \
-    } \
-})
-
 void
 p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
 {
@@ -51,7 +39,7 @@ p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
     uint32_t old_enter = __atomic_fetch_add(&lock->enter.rdwr, RD_ONE,
 					    __ATOMIC_RELAXED);
     //Wait for any previous writers lockers to go away
-    wait_until_equal(&lock->leave.wr, TO_WR(old_enter));
+    wait_until_equal(&lock->leave.wr, TO_WR(old_enter), __ATOMIC_ACQUIRE);
 }
 
 void
@@ -109,7 +97,7 @@ p64_tfrwlock_acquire_wr(p64_tfrwlock_t *lock, uint16_t *tkt)
     //New writers may arrive (will increment lock->enter.wr)
     //New readers may arrive (will increment lock->enter.rd) but these
     //will wait for me to leave and increment lock->leave.wr
-    wait_until_equal(&lock->leave.rdwr, old_enter);
+    wait_until_equal(&lock->leave.rdwr, old_enter, __ATOMIC_ACQUIRE);
 }
 
 void
