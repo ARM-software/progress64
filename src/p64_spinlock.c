@@ -10,6 +10,9 @@
 
 #include "common.h"
 #include "arch.h"
+#ifdef USE_LDXSTX
+#include "ldxstx.h"
+#endif
 
 void
 p64_spinlock_init(p64_spinlock_t *lock)
@@ -32,12 +35,13 @@ p64_spinlock_acquire(p64_spinlock_t *lock)
 #ifdef USE_LDXSTX
     SEVL();
 wait_for_event:
-    WFE();
+    (void)WFE();
     do
     {
 	if (ldx(lock, __ATOMIC_ACQUIRE) != 0)
 	{
 	    //Lock already taken, wait until updated
+	    DOZE();
 	    goto wait_for_event;
 	}
     }

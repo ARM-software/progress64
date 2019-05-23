@@ -53,7 +53,7 @@ LDFLAGS += -fsanitize=address -fsanitize=undefined
 LDFLAGS += -static-libasan -static-libubsan
 endif
 CCFLAGS += -std=c99
-#CCFLAGS += -march=armv8.1-a
+#CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
 CCFLAGS += -g -ggdb -Wall
 CCFLAGS += -fomit-frame-pointer
 CCFLAGS += -fstrict-aliasing -fno-stack-check -fno-stack-protector

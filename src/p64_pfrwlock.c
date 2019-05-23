@@ -9,6 +9,9 @@
 
 #include "arch.h"
 #include "common.h"
+#ifdef USE_LDXSTX
+#include "ldxstx.h"
+#endif
 
 // uint16_t enter_rd;//Bits 0..15
 // uint16_t pend_rd;//Bits 16..31

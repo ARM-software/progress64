@@ -13,6 +13,9 @@
 
 #include "arch.h"
 #include "common.h"
+#ifdef USE_LDXSTX
+#include "ldxstx.h"
+#endif
 
 #define RD_ONE    (1U << 16)
 #define WR_ONE    1

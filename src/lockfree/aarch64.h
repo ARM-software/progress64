@@ -10,10 +10,6 @@
 
 #include "ldxstx.h"
 
-#ifdef __ARM_FEATURE_QRDMX //Feature only available in v8.1a and beyond
-#define __ARM_FEATURE_ATOMICS
-#endif
-
 #ifdef __ARM_FEATURE_ATOMICS
 ALWAYS_INLINE
 static inline __int128 casp(__int128 *var, __int128 old, __int128 neu, int mo)
