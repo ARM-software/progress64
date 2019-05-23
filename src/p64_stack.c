@@ -220,15 +220,14 @@ dequeue_smr(p64_stack_t *stk)
     p64_stack_elem_t *old, *neu;
     do
     {
-	old = (p64_stack_elem_t *)p64_hazptr_acquire((void **)&stk->head, &hp);
+	old = p64_hazptr_acquire(&stk->head, &hp);
 	if (old == NULL)
 	{
 	    //If the stack is empty but the user expects to be able to dequeue
 	    //an element, it could mean elements are stuck in the retire queue,
 	    //waiting for reclamation to complete
 	    p64_hazptr_reclaim();
-	    old = (p64_stack_elem_t *)p64_hazptr_acquire((void **)&stk->head,
-							 &hp);
+	    old = p64_hazptr_acquire(&stk->head, &hp);
 	    if (old == NULL)
 	    {
 		break;//Exit CAS-loop

@@ -231,8 +231,7 @@ read_fragtbl(struct fragtbl *vec, uint32_t idx, p64_hazardptr_t *hpp)
     uint32_t i = idx % 2;
     do
     {
-	fl = (struct fraglist *)p64_hazptr_acquire((void **)&vec[i].base,
-						   hpp);
+	fl = p64_hazptr_acquire(&vec[i].base, hpp);
 	__atomic_load(&vec[i].i_s, &i_s, __ATOMIC_RELAXED);
 	if (fl == NULL || i_s.idx != idx)
 	{

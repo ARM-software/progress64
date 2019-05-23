@@ -52,11 +52,14 @@ void p64_hazptr_deactivate(void);
 //Note that a hazard pointer may have been allocated even if NULL is returned
 //p64_hazptr_acquire() has acquire memory ordering
 void *p64_hazptr_acquire(void **pptr, p64_hazardptr_t *hp);
-#ifndef NDEBUG
+#ifdef NDEBUG
+#define p64_hazptr_acquire(pptr, mm) \
+    (__typeof(*pptr))p64_hazptr_acquire((void **)(pptr), (mm))
+#else
 #define p64_hazptr_acquire(_a, _b) \
 ({ \
     p64_hazardptr_t *_c = (_b); \
-    void *_d = p64_hazptr_acquire((_a), _c); \
+    __typeof(*_a) _d = (__typeof(*_a))p64_hazptr_acquire((void **)(_a), _c); \
     if (*(_c) != P64_HAZARDPTR_NULL) \
 	p64_hazptr_annotate(*(_c), __FILE__, __LINE__); \
     _d; \

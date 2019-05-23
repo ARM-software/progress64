@@ -145,7 +145,7 @@ bucket_lookup(struct hash_bucket *bkt,
     {
 	uint32_t i = __builtin_ctz(mask);
 	p64_hashelem_t *prnt = &bkt->elems[i];
-	p64_hashelem_t *he = p64_hazptr_acquire((void**)&prnt->next, hazpp);
+	p64_hashelem_t *he = p64_hazptr_acquire(&prnt->next, hazpp);
 	//The head element pointers cannot be marked for REMOVAL
 	assert(REM_MARK(he) == he);
 	if (he != NULL)
@@ -170,7 +170,7 @@ list_lookup(p64_hashelem_t *prnt,
     p64_hazardptr_t hpprnt = P64_HAZARDPTR_NULL;
     for (;;)
     {
-	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, hazpp);
+	p64_hashelem_t *this = p64_hazptr_acquire(&prnt->next, hazpp);
 	this = REM_MARK(this);
 	if (this == NULL)
 	{
@@ -315,7 +315,7 @@ list_insert(p64_hashelem_t *prnt,
     p64_hashelem_t *const org = prnt;
     for (;;)
     {
-	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, &hpthis);
+	p64_hashelem_t *this = p64_hazptr_acquire(&prnt->next, &hpthis);
 	this = REM_MARK(this);
 	if (this == NULL)
 	{
@@ -431,7 +431,7 @@ list_remove(p64_hashelem_t *prnt,
     p64_hashelem_t *const org = prnt;
     for (;;)
     {
-	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, &hpthis);
+	p64_hashelem_t *this = p64_hazptr_acquire(&prnt->next, &hpthis);
 	this = REM_MARK(this);
 	if (UNLIKELY(this == NULL))
 	{
@@ -526,7 +526,7 @@ bucket_remove_by_key(struct hash_bucket *bkt,
     {
 	uint32_t i = __builtin_ctz(mask);
 	p64_hashelem_t *prnt = &bkt->elems[i];
-	p64_hashelem_t *he = p64_hazptr_acquire((void**)&prnt->next, hazpp);
+	p64_hashelem_t *he = p64_hazptr_acquire(&prnt->next, hazpp);
 	//The head element pointers cannot be marked for REMOVAL
 	assert(REM_MARK(he) == he);
 	if (he != NULL)
@@ -558,7 +558,7 @@ list_remove_by_key(p64_hashelem_t *prnt,
     p64_hashelem_t *const org = prnt;
     for (;;)
     {
-	p64_hashelem_t *this = p64_hazptr_acquire((void**)&prnt->next, &hpthis);
+	p64_hashelem_t *this = p64_hazptr_acquire(&prnt->next, &hpthis);
 	this = REM_MARK(this);
 	if (UNLIKELY(this == NULL))
 	{

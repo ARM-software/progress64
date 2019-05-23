@@ -242,7 +242,7 @@ thr_execute(uint32_t tidx)
 	    {
 		idx = xorshift64star(xor_state) % NUMOBJS;
 		if (USEHP)
-		    obj = p64_hazptr_acquire((void **)&TABLE[idx], &hp);
+		    obj = p64_hazptr_acquire(&TABLE[idx], &hp);
 		else
 		    obj = __atomic_load_n(&TABLE[idx], __ATOMIC_ACQUIRE);
 		if (obj == NULL)
