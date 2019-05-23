@@ -50,7 +50,9 @@ DEFINE += -DNDEBUG#disable assertions
 else
 CCFLAGS += -fsanitize=address -fsanitize=undefined
 LDFLAGS += -fsanitize=address -fsanitize=undefined
+ifneq ($(CLANG),yes)
 LDFLAGS += -static-libasan -static-libubsan
+endif
 endif
 CCFLAGS += -std=c99
 #CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
