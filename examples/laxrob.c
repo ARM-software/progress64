@@ -12,6 +12,7 @@ static uint32_t last_sn = 0;
 static void
 callback(void *arg, p64_laxrob_elem_t **vec, uint32_t nitems)
 {
+    (void)arg;
     for (uint32_t i = 0; i < nitems; i++)
     {
 	p64_laxrob_elem_t *elem = vec[i];

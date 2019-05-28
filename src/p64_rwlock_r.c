@@ -29,7 +29,7 @@ static __thread struct
     uint32_t release_mask;
     uint32_t depth;
     p64_rwlock_r_t *stack[STACKSIZE];
-} pth = { INVALID_TID, 0, 0 };
+} pth = { INVALID_TID, 0, 0, { NULL } };
 
 static bool
 find_lock(p64_rwlock_r_t *lock)

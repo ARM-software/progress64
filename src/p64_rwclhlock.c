@@ -29,6 +29,7 @@ futex(int *uaddr,
       const struct timespec *ts,
       int *uaddr2, int val2)
 {
+    (void)uaddr2;
     return syscall(SYS_futex, uaddr, op | FUTEX_PRIVATE_FLAG,
 		   val, ts, uaddr, val2);
 }
@@ -121,7 +122,7 @@ wait_prev(int *loc, int sig, uint32_t spin_tmo)
 	//Wait indefinite time using Wait-For-Event
 	//Handle spurious wake-ups
 	SEVL();
-	while (WFE() && LDX((uint32_t *)loc, __ATOMIC_ACQUIRE) < sig)
+	while (WFE() && (int)LDX((unsigned *)loc, __ATOMIC_ACQUIRE) < sig)
 	{
 	    DOZE();
 	}

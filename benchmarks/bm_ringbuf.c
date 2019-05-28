@@ -516,6 +516,7 @@ int main(int argc, char *argv[])
 	{
 	    case 'A' :
 		DOUBLESTEP = true;
+		break;
 	    case 'a' :
 		if (optarg[0] == '0' && optarg[1] == 'x')
 		{

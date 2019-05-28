@@ -21,14 +21,14 @@ callback(p64_timer_t tim,
 
 int main(void)
 {
-    p64_tick_t exp_a = -1;
+    p64_tick_t exp_a = ~0UL;
     p64_timer_t tim_a = p64_timer_alloc(callback, &exp_a);
     EXPECT(tim_a != P64_TIMER_NULL)
     EXPECT(p64_timer_set(tim_a, 1));
     EXPECT(!p64_timer_set(tim_a, 1));
     p64_timer_tick_set(0);
     p64_timer_expire();
-    EXPECT(exp_a == -1);
+    EXPECT(exp_a == ~0UL);
     p64_timer_tick_set(1);
     p64_timer_expire();
     EXPECT(exp_a == 1);

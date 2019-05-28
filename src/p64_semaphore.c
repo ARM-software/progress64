@@ -28,7 +28,7 @@ wait_until_gteq32(uint32_t *loc, uint32_t a)
     }
 }
 
-void inline
+inline void
 p64_sem_acquire_n(p64_semaphore_t *sem, uint32_t n)
 {
     PREFETCH_ATOMIC(sem);
@@ -47,7 +47,7 @@ p64_sem_acquire(p64_semaphore_t *sem)
     p64_sem_acquire_n(sem, 1);
 }
 
-void inline
+inline void
 p64_sem_release_n(p64_semaphore_t *sem, uint32_t n)
 {
     PREFETCH_ATOMIC(sem);

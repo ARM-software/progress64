@@ -16,7 +16,7 @@ extern "C"
 typedef struct
 {
     p64_rwsync_t rwsync;
-    int64_t owner;
+    uint64_t owner;
     int32_t count;
 } p64_rwsync_r_t;
 

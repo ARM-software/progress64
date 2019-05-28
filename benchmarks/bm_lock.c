@@ -689,7 +689,7 @@ usage :
 	    break;
 	}
     }
-    if (LOCKTYPE == -1)
+    if ((int)LOCKTYPE == -1)
     {
 	goto usage;
     }

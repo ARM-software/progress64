@@ -10,6 +10,7 @@ static uint32_t next_elem = 100;
 
 static void callback(void *arg, void *elem, uint32_t sn)
 {
+    (void)arg;
     EXPECT(elem != P64_REORDER_DUMMY);
     if (elem != NULL)
     {

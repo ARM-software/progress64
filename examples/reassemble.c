@@ -63,6 +63,7 @@ length(p64_fragment_t *frag)
 static void
 complete(void *arg, p64_fragment_t *frag)
 {
+    (void)arg;
     EXPECT(frag->nextfrag != NULL);
     p64_fragment_t *ff = frag->nextfrag;
     while (ff != NULL)
@@ -81,6 +82,7 @@ static bool done = false;
 static void
 stale(void *arg, p64_fragment_t *frag)
 {
+    (void)arg;
     p64_fragment_t *org = frag;
     EXPECT(frag != NULL);
     while (frag != NULL)
