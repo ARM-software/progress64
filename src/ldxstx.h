@@ -220,11 +220,11 @@ _Generic((var), \
     __int128 *: stx128 \
 )((var), (val), (mm))
 
-static inline void *ldxptr(const void *var, int mm)
+static inline void *ldxptr(void *var, int mm)
 {
     return (void *)ldx((uintptr_t *)var, mm);
 }
-static inline uint32_t stxptr(const void *var, void *val, int mm)
+static inline uint32_t stxptr(void *var, void *val, int mm)
 {
     return stx((uintptr_t *)var, (uintptr_t)val, mm);
 }
