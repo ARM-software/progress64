@@ -511,9 +511,10 @@ static int
 compare_ptr(const void *ppa,
 	    const void *ppb)
 {
-    const void *pa = *(const void * const *)ppa;
-    const void *pb = *(const void * const *)ppb;
-    //Can't use pointer subtraction because difference might not fit into an int
+    //Cast pointers to uintptr_t to avoid undefined behaviour when doing
+    //pointer comparison
+    uintptr_t pa = *(uintptr_t const *)ppa;
+    uintptr_t pb = *(uintptr_t const *)ppb;
     return pa < pb ? -1 : pa > pb ? 1 : 0;
 }
 
