@@ -26,6 +26,7 @@
 #include "p64_lfring.h"
 #include "p64_stack.h"
 #include "p64_hazardptr.h"
+#include "p64_msqueue.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -81,6 +82,7 @@ static struct timespec END_TIME;
 static bool VERBOSE = false;
 static bool LFRING = false;
 static bool STACK = false;
+static bool MSQUEUE = false;
 
 static p64_stack_t *
 stack_alloc(uint32_t aba)
@@ -98,6 +100,29 @@ static void
 stack_free(p64_stack_t *stk)
 {
     free(stk);
+}
+
+static p64_msqueue_t *
+msqueue_alloc(uint32_t aba)
+{
+     p64_msqueue_t *msq = aligned_alloc(CACHE_LINE, sizeof(p64_msqueue_t));
+     if (msq == NULL)
+     {
+	 perror("malloc"), abort();
+     }
+     p64_msqueue_elem_t *node = aligned_alloc(CACHE_LINE, sizeof(p64_msqueue_elem_t));
+     if (node == NULL)
+     {
+	 perror("malloc"), abort();
+     }
+     p64_msqueue_init(msq, aba, node);
+     return msq;
+}
+
+static void
+msqueue_free(p64_msqueue_t *msq)
+{
+    free(p64_msqueue_fini(msq));
 }
 
 //Wait for my signal to begin
@@ -144,6 +169,8 @@ static void barrier_all_wait(uint32_t numthreads)
     }
 }
 
+static __thread p64_msqueue_elem_t *msq_freelist = NULL;
+
 static bool
 enqueue(void *rb, void *elem)
 {
@@ -156,10 +183,34 @@ enqueue(void *rb, void *elem)
 	p64_stack_enqueue((p64_stack_t *)rb, elem);
 	return true;
     }
+    else if (MSQUEUE)
+    {
+	p64_msqueue_elem_t *node = msq_freelist;
+	if (node == NULL)
+	{
+	    fprintf(stderr, "msq_freelist is empty\n");
+	    fflush(stderr);
+	    abort();
+	}
+	assert(node->next.tag == ~0UL);
+	msq_freelist = node->next.ptr;
+	node->user_data = elem;
+	p64_msqueue_enqueue(rb, node);
+	return true;
+    }
     else
     {
 	return p64_ringbuf_enqueue(rb, &elem, 1) == 1;
     }
+}
+
+static void
+reclaim_node(void *_node)
+{
+    p64_msqueue_elem_t *node = _node;
+    assert(node->next.tag == ~0UL);
+    node->next.ptr = msq_freelist;
+    msq_freelist = node;
 }
 
 static void *
@@ -178,6 +229,28 @@ dequeue(void *rb)
     {
 	elem = p64_stack_dequeue((p64_stack_t *)rb);
 	return elem;
+    }
+    else if (MSQUEUE)
+    {
+	p64_msqueue_elem_t *node = p64_msqueue_dequeue(rb);
+	if (node != NULL)
+	{
+	    assert(node->next.tag == ~0UL);
+	    elem = node->user_data;
+	    node->user_data = NULL;
+	    if (HPD)
+	    {
+		while(!p64_hazptr_retire(node, reclaim_node))
+		{
+		    (void)p64_hazptr_reclaim();
+		}
+	    }
+	    else//Reclaim node immediately
+	    {
+		reclaim_node(node);
+	    }
+	    return elem;
+	}
     }
     else
     {
@@ -284,6 +357,23 @@ static void *entrypoint(void *arg)
 	p64_hazptr_register(HPD);
     }
 
+    if (MSQUEUE)
+    {
+	uint32_t nnode = tidx == 0 ? NUMELEMS + 10 : 10;
+	for (uint32_t i = 0; i < nnode; i++)
+	{
+	    p64_msqueue_elem_t *node = aligned_alloc(CACHE_LINE,
+						     sizeof(p64_msqueue_elem_t));
+	    if (node == NULL)
+	    {
+		perror("malloc"), abort();
+	    }
+	    node->next.tag = ~0UL;
+	    node->next.ptr = msq_freelist;
+	    msq_freelist = node;
+	}
+    }
+
     for (;;)
     {
 	//Wait for my signal to start
@@ -294,6 +384,20 @@ static void *entrypoint(void *arg)
 	//Signal I am done
 	barrier_thr_done(tidx);
     }
+
+    if (MSQUEUE)
+    {
+	p64_msqueue_elem_t *node = msq_freelist;
+	while (node != NULL)
+	{
+	    p64_msqueue_elem_t *next = node->next.ptr;
+	    assert(node->next.tag == ~0UL);
+	    free(node);
+	    node = next;
+	}
+	msq_freelist = NULL;
+    }
+
     if (HPD != NULL)
     {
 	p64_hazptr_unregister();
@@ -557,13 +661,11 @@ int main(int argc, char *argv[])
 	    case 'm' :
 		{
 		    rbmode = atoi(optarg);
-		    if (rbmode < 0 || rbmode > 9)
+		    if (rbmode < 0 || rbmode > 12)
 		    {
 			fprintf(stderr, "Invalid ring buffer mode %d\n", rbmode);
 			exit(EXIT_FAILURE);
 		    }
-		    LFRING = rbmode == 5;
-		    STACK = rbmode >= 6;
 		    break;
 		}
 	    case 'r' :
@@ -622,8 +724,9 @@ usage :
 		fprintf(stderr, "mode 2: non-blocking enqueue/blocking dequeue\n");
 		fprintf(stderr, "mode 3: non-blocking enqueue/non-blocking dequeue\n");
 		fprintf(stderr, "mode 4: blocking enqueue/lock-free dequeue\n");
-		fprintf(stderr, "mode 5: lock-free enqueue/lock-free dequeue (lfring)\n");
+		fprintf(stderr, "mode 5: lfring\n");
 		fprintf(stderr, "modes 6-9: Treiber stack with different ABA workarounds\n");
+		fprintf(stderr, "modes 10-12: M&S queue with different ABA workarounds\n");
 		exit(EXIT_FAILURE);
 	}
     }
@@ -632,14 +735,29 @@ usage :
 	goto usage;
     }
 
+    LFRING = rbmode == 5;
+    STACK = rbmode >= 6 && rbmode <= 9;
+    MSQUEUE = rbmode >= 10 && rbmode <= 12;
     printf("%u elems, %u ringbuf%s, ",
 	    NUMELEMS,
 	    NUMRINGBUFS,
 	    NUMRINGBUFS != 1 ? "s" : "");
-    if (rbmode >= 6)
+    int aba_mode = 0;
+    if (MSQUEUE)
+    {
+	const char *const aba[] = { "lock", "tag", "smr" };
+	printf("M&S queue (aba %s), ", aba[rbmode - 10]);
+	aba_mode = rbmode - 10;
+    }
+    else if (STACK)
     {
 	const char *const aba[] = { "lock", "tag", "smr", "llsc" };
 	printf("Treiber stack (aba %s), ", aba[rbmode - 6]);
+	aba_mode = rbmode - 6;
+    }
+    else if (rbmode == 5)
+    {
+	printf("lfring, ");
     }
     else
     {
@@ -659,9 +777,9 @@ usage :
 	randtable[i    ] = (r & 0xffff) % NUMRINGBUFS;
 	randtable[i + 1] = (r >> 16) % NUMRINGBUFS;
     }
-    if (STACK && rbmode == 8)
+    if (aba_mode == P64_ABA_SMR)
     {
-        HPD = p64_hazptr_alloc(10, 1);
+        HPD = p64_hazptr_alloc(10, 2);
         p64_hazptr_register(HPD);
     }
 
@@ -672,7 +790,8 @@ usage :
 	flags |= (rbmode & 2) ? P64_RINGBUF_F_NBENQ : 0;
 	flags |= (rbmode & 4) ? P64_RINGBUF_F_LFDEQ : 0;
 	void *q = LFRING ?  (void *)p64_lfring_alloc(RINGSIZE, 0) :
-		  STACK ? (void *)stack_alloc(rbmode - 6) :
+		  STACK ? (void *)stack_alloc(aba_mode) :
+		  MSQUEUE ? (void *)msqueue_alloc(aba_mode) :
 		  (void *)p64_ringbuf_alloc(RINGSIZE, flags, sizeof(void *));
 	if (q == NULL)
 	{
@@ -753,12 +872,16 @@ usage :
 	{
 	    stack_free(RINGBUFS[i]);
 	}
+	else if (MSQUEUE)
+	{
+	    msqueue_free(RINGBUFS[i]);
+	}
 	else
 	{
 	    p64_ringbuf_free(RINGBUFS[i]);
 	}
     }
-    if (STACK && rbmode == 8)
+    if (HPD)
     {
 	p64_hazptr_unregister();
 	p64_hazptr_free(HPD);

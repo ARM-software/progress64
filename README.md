@@ -14,6 +14,7 @@ Functionality
 | antireplay | replay protection | lock-free/wait-free
 | hashtable | hash table | lock-free
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
+| msqueue | Michael & Scott queue with configurable ABA workaround (lock/tag/smr) | blocking & lock-free
 | laxrob | 'lax' reorder buffer | lock-less
 | lfring | ring buffer | lock-free
 | qsbr | safe object reclamation using quiescent state based reclamation | reader wait-free, writer blocking
