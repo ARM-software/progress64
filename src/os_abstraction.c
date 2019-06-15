@@ -2,19 +2,17 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+#include "common.h"
+#include "os_abstraction.h"
+
 #ifdef _WIN32
 #include <processthreadsapi.h>
+#define ALIGNED_MALLOC(alignment, size) _aligned_malloc(size, alignment)
 #elif defined __APPLE__ || defined __linux__
-#ifndef _GNU_SOURCE
-#define _GNU_SOURCE
-#endif
 #include <sys/syscall.h>
 #include <unistd.h>
+#define ALIGNED_MALLOC(alignment, size) aligned_alloc(alignment, size)
 #endif
-#include <stdlib.h>
-
-#include "os_abstraction.h"
-#include "common.h"
 
 uint64_t
 p64_gettid(void)
@@ -36,7 +34,7 @@ p64_malloc(size_t size, size_t alignment)
     void *ptr;
     if (alignment > 1)
     {
-	ptr = aligned_alloc(alignment, ROUNDUP(size, alignment));
+	ptr = ALIGNED_MALLOC(alignment, ROUNDUP(size, alignment));
     }
     else
     {
