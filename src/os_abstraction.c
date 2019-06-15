@@ -2,9 +2,6 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-#include "common.h"
-#include "os_abstraction.h"
-
 #ifdef _WIN32
 #include <processthreadsapi.h>
 #define ALIGNED_MALLOC(alignment, size) _aligned_malloc(size, alignment)
@@ -13,6 +10,10 @@
 #include <unistd.h>
 #define ALIGNED_MALLOC(alignment, size) aligned_alloc(alignment, size)
 #endif
+#include <stdlib.h>
+
+#include "common.h"
+#include "os_abstraction.h"
 
 uint64_t
 p64_gettid(void)
