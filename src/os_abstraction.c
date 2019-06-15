@@ -15,8 +15,8 @@
 #endif
 #include <stdlib.h>
 
-#include "common.h"
 #include "os_abstraction.h"
+#include "common.h"
 
 uint64_t
 p64_gettid(void)
