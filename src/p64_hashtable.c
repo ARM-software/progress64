@@ -3,6 +3,7 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -57,7 +58,7 @@ list_check(p64_hashelem_t *prnt, uint64_t (*f)(p64_hashelem_t *))
     p64_hashelem_t *he;
     while ((he = REM_MARK(prnt->next)) != NULL)
     {
-	printf(" <h=%lx,k=%lu>", prnt->hash, f(he));
+	printf(" <h=%"PRIx64",k=%"PRIu64">", prnt->hash, f(he));
 	num++;
 	prnt = he;
     }

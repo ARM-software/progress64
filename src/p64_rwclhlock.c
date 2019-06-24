@@ -6,12 +6,16 @@
 #endif
 #include <assert.h>
 #include <errno.h>
+#ifdef __linux__
 #include <linux/futex.h>
+#endif
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#ifdef __linux__
 #include <sys/syscall.h>
+#endif
 #include <unistd.h>
 
 #include "p64_rwclhlock.h"
@@ -44,6 +48,9 @@ futex_wait(int *loc, int val)
 	perror("futex(WAIT)");
 	abort();
     }
+#else
+    (void)loc;
+    (void)val;
 #endif
 }
 
@@ -56,6 +63,8 @@ futex_wake(int *loc)
 	perror("futex(WAKE)");
 	abort();
     }
+#else
+    (void)loc;
 #endif
 }
 

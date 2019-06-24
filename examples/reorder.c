@@ -14,7 +14,7 @@ static void callback(void *arg, void *elem, uint32_t sn)
     EXPECT(elem != P64_REORDER_DUMMY);
     if (elem != NULL)
     {
-	printf("Element %lu retired\n", (uintptr_t)elem);
+	printf("Element %p retired\n", elem);
 	EXPECT((uintptr_t)elem == next_elem);
 	EXPECT(sn + 100 == next_elem);
 	next_elem++;

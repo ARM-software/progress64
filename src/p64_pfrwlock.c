@@ -31,7 +31,7 @@
 #define PEND_RD_ONE    (1U << PEND_RD_SHIFT)
 #define LEAVE_WR_SHIFT 32
 #define ENTER_WR_SHIFT 48
-#define ENTER_WR_ONE   (1UL << ENTER_WR_SHIFT)
+#define ENTER_WR_ONE   (UINT64_C(1) << ENTER_WR_SHIFT)
 
 void
 p64_pfrwlock_init(p64_pfrwlock_t *lock)

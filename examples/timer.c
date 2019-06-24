@@ -15,7 +15,7 @@ callback(p64_timer_t tim,
 	 void *arg)
 {
     p64_tick_t tck = p64_timer_tick_get();
-    printf("Timer %d expiration %#lx now %#lx\n", tim, tmo, tck);
+    printf("Timer %d expiration %#"PRIx64" now %#"PRIx64"\n", tim, tmo, tck);
     *(p64_tick_t *)arg = tck;
 }
 

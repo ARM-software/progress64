@@ -7,7 +7,7 @@
 
 #include "arch.h"
 
-#define ACQ_ONE    (1UL << 32)
+#define ACQ_ONE    (UINT64_C(1) << 32)
 #define TO_ACQ(x)  (uint32_t)((x) >> 32)
 #define TO_REL(x)  (uint32_t)((x)      )
 

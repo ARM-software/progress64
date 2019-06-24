@@ -11,7 +11,9 @@
 ################################################################################
 
 #List of executable files to build
-TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock lfring qsbr bm_ringbuf bm_smr tfrwlock pfrwlock stack bm_lock msqueue
+TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock lfring qsbr tfrwlock pfrwlock stack msqueue
+#The following targets require phtreads and Linux support
+TARGETS += bm_ringbuf bm_smr bm_lock
 #List object files for each target
 OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tktlock.o p64_pfrwlock.o p64_semaphore.o p64_rwclhlock.o p64_stack.o p64_msqueue.o
 OBJECTS_hashtable = hashtable.o
@@ -28,13 +30,13 @@ OBJECTS_ringbuf = ringbuf.o
 OBJECTS_clhlock = clhlock.o
 OBJECTS_lfring = lfring.o
 OBJECTS_qsbr = qsbr.o
-OBJECTS_bm_ringbuf = bm_ringbuf.o
-OBJECTS_bm_smr = bm_smr.o
 OBJECTS_tfrwlock = tfrwlock.o
 OBJECTS_pfrwlock = pfrwlock.o
 OBJECTS_stack = stack.o
-OBJECTS_bm_lock = bm_lock.o
 OBJECTS_msqueue = msqueue.o
+OBJECTS_bm_ringbuf = bm_ringbuf.o
+OBJECTS_bm_smr = bm_smr.o
+OBJECTS_bm_lock = bm_lock.o
 
 LIBS = libprogress64.a
 LIBS += -lm
