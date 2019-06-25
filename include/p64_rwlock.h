@@ -5,6 +5,7 @@
 #ifndef _P64_RWLOCK_H
 #define _P64_RWLOCK_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -27,6 +28,15 @@ void p64_rwlock_release_rd(p64_rwlock_t *lock);
 //Acquire a write lock
 //Block until earlier reads & writes have completed
 void p64_rwlock_acquire_wr(p64_rwlock_t *lock);
+
+//Try to acquire a read lock
+//Return false immediately instead of blocking until earlier write has completed
+bool p64_rwlock_try_acquire_rd(p64_rwlock_t *lock);
+
+//Try to acquire a write lock
+//Return false immediately instead of blocking until earlier reads & writes
+//have completed
+bool p64_rwlock_try_acquire_wr(p64_rwlock_t *lock);
 
 //Release a write lock
 void p64_rwlock_release_wr(p64_rwlock_t *lock);

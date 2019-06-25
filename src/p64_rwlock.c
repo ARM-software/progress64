@@ -58,6 +58,26 @@ p64_rwlock_acquire_rd(p64_rwlock_t *lock)
 					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
 }
 
+bool
+p64_rwlock_try_acquire_rd(p64_rwlock_t *lock)
+{
+    p64_rwlock_t l;
+    do
+    {
+	l = __atomic_load_n(lock, __ATOMIC_RELAXED);
+	//Return immediately if writer present
+	if ((l & RWLOCK_WRITER) != 0)
+	{
+	    return false;
+	}
+	//Attempt to increment number of readers
+    }
+    while (!__atomic_compare_exchange_n(lock, &l, l + 1,
+					/*weak=*/true,
+					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
+    return true;
+}
+
 void
 p64_rwlock_release_rd(p64_rwlock_t *lock)
 {
@@ -93,6 +113,22 @@ p64_rwlock_acquire_wr(p64_rwlock_t *lock)
 
     //Wait for any present readers to go away
     (void)wait_for_no(lock, RWLOCK_READERS, __ATOMIC_RELAXED);
+}
+
+bool
+p64_rwlock_try_acquire_wr(p64_rwlock_t *lock)
+{
+    p64_rwlock_t l = __atomic_load_n(lock, __ATOMIC_RELAXED);
+    //Lock must be completely free, we do not want to wait for any readers
+    //to go away
+    if (l == 0 &&
+	__atomic_compare_exchange_n(lock, &l, RWLOCK_WRITER,
+				    /*weak=*/false,
+				    __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+    {
+	return true;
+    }
+    return false;
 }
 
 void

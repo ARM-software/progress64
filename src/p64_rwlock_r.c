@@ -67,6 +67,33 @@ p64_rwlock_r_acquire_rd(p64_rwlock_r_t *lock)
     pth.stack[pth.depth++] = lock;
 }
 
+bool
+p64_rwlock_r_try_acquire_rd(p64_rwlock_r_t *lock)
+{
+    if (UNLIKELY(pth.threadid == INVALID_TID))
+    {
+	pth.threadid = p64_gettid();
+    }
+    if (UNLIKELY(pth.depth == STACKSIZE))
+    {
+	fprintf(stderr, "rwlock_r: too many calls p64_rwlock_r_acquire_rd/wr\n");
+	fflush(stderr);
+	abort();
+    }
+    if (!find_lock(lock))
+    {
+	//First time this specific lock is acquired
+	if (!p64_rwlock_try_acquire_rd(&lock->rwlock))
+	{
+	    return false;
+	}
+	//It must be released later
+	pth.release_mask |= 1UL << pth.depth;
+    }
+    pth.stack[pth.depth++] = lock;
+    return true;
+}
+
 void
 p64_rwlock_r_release_rd(p64_rwlock_r_t *lock)
 {
@@ -117,6 +144,38 @@ p64_rwlock_r_acquire_wr(p64_rwlock_r_t *lock)
 	pth.release_mask |= 1UL << pth.depth;
     }
     pth.stack[pth.depth++] = lock;
+}
+
+bool
+p64_rwlock_r_try_acquire_wr(p64_rwlock_r_t *lock)
+{
+    if (UNLIKELY(pth.threadid == INVALID_TID))
+    {
+	pth.threadid = p64_gettid();
+    }
+    if (UNLIKELY(pth.depth == STACKSIZE))
+    {
+	fprintf(stderr, "rwlock_r: too many calls p64_rwlock_r_acquire_rd/wr\n");
+	fflush(stderr);
+	abort();
+    }
+    if (__atomic_load_n(&lock->owner, __ATOMIC_RELAXED) != pth.threadid)
+    {
+	if (UNLIKELY(find_lock(lock)))
+	{
+	    //acquire-write after acquire-read not allowed
+	    return false;
+	}
+	if (!p64_rwlock_try_acquire_wr(&lock->rwlock))
+	{
+	    return false;
+	}
+	__atomic_store_n(&lock->owner, pth.threadid, __ATOMIC_RELAXED);
+	//First time this specific lock is acquired so it must be released later
+	pth.release_mask |= 1UL << pth.depth;
+    }
+    pth.stack[pth.depth++] = lock;
+    return true;
 }
 
 void
