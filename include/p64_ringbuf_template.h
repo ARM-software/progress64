@@ -2,6 +2,9 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Blocking ring buffer with user defined element type
+//Supports blocking MP/MC and SP/SC modes, also lock-free MC dequeue
+
 #ifndef _P64_RINGBUF_TEMPLATE_H
 #define _P64_RINGBUF_TEMPLATE_H
 

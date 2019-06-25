@@ -2,6 +2,10 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Treiber lock-free stack
+//Different ABA workarounds are supported: lock, tagged pointers, safe memory
+//reclamation (SMR) and LL/SC (exclusives on Arm)
+
 #ifndef _P64_STACK_H
 #define _P64_STACK_H
 

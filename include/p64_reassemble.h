@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Lock-free IP reassembly using bespoke hash table
+
 #ifndef _P64_REASSEMBLE_H
 #define _P64_REASSEMBLE_H
 

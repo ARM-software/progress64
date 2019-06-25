@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Read/write synchroniser aka 'seqlock'
+
 #ifndef _P64_RWSYNC_H
 #define _P64_RWSYNC_H
 

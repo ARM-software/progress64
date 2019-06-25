@@ -2,6 +2,8 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+//CLH queue lock
+
 #ifndef _P64_CLHLOCK
 #define _P64_CLHLOCK
 
@@ -26,8 +28,8 @@ void p64_clhlock_init(p64_clhlock_t *lock);
 void p64_clhlock_fini(p64_clhlock_t *lock);
 
 //Acquire a CLH lock
-//*nodep will be written with a pointer to a p64_clhnode_t, this must
-//eventually be freed
+//*nodep will be written with a pointer to a p64_clhnode_t object, this
+//object must eventually be freed
 void p64_clhlock_acquire(p64_clhlock_t *lock, p64_clhnode_t **nodep);
 
 //Release a CLH lock

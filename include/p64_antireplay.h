@@ -2,6 +2,10 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Lock-free/wait-free anti-replay window for replay protection
+//Replay protection detects duplicate ("replayed") and stale events
+//Sequence numbers are 64-bit
+
 #ifndef _P64_ANTIREPLAY_H
 #define _P64_ANTIREPLAY_H
 

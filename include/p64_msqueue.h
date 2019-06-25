@@ -2,6 +2,10 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Michael & Scott lock-free queue
+//Different ABA workarounds are supported: locks (head & tail), tagged pointers
+//and safe memory reclamation (SMR)
+
 #ifndef _P64_MSQUEUE_H
 #define _P64_MSQUEUE_H
 
@@ -13,7 +17,7 @@ extern "C"
 #endif
 
 //ABA workaround methods
-#define P64_ABA_LOCK 0x0000 //Use spin lock for mutual exclusion
+#define P64_ABA_LOCK 0x0000 //Use spin locks for mutual exclusion
 #define P64_ABA_TAG  0x0001 //Requires double-word (lockfree16) CAS
 #define P64_ABA_SMR  0x0002 //Use hazard pointer API
 
@@ -35,12 +39,12 @@ typedef struct p64_msqueue
     p64_ptr_tag_t tail __attribute__((__aligned__(64)));
 } p64_msqueue_t;
 
-//Initialise a Michael&Scott lock-free queue
-//A dynamically allocated dummy element is required
+//Initialise Michael&Scott lock-free queue
+//A dynamically allocated dummy element must be specified
 void
 p64_msqueue_init(p64_msqueue_t *msq, uint32_t aba_workaround, p64_msqueue_elem_t *dummy);
 
-//Finish a Michael&Scott queue
+//Finish Michael&Scott queue
 //Return (a potentially different) dummy element to the user
 p64_msqueue_elem_t *
 p64_msqueue_fini(p64_msqueue_t *msq);

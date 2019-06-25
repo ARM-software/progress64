@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Safe memory reclamation using hazard pointers
+
 #ifndef _P64_HAZARDPTR_H
 #define _P64_HAZARDPTR_H
 

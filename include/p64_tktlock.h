@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Ticket lock
+
 #ifndef _P64_TKTLOCK_H
 #define _P64_TKTLOCK_H
 

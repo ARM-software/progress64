@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Recursive version of read/write synchroniser
+
 #ifndef _P64_RWSYNC_R_H
 #define _P64_RWSYNC_R_H
 

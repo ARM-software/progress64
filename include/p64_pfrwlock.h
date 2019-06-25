@@ -2,6 +2,12 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Phase fair reader/writer lock
+//Phase fairness essentially means that "a read request is never blocked by
+//more than one writer phase and one reader phase".
+//See "Reader-Writer Synchronization for Shared-Memory Multiprocessor
+//Real-Time Systems" by Björn B. Brandenburg and James H. Anderson
+
 #ifndef _P64_PFRWLOCK_H
 #define _P64_PFRWLOCK_H
 
@@ -35,7 +41,7 @@ struct p64_pfrwlock
 #endif
 };
 
-//Initialise a task fair reader/writer lock
+//Initialise a phase fair reader/writer lock
 void p64_pfrwlock_init(p64_pfrwlock_t *lock);
 
 //Acquire a reader (shared) lock
@@ -46,7 +52,7 @@ void p64_pfrwlock_acquire_rd(p64_pfrwlock_t *lock);
 void p64_pfrwlock_release_rd(p64_pfrwlock_t *lock);
 
 //Acquire a writer (exclusive) lock
-//Block until earlier shared & exclusive locks have been released
+//Block until earlier reader & writer locks have been released
 void p64_pfrwlock_acquire_wr(p64_pfrwlock_t *lock);
 
 //Release a writer lock

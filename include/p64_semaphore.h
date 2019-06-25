@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Fair counting semaphore
+
 #ifndef _P64_SEMAPHORE_H
 #define _P64_SEMAPHORE_H
 
@@ -29,9 +31,11 @@ typedef union
 //Initialise a semaphore with the specified count
 void p64_sem_init(p64_semaphore_t *sem, uint32_t count);
 
+//Wait for semaphore
 void p64_sem_acquire(p64_semaphore_t *sem);
 void p64_sem_acquire_n(p64_semaphore_t *sem, uint32_t n);
 
+//Signal semaphore
 void p64_sem_release(p64_semaphore_t *sem);
 void p64_sem_release_n(p64_semaphore_t *sem, uint32_t n);
 

@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Safe memory reclamation using quiescent state based reclamation
+
 #ifndef _P64_QSBR_H
 #define _P64_QSBR_H
 

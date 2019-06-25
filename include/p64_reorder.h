@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Non-blocking 'strict' reorder buffer
+
 #ifndef _P64_REORDER_H
 #define _P64_REORDER_H
 

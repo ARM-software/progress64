@@ -2,6 +2,9 @@
 //
 // SPDX-License-Identifier: BSD-3-Clause
 
+//Reader/writer version of CLH queue lock
+//Optional sleep (yield to OS) after configurable timeout
+
 #ifndef _P64_RWCLHLOCK
 #define _P64_RWCLHLOCK
 
@@ -32,7 +35,7 @@ void p64_rwclhlock_init(p64_rwclhlock_t *lock, uint32_t spin_tmo_ns);
 void p64_rwclhlock_fini(p64_rwclhlock_t *lock);
 
 //Acquire a reader/writer CLH lock
-//*nodep will be written with a pointer to a p64_rwclhnode_t, this memory must
+//*nodep will be written with a pointer to a p64_rwclhnode_t, this object must
 //eventually be freed
 void p64_rwclhlock_acquire_rd(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep);
 void p64_rwclhlock_acquire_wr(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep);

@@ -39,6 +39,10 @@ p64_hashtable_t *p64_hashtable_alloc(uint32_t nelems);
 //The hash table must be empty
 void p64_hashtable_free(p64_hashtable_t *);
 
+//Lookup an element in the hash table, given the key, a hash value of the
+//key and a compare function
+//If the element is found, the hazard pointer will contain a reference which
+//must eventually be released
 p64_hashelem_t *p64_hashtable_lookup(p64_hashtable_t *ht,
 				     p64_hashtable_compare cf,
 				     const void *key,

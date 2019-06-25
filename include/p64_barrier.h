@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Simple sense-reversal centralized thread barrier
+
 #ifndef _P64_BARRIER_H
 #define _P64_BARRIER_H
 
@@ -21,7 +23,8 @@ typedef struct p64_barrier
 //Initialise a synchronisation barrier
 void p64_barrier_init(p64_barrier_t *br, uint32_t numthreads);
 
-//Enter the barrier and wait until all threads have entered the barrier
+//Enter the barrier and wait until all (other) threads have also entered
+//the barrier before leaving
 //p64_barrier_wait() has release and acquire ordering
 void p64_barrier_wait(p64_barrier_t *br);
 

@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Recursive version of reader/writer lock
+
 #ifndef _P64_RWLOCK_R_H
 #define _P64_RWLOCK_R_H
 

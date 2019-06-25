@@ -2,6 +2,11 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Classic blocking MP/MC ring buffer
+//Non-blocking (but not lock-free) MP/MC mode also supported
+//SP/SC modes are also supported
+//The element size must be sizeof(void *)
+
 #ifndef _P64_RINGBUF_H
 #define _P64_RINGBUF_H
 
@@ -34,23 +39,23 @@ typedef struct p64_ringbuf_result
     uint32_t mask;
 } p64_ringbuf_result_t;
 
-//Allocate a ring buffer with space for at least 'nelems' elements
+//Allocate ring buffer with space for at least 'nelems' elements
 //of size 'esize' each
 //'nelems' != 0 and 'nelems' <= 0x80000000
 p64_ringbuf_t *
 p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize);
 
-//Free a ring buffer
+//Free ring buffer
 //The ring buffer must be empty
 void
 p64_ringbuf_free(p64_ringbuf_t *rb);
 
-//Enqueue elements on a ring buffer
+//Enqueue elements on ring buffer
 //Return the number of actually enqueued elements
 uint32_t
 p64_ringbuf_enqueue(p64_ringbuf_t *rb, void *const ev[], uint32_t num);
 
-//Dequeue elements from a ring buffer
+//Dequeue elements from ring buffer
 //Return the number of actually dequeued elements
 uint32_t
 p64_ringbuf_dequeue(p64_ringbuf_t *rb, void *ev[], uint32_t num,

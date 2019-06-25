@@ -2,6 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Basic spin lock
+
 #ifndef _P64_SPINLOCK_H
 #define _P64_SPINLOCK_H
 
