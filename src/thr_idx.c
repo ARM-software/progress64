@@ -59,7 +59,7 @@ destructor(void *ptr)
 {
     uint32_t idx = ptr_to_idxcnt(ptr).idx;
     __atomic_fetch_and(&thread_words[idx / 64],
-		       ~(1U << (idx % 64)),
+		       ~(UINT64_C(1) << (idx % 64)),
 		       __ATOMIC_RELEASE);
 }
 
@@ -100,14 +100,14 @@ p64_idx_alloc(void)
 	uint64_t word = thread_words[i];
 	while (~word != 0)
 	{
-	    uint32_t bit = __builtin_ctz(~word);
+	    uint32_t bit = __builtin_ctzl(~word);
 	    if (64 * i + bit >= MAXTHREADS)
 	    {
 		return -1;
 	    }
 	    if (__atomic_compare_exchange_n(&thread_words[i],
 					    &word,
-					    word | (1U << bit),
+					    word | (UINT64_C(1) << bit),
 					    /*weak*/0,
 					    __ATOMIC_ACQUIRE,
 					    __ATOMIC_RELAXED))
@@ -134,12 +134,13 @@ p64_idx_free(int32_t idx)
 	{
 	    assert (ic.cnt != 0);
 	    assert((__atomic_load_n(&thread_words[idx / 64], __ATOMIC_RELAXED) &
-				    (1U << (idx % 64))) != 0);
+				    (UINT64_C(1) << (idx % 64))) != 0);
 	    if (--ic.cnt == 0)
 	    {
 		//Relinquish this thread index
 		__atomic_fetch_and(&thread_words[idx / 64],
-				   ~(1U << (idx % 64)), __ATOMIC_RELEASE);
+				   ~(UINT64_C(1) << (idx % 64)),
+				   __ATOMIC_RELEASE);
 		pthread_setspecific(key, NULL);
 	    }
 	    else
