@@ -357,25 +357,25 @@ static void *entrypoint(void *arg)
 	p64_hazptr_register(HPD);
     }
 
-    if (MSQUEUE)
-    {
-	uint32_t nnode = tidx == 0 ? NUMELEMS + 10 : 10;
-	for (uint32_t i = 0; i < nnode; i++)
-	{
-	    p64_msqueue_elem_t *node = aligned_alloc(CACHE_LINE,
-						     sizeof(p64_msqueue_elem_t));
-	    if (node == NULL)
-	    {
-		perror("malloc"), abort();
-	    }
-	    node->next.tag = ~0UL;
-	    node->next.ptr = msq_freelist;
-	    msq_freelist = node;
-	}
-    }
-
     for (;;)
     {
+	if (MSQUEUE)
+	{
+	    uint32_t nnode = tidx == 0 ? NUMELEMS + 10 : 10;
+	    for (uint32_t i = 0; i < nnode; i++)
+	    {
+		p64_msqueue_elem_t *node =
+		    aligned_alloc(CACHE_LINE, sizeof(p64_msqueue_elem_t));
+		if (node == NULL)
+		{
+		    perror("malloc"), abort();
+		}
+		node->next.tag = ~0UL;
+		node->next.ptr = msq_freelist;
+		msq_freelist = node;
+	    }
+	}
+
 	//Wait for my signal to start
 	barrier_thr_begin(tidx);
 
@@ -383,19 +383,19 @@ static void *entrypoint(void *arg)
 
 	//Signal I am done
 	barrier_thr_done(tidx);
-    }
 
-    if (MSQUEUE)
-    {
-	p64_msqueue_elem_t *node = msq_freelist;
-	while (node != NULL)
+	if (MSQUEUE)
 	{
-	    p64_msqueue_elem_t *next = node->next.ptr;
-	    assert(node->next.tag == ~0UL);
-	    free(node);
-	    node = next;
+	    p64_msqueue_elem_t *node = msq_freelist;
+	    while (node != NULL)
+	    {
+		p64_msqueue_elem_t *next = node->next.ptr;
+		assert(node->next.tag == ~0UL);
+		free(node);
+		node = next;
+	    }
+	    msq_freelist = NULL;
 	}
-	msq_freelist = NULL;
     }
 
     if (HPD != NULL)
