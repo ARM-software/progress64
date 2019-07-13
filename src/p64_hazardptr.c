@@ -509,14 +509,14 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
 
 //Qsort call-back: compare two pointers
 static int
-compare_ptr(const void *ppa,
-	    const void *ppb)
+compare_ptr(const void *vpa,
+	    const void *vpb)
 {
-    //Cast pointers to uintptr_t to avoid undefined behaviour when doing
-    //pointer comparison
-    uintptr_t pa = *(uintptr_t const *)ppa;
-    uintptr_t pb = *(uintptr_t const *)ppb;
-    return pa < pb ? -1 : pa > pb ? 1 : 0;
+    //Compare pointers using uintptr_t types to avoid undefined behaviour
+    //when comparing pointers
+    const uintptr_t *upa = vpa;
+    const uintptr_t *upb = vpb;
+    return *upa < *upb ? -1 : *upa > *upb ? 1 : 0;
 }
 
 //Collect active references from all threads
