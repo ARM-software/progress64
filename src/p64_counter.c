@@ -89,7 +89,7 @@ p64_cntdomain_free(p64_cntdomain_t *cntd)
     {
 	if (__atomic_load_n(&cntd->perthread[i], __ATOMIC_RELAXED) != NULL)
 	{
-	    fprintf(stderr, "counter: Registered threads still present\n");
+	    fprintf(stderr, "counter: Threads still registered\n");
 	    fflush(stderr);
 	    abort();
 	}
@@ -140,13 +140,13 @@ p64_cntdomain_unregister(p64_cntdomain_t *cntd)
     {
 	eprintf_thread_not_registered();
     }
-    //Move all counters from private to shared locations
+    //'Move' all counters from private to shared locations
     for (uint32_t i = 0; i < cntd->ncounters; i++)
     {
 	uint32_t val = counters[i];
 	if (val != 0)
 	{
-	    //Move counter value from private to shared location
+	    //'Move' counter value from private to shared location
 	    //This is not atomic!
 	    __atomic_store_n(&counters[i], 0, __ATOMIC_RELAXED);
 	    __atomic_fetch_add(&cntd->shared[i], val, __ATOMIC_RELAXED);
@@ -242,16 +242,30 @@ p64_counter_read(p64_cntdomain_t *cntd, p64_counter_t cntid)
 	eprintf_invalid_counter(cntid);
     }
     p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
-    uint64_t sum = cntd->shared[cntid];
-    //Add values from private (per thread) locations
-    for (uint32_t t = 0; t < MAXTHREADS; t++)
+    uint64_t sh0, sh1, sum;
+    do
     {
-	uint64_t *counters = p64_hazptr_acquire(&cntd->perthread[t], &hp);
-	if (counters != NULL)
+	sh0 = __atomic_load_n(&cntd->shared[cntid], __ATOMIC_RELAXED);
+	sum = sh0;
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	//Add values from private (per thread) locations
+	for (uint32_t t = 0; t < MAXTHREADS; t++)
 	{
-	    sum += __atomic_load_n(&counters[cntid], __ATOMIC_RELAXED);
+	    uint64_t *counters = p64_hazptr_acquire(&cntd->perthread[t], &hp);
+	    if (counters != NULL)
+	    {
+		sum += __atomic_load_n(&counters[cntid], __ATOMIC_RELAXED);
+	    }
 	}
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	//Re-read the shared location
+	sh1 = __atomic_load_n(&cntd->shared[cntid], __ATOMIC_RELAXED);
+	//If the shared location has changed, we might have an inconsistent
+	//view so restart the summing
+	//XXX This is not fail-safe as the shared and per-thread locations are
+	//not updated atomically
     }
+    while (sh0 != sh1);
     p64_hazptr_release(&hp);
     return sum;
 }

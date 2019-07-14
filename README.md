@@ -12,7 +12,7 @@ Functionality
 | Name | Description | Properties |
 | ---- | ---- | :----: |
 | antireplay | replay protection | lock-free/wait-free
-| counter | shared counters | wait-free
+| counter | shared counters | reader obstruction-free, writer wait-free
 | hashtable | hash table | lock-free
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
 | msqueue | Michael & Scott queue with configurable ABA workaround (lock/tag/smr) | blocking & lock-free
