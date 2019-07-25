@@ -68,14 +68,13 @@ Use library through the provided C header files. Or copy source files into your 
 Restrictions
 ----
 * Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the hardware.
-* Hazardptr and qsbr support one reclamation domain only. This is a trade-off that simplifies the API and usage.
+* Hazardptr and QSBR support one reclamation domain only. This is a trade-off that simplifies the API and usage. For QSBR, multiple reclamation domains do make sense...
 
 Notes
 ----
 * The hazard pointer implementation is non-blocking (wait-free) when a thread has space for more retired objects than the total number of hazard pointers (for all threads).
 * The hazard pointer API will actually use the QSBR implementation when 'nrefs' (number of hazard pointers per thread) is set to 0 when the hazard pointer domain is allocated.
 * The resizeable reassembly function is experimental and has not yet endured a stress test.
-* The Treiber stack is experimental. The major purpose of the Treiber stack is to demonstrate different types of ABA workarounds.
 * When using Safe Memory Reclamation for ABA workaround with the Treiber stack, LIFO order is not guaranteed (so not really a stack...)
 
 TODO
