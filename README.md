@@ -54,7 +54,12 @@ Functionality
 
 Requirements
 ----
-* A C compiler (e.g. GCC) which supports the '\_\_atomic' builtins and inline assembler. A lot of other GCC'isms are used as well.
+* A C11 compiler (e.g. GCC or Clang) which supports the '\_\_atomic' builtins and inline assembler. A lot of other GCC'isms are used as well.
+
+HW/SW Support
+----
+* Architectures - ARMv8/AArch64 and x86-64
+* OS - Linux, Windows and macOS (Darwin)
 
 Usage
 ----
@@ -62,7 +67,6 @@ Use library through the provided C header files. Or copy source files into your 
 
 Restrictions
 ----
-* PROGRESS64 currently only supports ARMv8/AArch64 and x86-64 architectures.
 * Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the hardware.
 * Hazardptr and qsbr support one reclamation domain only. This is a trade-off that simplifies the API and usage.
 
@@ -78,6 +82,7 @@ TODO
 ----
 * Some missing examples
 * Multithreaded stress test programs for e.g. hash table, reassembly, reorder
+* Use C11 features instead of GNU extensions and other non-standard features
 
 License
 ----

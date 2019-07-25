@@ -6,14 +6,18 @@
 # Supports multiple targets and auto-generated dependencies
 ################################################################################
 
+UNAME := $(shell uname)
+
 ###############################################################################
 # Project specific definitions
 ################################################################################
 
 #List of executable files to build
 TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock lfring qsbr tfrwlock pfrwlock stack msqueue counter
-#The following targets require phtreads and Linux support
+#The following targets require pthreads and Linux support
+ifeq ($(UNAME),Linux)
 TARGETS += bm_ringbuf bm_smr bm_lock
+endif
 #List object files for each target
 OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tktlock.o p64_pfrwlock.o p64_semaphore.o p64_rwclhlock.o p64_stack.o p64_msqueue.o p64_counter.o
 OBJECTS_hashtable = hashtable.o
@@ -55,10 +59,16 @@ else
 CCFLAGS += -fsanitize=address -fsanitize=undefined
 LDFLAGS += -fsanitize=address -fsanitize=undefined
 ifneq ($(CLANG),yes)
+ifneq ($(UNAME),Darwin)
 LDFLAGS += -static-libasan -static-libubsan
+else
+#GCC on macOS seems to have only one library for all sanitizers
+LDFLAGS += -static-libsan
 endif
 endif
-CCFLAGS += -std=c99
+endif
+CCFLAGS += -std=c11
+LDFLAGS += -std=c11
 #CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
 CCFLAGS += -g -ggdb -Wall -Wextra
 CCFLAGS += -fomit-frame-pointer
@@ -127,7 +137,7 @@ CC = $(CROSS_COMPILE)clang
 CXX = $(CROSS_COMPILE)clang++
 AS = $(CROSS_COMPILE)as
 AR = $(CROSS_COMPILE)ar
-LD = $(CROSS_COMPILE)clang++
+LD = $(CROSS_COMPILE)clang
 else
 CC = $(CROSS_COMPILE)gcc
 CXX = $(CROSS_COMPILE)g++
@@ -137,7 +147,12 @@ LD = $(CROSS_COMPILE)gcc
 endif
 #GROUPSTART = -Wl,--start-group
 #GROUPEND = -Wl,--end-group
+ifneq ($(UNAME),Darwin)
 ARFLAGS = -rcD
+else
+#Deterministic option not supported by macOS
+ARFLAGS = -rc
+endif
 BIN2C = bin2c
 
 #Important compilation flags

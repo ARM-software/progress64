@@ -370,7 +370,7 @@ p64_hazptr_dump(FILE *fp)
 	    fprintf(fp, "hp[%p]=%p", &TS->hp[i].ref, TS->hp[i].ref);
 	    if (TS->fl[i].file != NULL)
 	    {
-		fprintf(fp, " @ %s:%"PRIu64, TS->fl[i].file, TS->fl[i].line);
+		fprintf(fp, " @ %s:%"PRIuPTR, TS->fl[i].file, TS->fl[i].line);
 	    }
 	    fputc('\n', fp);
 	}
