@@ -86,7 +86,8 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	(flags & invalid_combo0) == invalid_combo0 ||
 	(flags & invalid_combo1) == invalid_combo1 ||
 	(flags & invalid_combo2) == invalid_combo2 ||
-	(flags & invalid_combo3) == invalid_combo3)
+	(flags & invalid_combo3) == invalid_combo3 ||
+	((flags & (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_NBDEQ)) != 0 && esize != sizeof(void *)))
     {
 	fprintf(stderr, "ringbuf: Invalid flags %#x\n", flags);
 	return NULL;
