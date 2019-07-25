@@ -6,6 +6,7 @@ bm_ringbuf
 bm_smr
 clhlock
 core
+counter
 hashtable
 msqueue
 laxrob
