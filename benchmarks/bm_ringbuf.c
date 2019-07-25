@@ -169,7 +169,7 @@ static void barrier_all_wait(uint32_t numthreads)
     }
 }
 
-static __thread p64_msqueue_elem_t *msq_freelist = NULL;
+static THREAD_LOCAL p64_msqueue_elem_t *msq_freelist = NULL;
 
 static bool
 enqueue(void *rb, void *elem)

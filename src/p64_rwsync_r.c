@@ -13,7 +13,7 @@
 #include "common.h"
 #include "os_abstraction.h"
 
-static __thread uint64_t threadid = INVALID_TID;
+static THREAD_LOCAL uint64_t threadid = INVALID_TID;
 
 void
 p64_rwsync_r_init(p64_rwsync_r_t *sync)

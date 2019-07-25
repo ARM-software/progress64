@@ -160,7 +160,7 @@ struct thread_state
     //File&line array follows
 } ALIGNED(CACHE_LINE);
 
-static __thread struct thread_state *TS = NULL;
+static THREAD_LOCAL struct thread_state *TS = NULL;
 
 static struct thread_state *
 alloc_ts(p64_hpdomain_t *hpd)
@@ -378,8 +378,8 @@ p64_hazptr_dump(FILE *fp)
     return __builtin_popcount(TS->free);
 }
 
-static __thread uint32_t _free_hp = ~0;
-static __thread void *_hp[32];
+static THREAD_LOCAL uint32_t _free_hp = ~0;
+static THREAD_LOCAL void *_hp[32];
 
 //Safely acquire a reference to the object whose pointer is stored at the
 //specified location

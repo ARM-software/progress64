@@ -116,7 +116,7 @@ struct thread_state
     struct object objs[];
 } ALIGNED(CACHE_LINE);
 
-static __thread struct thread_state *TS = NULL;
+static THREAD_LOCAL struct thread_state *TS = NULL;
 
 static struct thread_state *
 alloc_ts(p64_qsbrdomain_t *qsbr)

@@ -97,7 +97,7 @@ p64_cntdomain_free(p64_cntdomain_t *cntd)
     p64_mfree(cntd);
 }
 
-static __thread struct
+static THREAD_LOCAL struct
 {
     int32_t tidx;
     uint32_t count;

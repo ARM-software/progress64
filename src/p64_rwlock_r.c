@@ -23,7 +23,7 @@ p64_rwlock_r_init(p64_rwlock_r_t *lock)
     lock->owner = INVALID_TID;
 }
 
-static __thread struct
+static THREAD_LOCAL struct
 {
     uint64_t threadid;
     uint32_t release_mask;

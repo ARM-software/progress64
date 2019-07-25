@@ -32,7 +32,15 @@
 #define PREFETCH_FOR_READ(ptr) __builtin_prefetch((ptr), 0, 3)
 #define PREFETCH_FOR_WRITE(ptr) __builtin_prefetch((ptr), 1, 3)
 
+//Use GNUC syntax for ALIGNED
 #define ALIGNED(x) __attribute__((__aligned__(x)))
+#if __STDC_VERSION__ >= 201112L
+//Use C11 syntax
+#define THREAD_LOCAL _Thread_local
+#else
+//Use GNUC syntax
+#define THREAD_LOCAL __thread
+#endif
 
 #define ROUNDUP_POW2(x) \
     ({ \
