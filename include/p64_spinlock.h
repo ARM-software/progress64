@@ -7,6 +7,7 @@
 #ifndef _P64_SPINLOCK_H
 #define _P64_SPINLOCK_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #ifdef __cplusplus

@@ -8,7 +8,6 @@
 #ifndef _P64_LFRING_H
 #define _P64_LFRING_H
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
