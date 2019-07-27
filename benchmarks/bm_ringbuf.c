@@ -102,10 +102,16 @@ stack_free(p64_stack_t *stk)
     free(stk);
 }
 
-static p64_msqueue_t *
+struct msqueue
+{
+    _Alignas(CACHE_LINE) p64_ptr_tag_t qhead;
+    _Alignas(CACHE_LINE) p64_ptr_tag_t qtail;
+};
+
+static struct msqueue *
 msqueue_alloc(uint32_t aba)
 {
-     p64_msqueue_t *msq = aligned_alloc(CACHE_LINE, sizeof(p64_msqueue_t));
+     struct msqueue *msq = aligned_alloc(CACHE_LINE, sizeof(struct msqueue));
      if (msq == NULL)
      {
 	 perror("malloc"), abort();
@@ -115,14 +121,14 @@ msqueue_alloc(uint32_t aba)
      {
 	 perror("malloc"), abort();
      }
-     p64_msqueue_init(msq, aba, node);
+     p64_msqueue_init(&msq->qhead, &msq->qtail, aba, node);
      return msq;
 }
 
 static void
-msqueue_free(p64_msqueue_t *msq)
+msqueue_free(struct msqueue *msq)
 {
-    free(p64_msqueue_fini(msq));
+    free(p64_msqueue_fini(&msq->qhead, &msq->qtail));
 }
 
 //Wait for my signal to begin
@@ -195,7 +201,8 @@ enqueue(void *rb, void *elem)
 	assert(node->next.tag == ~0UL);
 	msq_freelist = node->next.ptr;
 	node->user_data = elem;
-	p64_msqueue_enqueue(rb, node);
+	struct msqueue *msq = (struct msqueue *)rb;
+	p64_msqueue_enqueue(&msq->qhead, &msq->qtail, node);
 	return true;
     }
     else
@@ -232,7 +239,8 @@ dequeue(void *rb)
     }
     else if (MSQUEUE)
     {
-	p64_msqueue_elem_t *node = p64_msqueue_dequeue(rb);
+	struct msqueue *msq = (struct msqueue *)rb;
+	p64_msqueue_elem_t *node = p64_msqueue_dequeue(&msq->qhead, &msq->qtail);
 	if (node != NULL)
 	{
 	    assert(node->next.tag == ~0UL);

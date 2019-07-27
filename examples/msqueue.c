@@ -12,6 +12,12 @@
 
 #define NUM_HAZARD_POINTERS 2
 
+struct msqueue
+{
+    _Alignas(64) p64_ptr_tag_t qhead;
+    _Alignas(64) p64_ptr_tag_t qtail;
+};
+
 static p64_msqueue_elem_t *
 elem_alloc(uint32_t k)
 {
@@ -27,7 +33,7 @@ elem_alloc(uint32_t k)
 static void
 test_msq(uint32_t flags)
 {
-    p64_msqueue_t msq;
+    struct msqueue msq;
     p64_msqueue_elem_t *elem;
     p64_hpdomain_t *hpd = NULL;
 
@@ -38,31 +44,31 @@ test_msq(uint32_t flags)
 	p64_hazptr_register(hpd);
     }
 
-    p64_msqueue_init(&msq, flags, elem_alloc(0xdeadbabe));
-    elem = p64_msqueue_dequeue(&msq);
+    p64_msqueue_init(&msq.qhead, &msq.qtail, flags, elem_alloc(0xdeadbabe));
+    elem = p64_msqueue_dequeue(&msq.qhead, &msq.qtail);
     EXPECT(elem == NULL);
-    p64_msqueue_enqueue(&msq, elem_alloc(10));
-    elem = p64_msqueue_dequeue(&msq);
+    p64_msqueue_enqueue(&msq.qhead, &msq.qtail, elem_alloc(10));
+    elem = p64_msqueue_dequeue(&msq.qhead, &msq.qtail);
     EXPECT(elem != NULL && (uintptr_t)elem->user_data == 10);
     p64_mfree(elem);
-    elem = p64_msqueue_dequeue(&msq);
+    elem = p64_msqueue_dequeue(&msq.qhead, &msq.qtail);
     EXPECT(elem == NULL);
-    p64_msqueue_enqueue(&msq, elem_alloc(20));
-    p64_msqueue_enqueue(&msq, elem_alloc(30));
-    p64_msqueue_enqueue(&msq, elem_alloc(40));
-    elem = p64_msqueue_dequeue(&msq);
+    p64_msqueue_enqueue(&msq.qhead, &msq.qtail, elem_alloc(20));
+    p64_msqueue_enqueue(&msq.qhead, &msq.qtail, elem_alloc(30));
+    p64_msqueue_enqueue(&msq.qhead, &msq.qtail, elem_alloc(40));
+    elem = p64_msqueue_dequeue(&msq.qhead, &msq.qtail);
     EXPECT(elem != NULL && (uintptr_t)elem->user_data == 20);
     p64_mfree(elem);
-    elem = p64_msqueue_dequeue(&msq);
+    elem = p64_msqueue_dequeue(&msq.qhead, &msq.qtail);
     EXPECT(elem != NULL && (uintptr_t)elem->user_data == 30);
     p64_mfree(elem);
-    elem = p64_msqueue_dequeue(&msq);
+    elem = p64_msqueue_dequeue(&msq.qhead, &msq.qtail);
     EXPECT(elem != NULL && (uintptr_t)elem->user_data == 40);
     p64_mfree(elem);
-    elem = p64_msqueue_dequeue(&msq);
+    elem = p64_msqueue_dequeue(&msq.qhead, &msq.qtail);
     EXPECT(elem == NULL);
 
-    elem = p64_msqueue_fini(&msq);
+    elem = p64_msqueue_fini(&msq.qhead, &msq.qtail);
     EXPECT(elem != NULL);
     p64_mfree(elem);
 
