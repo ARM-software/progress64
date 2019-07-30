@@ -29,9 +29,10 @@ typedef struct p64_stack_elem
 
 typedef struct p64_stack
 {
+    _Alignas(2 * sizeof(void *))
     p64_stack_elem_t *head;
     uintptr_t tag;
-} p64_stack_t __attribute__((__aligned__(sizeof(struct p64_stack))));
+} p64_stack_t;
 
 //Initialise a Treiber lock-free stack
 void
