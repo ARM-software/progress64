@@ -9,6 +9,7 @@
 #ifndef _P64_MSQUEUE_H
 #define _P64_MSQUEUE_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #ifdef __cplusplus
@@ -31,7 +32,8 @@ typedef struct p64_ptr_tag
 typedef struct p64_msqueue_elem
 {
     struct p64_ptr_tag next;
-    void *user_data;
+    size_t user_len;
+    char user[];
 } p64_msqueue_elem_t;
 
 //Initialise Michael&Scott lock-free queue

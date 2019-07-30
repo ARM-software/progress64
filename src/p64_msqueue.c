@@ -6,6 +6,7 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "p64_msqueue.h"
 #include "p64_hazardptr.h"
@@ -295,7 +296,8 @@ dequeue_lock(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
     head = qhead->ptr;
     if (LIKELY(head->next.ptr != MSQ_NULL(qhead)))
     {
-	head->user_data = head->next.ptr->user_data;
+	head->user_len = head->next.ptr->user_len;
+	memcpy(head->user, head->next.ptr->user, head->user_len);
 	qhead->ptr = head->next.ptr;
 	elem = head;
 	assert(msqueue_assert(qhead, qtail) == num - 1);
@@ -315,7 +317,6 @@ dequeue_tag(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 {
     struct p64_ptr_tag head, tail;
     p64_msqueue_elem_t *next;
-    void *data;
     for (;;)
     {
 	head = atomic_load_ptr_tag(qhead, __ATOMIC_ACQUIRE);
@@ -341,19 +342,22 @@ dequeue_tag(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 	}
 	//Else head.ptr != tail.ptr
 	//Read data before CAS or we will race with another dequeue
-	data = next->user_data;
+	size_t user_len = next->user_len;
+	char user[user_len];
+	memcpy(user, next->user, user_len);
 	if (atomic_cas_ptr_tag(qhead,
 			       head,
 			       (struct p64_ptr_tag){ next, head.tag + TAG_INC},
 			       __ATOMIC_RELAXED,
 			       __ATOMIC_RELAXED))
 	{
+	    head.ptr->user_len = user_len;
+	    memcpy(head.ptr->user, user, user_len);
 	    break;
 	}
     }
     assert(head.ptr->next.tag != NOTINQUEUE);
     head.ptr->next.tag = NOTINQUEUE;
-    head.ptr->user_data = data;
     return head.ptr;
 }
 
@@ -363,7 +367,6 @@ dequeue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
     p64_hazardptr_t hp0 = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hp1 = P64_HAZARDPTR_NULL;
     p64_msqueue_elem_t *head, *tail, *next;
-    void *data;
     for (;;)
     {
 	head = p64_hazptr_acquire(&qhead->ptr, &hp0);
@@ -395,9 +398,15 @@ dequeue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 	    continue;
 	}
 	//Else head != tail and next != NULL
-	//Read data before CAS
-	//next is protected by a hazard pointer so we could read data later
-	data = next->user_data;
+	//Even as next is protected by a hazard pointer and thus will be valid
+	//after a successful CAS operation below, next->user may be overwritten
+	//by some other if next is also dequeued
+	//Basically the memcpy(head->user) violates the guarantees of SMR
+	//So instead we speculatively copy the user data to a temporary buffer
+	//before the CAS and overwrite our node after the CAS
+	size_t user_len = next->user_len;
+	char user[user_len];
+	memcpy(user, next->user, user_len);
 	if (__atomic_compare_exchange_n(&qhead->ptr,
 					&head,
 					next,
@@ -405,12 +414,14 @@ dequeue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED))
 	{
+	    //head is now ours, overwrite the user data (violates SMR property)
+	    head->user_len = user_len;
+	    memcpy(head->user, user, user_len);
 	    break;
 	}
     }
     assert(head->next.tag != NOTINQUEUE);
     head->next.tag = NOTINQUEUE;
-    head->user_data = data;
     p64_hazptr_release(&hp0);
     p64_hazptr_release(&hp1);
     //Returned node must be retired and reclaimed before it is used again

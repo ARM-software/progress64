@@ -116,7 +116,9 @@ msqueue_alloc(uint32_t aba)
      {
 	 perror("malloc"), abort();
      }
-     p64_msqueue_elem_t *node = aligned_alloc(CACHE_LINE, sizeof(p64_msqueue_elem_t));
+     p64_msqueue_elem_t *node = aligned_alloc(CACHE_LINE,
+					      sizeof(p64_msqueue_elem_t) +
+					      sizeof(void *));
      if (node == NULL)
      {
 	 perror("malloc"), abort();
@@ -200,7 +202,8 @@ enqueue(void *rb, void *elem)
 	}
 	assert(node->next.tag == ~0UL);
 	msq_freelist = node->next.ptr;
-	node->user_data = elem;
+	node->user_len = sizeof elem;
+	memcpy(node->user, &elem, sizeof elem);
 	struct msqueue *msq = (struct msqueue *)rb;
 	p64_msqueue_enqueue(&msq->qhead, &msq->qtail, node);
 	return true;
@@ -244,8 +247,9 @@ dequeue(void *rb)
 	if (node != NULL)
 	{
 	    assert(node->next.tag == ~0UL);
-	    elem = node->user_data;
-	    node->user_data = NULL;
+	    assert(node->user_len == sizeof elem);
+	    memcpy(&elem, node->user, sizeof elem);
+	    memset(node->user, 0, sizeof elem);
 	    if (HPD)
 	    {
 		while(!p64_hazptr_retire(node, reclaim_node))
@@ -360,6 +364,7 @@ done:
 static void *entrypoint(void *arg)
 {
     unsigned tidx = (uintptr_t)arg;
+
     if (HPD != NULL)
     {
 	p64_hazptr_register(HPD);
@@ -369,19 +374,23 @@ static void *entrypoint(void *arg)
     {
 	if (MSQUEUE)
 	{
-	    uint32_t nnode = tidx == 0 ? NUMELEMS + 10 : 10;
-	    for (uint32_t i = 0; i < nnode; i++)
+	    assert(sizeof(p64_msqueue_elem_t) + sizeof(void *) <= CACHE_LINE);
+	    uint32_t nnodes = tidx == 0 ? NUMELEMS + 10 : 10;
+	    size_t nodesz = sizeof(p64_msqueue_elem_t) + sizeof(void *);
+	    p64_msqueue_elem_t *prev = NULL;
+	    for (uint32_t i = 0; i < nnodes; i++)
 	    {
-		p64_msqueue_elem_t *node =
-		    aligned_alloc(CACHE_LINE, sizeof(p64_msqueue_elem_t));
+		p64_msqueue_elem_t *node = aligned_alloc(CACHE_LINE, nodesz);
 		if (node == NULL)
 		{
 		    perror("malloc"), abort();
 		}
 		node->next.tag = ~0UL;
-		node->next.ptr = msq_freelist;
-		msq_freelist = node;
+		node->next.ptr = prev;
+		node->user_len = sizeof(void *);
+		prev = node;
 	    }
+	    msq_freelist = prev;
 	}
 
 	//Wait for my signal to start
@@ -399,10 +408,10 @@ static void *entrypoint(void *arg)
 	    {
 		p64_msqueue_elem_t *next = node->next.ptr;
 		assert(node->next.tag == ~0UL);
+		assert(node->user_len == sizeof(void *));
 		free(node);
 		node = next;
 	    }
-	    msq_freelist = NULL;
 	}
     }
 
