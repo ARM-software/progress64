@@ -123,6 +123,7 @@ msqueue_alloc(uint32_t aba)
      {
 	 perror("malloc"), abort();
      }
+     node->max_size = sizeof(void *);
      p64_msqueue_init(&msq->qhead, &msq->qtail, aba, node);
      return msq;
 }
@@ -202,10 +203,8 @@ enqueue(void *rb, void *elem)
 	}
 	assert(node->next.tag == ~0UL);
 	msq_freelist = node->next.ptr;
-	node->user_len = sizeof elem;
-	memcpy(node->user, &elem, sizeof elem);
 	struct msqueue *msq = (struct msqueue *)rb;
-	p64_msqueue_enqueue(&msq->qhead, &msq->qtail, node);
+	p64_msqueue_enqueue(&msq->qhead, &msq->qtail, node, &elem, sizeof elem);
 	return true;
     }
     else
@@ -243,13 +242,15 @@ dequeue(void *rb)
     else if (MSQUEUE)
     {
 	struct msqueue *msq = (struct msqueue *)rb;
-	p64_msqueue_elem_t *node = p64_msqueue_dequeue(&msq->qhead, &msq->qtail);
+	uint32_t sizeof_elem = sizeof elem;
+	p64_msqueue_elem_t *node = p64_msqueue_dequeue(&msq->qhead,
+						       &msq->qtail,
+						       &elem,
+						       &sizeof_elem);
 	if (node != NULL)
 	{
 	    assert(node->next.tag == ~0UL);
-	    assert(node->user_len == sizeof elem);
-	    memcpy(&elem, node->user, sizeof elem);
-	    memset(node->user, 0, sizeof elem);
+	    assert(sizeof_elem == sizeof elem);
 	    if (HPD)
 	    {
 		while(!p64_hazptr_retire(node, reclaim_node))
@@ -387,7 +388,7 @@ static void *entrypoint(void *arg)
 		}
 		node->next.tag = ~0UL;
 		node->next.ptr = prev;
-		node->user_len = sizeof(void *);
+		node->max_size = sizeof(void *);
 		prev = node;
 	    }
 	    msq_freelist = prev;
@@ -408,7 +409,7 @@ static void *entrypoint(void *arg)
 	    {
 		p64_msqueue_elem_t *next = node->next.ptr;
 		assert(node->next.tag == ~0UL);
-		assert(node->user_len == sizeof(void *));
+		assert(node->max_size == sizeof(void *));
 		free(node);
 		node = next;
 	    }

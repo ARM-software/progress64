@@ -106,7 +106,17 @@ p64_msqueue_fini(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 }
 
 static void
-enqueue_lock(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *elem)
+eprintf_too_large(void)
+{
+    fprintf(stderr, "msqueue: data size too large\n");
+    fflush(stderr);
+    abort();
+}
+
+static void
+enqueue_lock(p64_ptr_tag_t *qhead,
+	     p64_ptr_tag_t *qtail,
+	     p64_msqueue_elem_t *elem)
 {
 #ifdef NDEBUG
     p64_spinlock_t *lock = MSQ_TO_LOCK(qtail);
@@ -266,8 +276,17 @@ enqueue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *node
 
 //Enqueue at tail
 void
-p64_msqueue_enqueue(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *elem)
+p64_msqueue_enqueue(p64_ptr_tag_t *qhead,
+		    p64_ptr_tag_t *qtail,
+		    p64_msqueue_elem_t *elem,
+		    const void *data,
+		    uint32_t size)
 {
+    if (UNLIKELY(size > elem->max_size))
+    {
+	eprintf_too_large();
+    }
+    memcpy(elem->data, data, elem->cur_size = size);
     uint32_t aba = qtail->tag % TAG_INC;
     switch (aba)
     {
@@ -286,7 +305,10 @@ p64_msqueue_enqueue(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem
 }
 
 static p64_msqueue_elem_t *
-dequeue_lock(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
+dequeue_lock(p64_ptr_tag_t *qhead,
+	     p64_ptr_tag_t *qtail,
+	     void *data,
+	     uint32_t *size)
 {
     p64_msqueue_elem_t *elem = NULL;
     p64_msqueue_elem_t *head;
@@ -296,8 +318,11 @@ dequeue_lock(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
     head = qhead->ptr;
     if (LIKELY(head->next.ptr != MSQ_NULL(qhead)))
     {
-	head->user_len = head->next.ptr->user_len;
-	memcpy(head->user, head->next.ptr->user, head->user_len);
+	if (head->next.ptr->cur_size > *size)
+	{
+	    eprintf_too_large();
+	}
+	memcpy(data, head->next.ptr->data, *size = head->next.ptr->cur_size);
 	qhead->ptr = head->next.ptr;
 	elem = head;
 	assert(msqueue_assert(qhead, qtail) == num - 1);
@@ -313,7 +338,10 @@ dequeue_lock(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 }
 
 static p64_msqueue_elem_t *
-dequeue_tag(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
+dequeue_tag(p64_ptr_tag_t *qhead,
+	    p64_ptr_tag_t *qtail,
+	    void *data,
+	    uint32_t *size)
 {
     struct p64_ptr_tag head, tail;
     p64_msqueue_elem_t *next;
@@ -342,17 +370,17 @@ dequeue_tag(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 	}
 	//Else head.ptr != tail.ptr
 	//Read data before CAS or we will race with another dequeue
-	size_t user_len = next->user_len;
-	char user[user_len];
-	memcpy(user, next->user, user_len);
+	if (next->cur_size > *size)
+	{
+	    eprintf_too_large();
+	}
+	memcpy(data, next->data, *size = next->cur_size);
 	if (atomic_cas_ptr_tag(qhead,
 			       head,
 			       (struct p64_ptr_tag){ next, head.tag + TAG_INC},
 			       __ATOMIC_RELAXED,
 			       __ATOMIC_RELAXED))
 	{
-	    head.ptr->user_len = user_len;
-	    memcpy(head.ptr->user, user, user_len);
 	    break;
 	}
     }
@@ -362,7 +390,10 @@ dequeue_tag(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 }
 
 static p64_msqueue_elem_t *
-dequeue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
+dequeue_smr(p64_ptr_tag_t *qhead,
+	    p64_ptr_tag_t *qtail,
+	    void *data,
+	    uint32_t *size)
 {
     p64_hazardptr_t hp0 = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hp1 = P64_HAZARDPTR_NULL;
@@ -398,15 +429,8 @@ dequeue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 	    continue;
 	}
 	//Else head != tail and next != NULL
-	//Even as next is protected by a hazard pointer and thus will be valid
-	//after a successful CAS operation below, next->user may be overwritten
-	//by some other if next is also dequeued
-	//Basically the memcpy(head->user) violates the guarantees of SMR
-	//So instead we speculatively copy the user data to a temporary buffer
-	//before the CAS and overwrite our node after the CAS
-	size_t user_len = next->user_len;
-	char user[user_len];
-	memcpy(user, next->user, user_len);
+	//next is protected by a hazard pointer and thus will be valid until
+	//we release the hazard pointer, i.e. also after the CAS below
 	if (__atomic_compare_exchange_n(&qhead->ptr,
 					&head,
 					next,
@@ -414,9 +438,12 @@ dequeue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED))
 	{
-	    //head is now ours, overwrite the user data (violates SMR property)
-	    head->user_len = user_len;
-	    memcpy(head->user, user, user_len);
+	    //head is now ours
+	    if (next->cur_size > *size)
+	    {
+		eprintf_too_large();
+	    }
+	    memcpy(data, next->data, *size = next->cur_size);
 	    break;
 	}
     }
@@ -430,17 +457,20 @@ dequeue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
 
 //Dequeue from head
 p64_msqueue_elem_t *
-p64_msqueue_dequeue(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
+p64_msqueue_dequeue(p64_ptr_tag_t *qhead,
+		    p64_ptr_tag_t *qtail,
+		    void *data,
+		    uint32_t *size)
 {
     uint32_t aba = qhead->tag % TAG_INC;
     switch (aba)
     {
 	case P64_ABA_LOCK :
-	    return dequeue_lock(qhead, qtail);
+	    return dequeue_lock(qhead, qtail, data, size);
 	case P64_ABA_TAG :
-	    return dequeue_tag(qhead, qtail);
+	    return dequeue_tag(qhead, qtail, data, size);
 	case P64_ABA_SMR :
-	    return dequeue_smr(qhead, qtail);
+	    return dequeue_smr(qhead, qtail, data, size);
 	default :
 	    UNREACHABLE();
     }
