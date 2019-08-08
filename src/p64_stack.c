@@ -13,10 +13,7 @@
 #include "build_config.h"
 #include "arch.h"
 #include "lockfree.h"
-#ifndef __aarch64__
-#define lockfree_compare_exchange_16_frail lockfree_compare_exchange_16
-#endif
-#ifdef __aarch64__
+#ifdef USE_LDXSTX
 #include "ldxstx.h"
 #endif
 
@@ -65,7 +62,7 @@ enqueue_tag(p64_stack_t *stk, p64_stack_elem_t *elem)
 {
     union
     {
-	__int128 i128;
+	ptrpair_t pp;
 	p64_stack_t st;
     } old, neu;
     do
@@ -76,9 +73,9 @@ enqueue_tag(p64_stack_t *stk, p64_stack_elem_t *elem)
 	neu.st.head = elem;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (!lockfree_compare_exchange_16_frail((__int128 *)&stk->head,
-					       &old.i128,
-					       neu.i128,
+    while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
+					       &old.pp,
+					       neu.pp,
 					       /*weak=*/true,
 					       __ATOMIC_RELEASE,
 					       __ATOMIC_RELAXED));
@@ -187,7 +184,7 @@ dequeue_tag(p64_stack_t *stk)
 {
     union
     {
-	__int128 i128;
+	ptrpair_t pp;
 	p64_stack_t st;
     } old, neu;
     do
@@ -203,9 +200,9 @@ dequeue_tag(p64_stack_t *stk)
 	neu.st.head = old.st.head->next;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (!lockfree_compare_exchange_16_frail((__int128 *)&stk->head,
-					       &old.i128,//Updated on failure
-					       neu.i128,
+    while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
+					       &old.pp,//Updated on failure
+					       neu.pp,
 					       /*weak=*/true,
 					       __ATOMIC_RELAXED,
 					       __ATOMIC_RELAXED));

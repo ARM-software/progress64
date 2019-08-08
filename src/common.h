@@ -84,4 +84,10 @@
     _b = _t; \
 }
 
+#if __SIZEOF_POINTER__ == 4
+typedef unsigned long long ptrpair_t;//assume 64 bits
+#else //__SIZEOF_POINTER__ == 8
+typedef __int128 ptrpair_t;
+#endif
+
 #endif

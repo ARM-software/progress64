@@ -588,8 +588,8 @@ static void benchmark(uint32_t numthreads, uint64_t affinity)
 	    failenq += FAILENQ[i];
 	    faildeq += FAILDEQ[i];
 	}
-	printf("fail_count[enq]=%lu %s\n", failenq, percent(failenq, numops));
-	printf("fail_count[deq]=%lu %s\n", faildeq, percent(faildeq, numops));
+	printf("fail_count[enq]=%"PRIu64" %s\n", failenq, percent(failenq, numops));
+	printf("fail_count[deq]=%"PRIu64" %s\n", faildeq, percent(faildeq, numops));
     }
 
     uint64_t elapsed_ns = ts.tv_sec * 1000000000ULL + ts.tv_nsec - start;
@@ -783,7 +783,7 @@ usage :
 	       rbmode == 5 ? 'L' : (rbmode & 2) ? 'N' : 'B',
 	       (rbmode & 4) ? 'L' : (rbmode & 1) ? 'N' : 'B');
     }
-    printf("%u laps, %u thread%s, affinity mask=0x%lx\n",
+    printf("%u laps, %u thread%s, affinity mask=0x%"PRIx64"\n",
 	    NUMLAPS,
 	    NUMTHREADS,
 	    NUMTHREADS != 1 ? "s" : "",

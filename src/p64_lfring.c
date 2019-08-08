@@ -15,9 +15,6 @@
 
 #include "arch.h"
 #include "lockfree.h"
-#ifndef __aarch64__
-#define lockfree_compare_exchange_16_frail lockfree_compare_exchange_16
-#endif
 #include "common.h"
 #ifdef USE_LDXSTX
 #include "ldxstx.h"
@@ -181,7 +178,7 @@ restart:
 	union
 	{
 	    struct element e;
-	    __int128 ui;
+	    ptrpair_t pp;
 	} old, neu;
 	void *elem = elems[actual];
 	struct element *slot = &lfr->ring[tail & mask];
@@ -195,7 +192,7 @@ restart:
 	do
 	{
 #ifdef USE_LDXSTX
-	    old.ui = ldx((__int128 *)slot, __ATOMIC_RELAXED);
+	    old.pp = ldx((ptrpair_t *)slot, __ATOMIC_RELAXED);
 #endif
 	    if (UNLIKELY(old.e.idx != tail - size))
 	    {
@@ -218,11 +215,11 @@ restart:
 	    neu.e.idx = tail;//Set idx on enqueue
 	}
 #ifdef USE_LDXSTX
-	while (UNLIKELY(stx((__int128 *)slot, neu.ui, __ATOMIC_RELEASE)));
+	while (UNLIKELY(stx((ptrpair_t *)slot, neu.pp, __ATOMIC_RELEASE)));
 #else
-	while (!lockfree_compare_exchange_16_frail((__int128 *)slot,
-						   &old.ui,//Updated on failure
-						   neu.ui,
+	while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)slot,
+						   &old.pp,//Updated on failure
+						   neu.pp,
 						   /*weak=*/true,
 						   __ATOMIC_RELEASE,
 						   __ATOMIC_RELAXED));

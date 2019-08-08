@@ -698,7 +698,7 @@ usage :
     {
 	NUMOBJS = NUMTHREADS >= 2 ? NUMTHREADS / 2 : 1;
     }
-    printf("%u %s lock%s, %u laps, %u thread%s, affinity mask=0x%lx\n",
+    printf("%u %s lock%s, %u laps, %u thread%s, affinity mask=0x%"PRIx64"\n",
 	    NUMOBJS,
 	    type_name[LOCKTYPE],
 	    NUMOBJS != 1 ? "s" : "",

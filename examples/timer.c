@@ -21,14 +21,14 @@ callback(p64_timer_t tim,
 
 int main(void)
 {
-    p64_tick_t exp_a = ~0UL;
+    p64_tick_t exp_a = P64_TIMER_TICK_INVALID;
     p64_timer_t tim_a = p64_timer_alloc(callback, &exp_a);
     EXPECT(tim_a != P64_TIMER_NULL)
     EXPECT(p64_timer_set(tim_a, 1));
     EXPECT(!p64_timer_set(tim_a, 1));
     p64_timer_tick_set(0);
     p64_timer_expire();
-    EXPECT(exp_a == ~0UL);
+    EXPECT(exp_a == P64_TIMER_TICK_INVALID);
     p64_timer_tick_set(1);
     p64_timer_expire();
     EXPECT(exp_a == 1);
@@ -41,14 +41,14 @@ int main(void)
     p64_timer_tick_set(3);
     p64_timer_expire();
     EXPECT(exp_a == 1);
-    EXPECT(!p64_timer_reset(tim_a, 0xFFFFFFFFFFFFFFFEULL));
-    EXPECT(p64_timer_set(tim_a, 0xFFFFFFFFFFFFFFFEULL));
-    EXPECT(p64_timer_reset(tim_a, 0xFFFFFFFFFFFFFFFEULL));
+    EXPECT(!p64_timer_reset(tim_a, UINT64_C(0xFFFFFFFFFFFFFFFE)));
+    EXPECT(p64_timer_set(tim_a, UINT64_C(0xFFFFFFFFFFFFFFFE)));
+    EXPECT(p64_timer_reset(tim_a, UINT64_C(0xFFFFFFFFFFFFFFFE)));
     p64_timer_expire();
     EXPECT(exp_a == 1);
-    p64_timer_tick_set(0xFFFFFFFFFFFFFFFEULL);
+    p64_timer_tick_set(UINT64_C(0xFFFFFFFFFFFFFFFE));
     p64_timer_expire();
-    EXPECT(exp_a == 0xFFFFFFFFFFFFFFFEULL);
+    EXPECT(exp_a == UINT64_C(0xFFFFFFFFFFFFFFFE));
     p64_timer_free(tim_a);
 
     printf("timer tests complete\n");

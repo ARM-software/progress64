@@ -17,7 +17,7 @@ typedef int32_t p64_timer_t;
 #define P64_TIMER_NULL -1
 
 typedef uint64_t p64_tick_t;
-#define P64_TIMER_TICK_INVALID (~(uint64_t)0)
+#define P64_TIMER_TICK_INVALID ~UINT64_C(0)
 
 typedef void (*p64_timer_cb)(p64_timer_t tim, p64_tick_t tmo, void *arg);
 

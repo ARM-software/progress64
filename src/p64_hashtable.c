@@ -25,6 +25,7 @@
 #define SET_MARK(ptr) (void *)((uintptr_t)(ptr) |  MARK_REMOVE)
 #define REM_MARK(ptr) (void *)((uintptr_t)(ptr) & ~MARK_REMOVE)
 
+//CACHE_LINE == 32, __SIZEOF_POINTER__ == 4 => BKT_SIZE == 4
 //CACHE_LINE == 64, __SIZEOF_POINTER__ == 8 => BKT_SIZE == 4
 #define BKT_SIZE (CACHE_LINE / (2 * __SIZEOF_POINTER__))
 
@@ -33,15 +34,10 @@ struct hash_bucket
     p64_hashelem_t elems[BKT_SIZE];
 } ALIGNED(CACHE_LINE);
 
-#if __SIZEOF_POINTER__ == 8
-typedef __int128 uintptr_pair_t;
-#define lockfree_compare_exchange_pair lockfree_compare_exchange_16
-#endif
-
 union heui
 {
     p64_hashelem_t he;
-    uintptr_pair_t ui;
+    ptrpair_t pp;
 };
 
 struct p64_hashtable
@@ -58,7 +54,7 @@ list_check(p64_hashelem_t *prnt, uint64_t (*f)(p64_hashelem_t *))
     p64_hashelem_t *he;
     while ((he = REM_MARK(prnt->next)) != NULL)
     {
-	printf(" <h=%"PRIx64",k=%"PRIu64">", prnt->hash, f(he));
+	printf(" <h=%"PRIxPTR",k=%"PRIu64">", prnt->hash, f(he));
 	num++;
 	prnt = he;
     }
@@ -234,9 +230,9 @@ remove_node(p64_hashelem_t *prnt,
     union heui old = {.he.next = this, .he.hash = hash };
     //New prnt->next should not have REMOVAL mark
     union heui neu = {.he.next = REM_MARK(this->next), .he.hash = this->hash };
-    if (lockfree_compare_exchange_pair((uintptr_pair_t *)prnt,
-				       &old.ui,
-				       neu.ui,
+    if (lockfree_compare_exchange_pp((ptrpair_t *)prnt,
+				       &old.pp,
+				       neu.pp,
 				       /*weak=*/false,
 				       __ATOMIC_RELAXED,
 				       __ATOMIC_RELAXED))
@@ -263,9 +259,9 @@ insert_node(p64_hashelem_t *prnt,
     assert(he->next == NULL);
     union heui old = {.he.next = NULL, .he.hash = 0 };
     union heui neu = {.he.next = he, .he.hash = hash };
-    if (lockfree_compare_exchange_pair((uintptr_pair_t *)prnt,
-				       &old.ui,
-				       neu.ui,
+    if (lockfree_compare_exchange_pp((ptrpair_t *)prnt,
+				       &old.pp,
+				       neu.pp,
 				       /*weak=*/false,
 				       __ATOMIC_RELEASE,
 				       __ATOMIC_RELAXED))

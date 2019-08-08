@@ -14,11 +14,7 @@ extern "C"
 {
 #endif
 
-#if __SIZEOF_POINTER__ == 8
-typedef uint64_t p64_hashvalue_t;
-#else
-#error Unsupported pointer size
-#endif
+typedef uintptr_t p64_hashvalue_t;
 
 //Each element in the hash table must include a p64_hashelem field
 typedef struct p64_hashelem

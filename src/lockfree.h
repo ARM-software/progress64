@@ -14,10 +14,14 @@
 #if defined __aarch64__
 
 #include "lockfree/aarch64.h"
+#define lockfree_compare_exchange_pp_frail lockfree_compare_exchange_16_frail
+#define lockfree_compare_exchange_pp lockfree_compare_exchange_16
 
 #elif defined __x86_64__
 
 #include "lockfree/x86-64.h"
+#define lockfree_compare_exchange_pp_frail lockfree_compare_exchange_16
+#define lockfree_compare_exchange_pp lockfree_compare_exchange_16
 
 #else
 

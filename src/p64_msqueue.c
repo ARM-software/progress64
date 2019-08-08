@@ -14,10 +14,7 @@
 #include "build_config.h"
 #include "arch.h"
 #include "lockfree.h"
-#ifndef __aarch64__
-#define lockfree_compare_exchange_16_frail lockfree_compare_exchange_16
-#endif
-#ifdef __aarch64__
+#ifdef USE_LDXSTX
 #include "ldxstx.h"
 #endif
 
@@ -160,13 +157,13 @@ atomic_cas_ptr_tag(struct p64_ptr_tag *loc,
 {
     union
     {
-	__int128 i128;
+	ptrpair_t pp;
 	struct p64_ptr_tag pt;
     } xxx;
     xxx.pt = neu;
-    return lockfree_compare_exchange_16((__int128 *)loc,
-					(__int128 *)&old,
-					xxx.i128,
+    return lockfree_compare_exchange_pp((ptrpair_t *)loc,
+					(ptrpair_t *)&old,
+					xxx.pp,
 					false,
 					mo_success,
 					mo_failure);

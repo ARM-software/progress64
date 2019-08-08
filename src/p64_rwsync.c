@@ -102,10 +102,15 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
 static void
 atomic_memcpy(char *dst, const char *src, size_t sz)
 {
+#if __SIZEOF_POINTER__ == 8
     while (sz >= sizeof(uint64_t))
 	ATOMIC_COPY(dst, src, sz, uint64_t);
     if (sz >= sizeof(uint32_t))
 	ATOMIC_COPY(dst, src, sz, uint32_t);
+#else //__SIZEOF_POINTER__ == 4
+    while (sz >= sizeof(uint32_t))
+	ATOMIC_COPY(dst, src, sz, uint32_t);
+#endif
     if (sz >= sizeof(uint16_t))
 	ATOMIC_COPY(dst, src, sz, uint16_t);
     if (sz >= sizeof(uint8_t))

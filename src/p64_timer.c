@@ -74,7 +74,7 @@ expire_one_timer(p64_tick_t now,
     do
     {
 	//Explicit reloading => smaller code
-	exp = __atomic_load_n(ptr, __ATOMIC_ACQUIRE);
+	exp = __atomic_load_n(ptr, __ATOMIC_RELAXED);
 	if (!(exp <= now))//exp > now
 	{
 	    //If timer does not expire anymore it means some thread has
@@ -86,19 +86,11 @@ expire_one_timer(p64_tick_t now,
 					&exp,
 					P64_TIMER_TICK_INVALID,
 					/*weak=*/true,
-					__ATOMIC_RELAXED,
+					__ATOMIC_ACQUIRE,
 					__ATOMIC_RELAXED));
     uint32_t tim = ptr - &g_timer.expirations[0];
     g_timer.timers[tim].cb(tim, exp, g_timer.timers[tim].arg);
 }
-
-#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
-#define W0(x) (uint64_t)((x)      )
-#define W1(x) (uint64_t)((x) >> 64)
-#else //Big endian
-#define W0(x) (uint64_t)((x) >> 64)
-#define W1(x) (uint64_t)((x)      )
-#endif
 
 //__attribute_noinline__
 static p64_tick_t
@@ -107,20 +99,22 @@ scan_timers(p64_tick_t now,
 	    p64_tick_t *top)
 {
     p64_tick_t earliest = P64_TIMER_TICK_INVALID;
-    __int128 *ptr = (__int128 *)cur;
-    __int128 pair = *ptr++;
+    p64_tick_t *ptr = cur;
+    p64_tick_t pair0 = *ptr++;
+    p64_tick_t pair1 = *ptr++;
     //Unroll 4 times seems to give best code
     //Interleave loads and compares in order to hide load-to-use latencies
     //A64: 20 insns, ~12 cycles when up to 4 cycles of load-to-use latency
     //Sentinel will ensure we eventually terminate the loop
     for (;;)
     {
-	p64_tick_t w0 = W0(pair);
-	p64_tick_t w1 = W1(pair);
-	pair = *ptr++;
+	p64_tick_t w0 = pair0;
+	p64_tick_t w1 = pair1;
+	pair0 = *ptr++;
+	pair1 = *ptr++;
 	if (UNLIKELY(w0 <= now))
 	{
-	    p64_tick_t *pw0 = (p64_tick_t *)(ptr - 2);
+	    p64_tick_t *pw0 = (p64_tick_t *)(ptr - 4);
 	    if (pw0 >= top)
 	    {
 		break;
@@ -136,7 +130,7 @@ scan_timers(p64_tick_t now,
 	}
 	if (UNLIKELY(w1 <= now))
 	{
-	    p64_tick_t *pw1 = (p64_tick_t *)(ptr - 2) + 1;
+	    p64_tick_t *pw1 = (p64_tick_t *)(ptr - 4) + 1;
 	    if (pw1 >= top)
 	    {
 		break;
@@ -147,12 +141,13 @@ scan_timers(p64_tick_t now,
 	{
 	    earliest = MIN(earliest, w1);
 	}
-	w0 = W0(pair);
-	w1 = W1(pair);
-	pair = *ptr++;
+	w0 = pair0;
+	w1 = pair1;
+	pair0 = *ptr++;
+	pair1 = *ptr++;
 	if (UNLIKELY(w0 <= now))
 	{
-	    p64_tick_t *pw0 = (p64_tick_t *)(ptr - 2);
+	    p64_tick_t *pw0 = (p64_tick_t *)(ptr - 4);
 	    if (pw0 >= top)
 	    {
 		break;
@@ -165,7 +160,7 @@ scan_timers(p64_tick_t now,
 	}
 	if (UNLIKELY(w1 <= now))
 	{
-	    p64_tick_t *pw1 = (p64_tick_t *)(ptr - 2) + 1;
+	    p64_tick_t *pw1 = (p64_tick_t *)(ptr - 4) + 1;
 	    if (pw1 >= top)
 	    {
 		break;
@@ -267,7 +262,7 @@ p64_timer_alloc(p64_timer_cb cb,
     union
     {
 	struct freelist fl;
-	__int128 ui;
+	ptrpair_t pp;
     } old, neu;
     do
     {
@@ -281,9 +276,9 @@ p64_timer_alloc(p64_timer_cb cb,
 	neu.fl.head = old.fl.head->arg;//Dereferencing old.head => need acquire
 	neu.fl.count = old.fl.count + 1;
     }
-    while (UNLIKELY(!lockfree_compare_exchange_16((__int128*)&g_timer.freelist,
-						  &old.ui,
-						  neu.ui,
+    while (UNLIKELY(!lockfree_compare_exchange_pp((ptrpair_t*)&g_timer.freelist,
+						  &old.pp,
+						  neu.pp,
 						  /*weak=*/true,
 						  __ATOMIC_RELAXED,
 						  __ATOMIC_RELAXED)));
@@ -312,7 +307,7 @@ p64_timer_free(p64_timer_t idx)
     union
     {
 	struct freelist fl;
-	__int128 ui;
+	ptrpair_t pp;
     } old, neu;
     do
     {
@@ -322,9 +317,9 @@ p64_timer_free(p64_timer_t idx)
 	neu.fl.head = tim;
 	neu.fl.count = old.fl.count + 1;
     }
-    while (UNLIKELY(!lockfree_compare_exchange_16((__int128*)&g_timer.freelist,
-						  &old.ui,
-						  neu.ui,
+    while (UNLIKELY(!lockfree_compare_exchange_pp((ptrpair_t*)&g_timer.freelist,
+						  &old.pp,
+						  neu.pp,
 						  /*weak=*/true,
 						  __ATOMIC_RELEASE,
 						  __ATOMIC_RELAXED)));

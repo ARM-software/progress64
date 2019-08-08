@@ -579,7 +579,7 @@ usage :
 	goto usage;
     }
 
-    printf("%s: %u objects, %u laps, %u thread%s, affinity mask=0x%lx, ",
+    printf("%s: %u objects, %u laps, %u thread%s, affinity mask=0x%"PRIx64", ",
 	    USEHP ? "HP" : "QSBR",
 	    NUMOBJS,
 	    NUMLAPS,
