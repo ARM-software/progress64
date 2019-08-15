@@ -197,17 +197,35 @@ struct fraglist
 	unsigned closed:1;
     } a;
     p64_fragment_t *head; //A list of related fragments awaiting reassembly
-} ALIGNED(sizeof(__int128));
+#ifdef __arm__
+    //Put spin lock in 32-bit word after 32-bit pointer
+    p64_spinlock_t lock;
+#endif
+} ALIGNED(2 * sizeof(uint64_t));
 
+#ifdef __arm__
+//When writing a fraglist entry keep the lock taken
+#define FL_NULL (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 0, .head = NULL, .lock = 1 }
+#define FL_NULL_CLOSED (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 1, .head = NULL, .lock = 1 }
+#else
 #define FL_NULL (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 0, .head = NULL }
 #define FL_NULL_CLOSED (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 1, .head = NULL }
+#endif
 
 struct fragtbl
 {
     struct idx_size
     {
+#if __SIZEOF_POINTER__ == 8
 	uint32_t idx;
 	uint32_t shift;//size = 1U << (32 - shift)
+#elif __SIZEOF_POINTER__ == 4
+	//Match size of 32-bit pointer
+	unsigned idx:24;
+	unsigned shift:8;//size = 1U << (32 - shift)
+#else
+#error
+#endif
     } i_s;
     struct fraglist *base;
 };
@@ -226,6 +244,12 @@ read_fragtbl(struct fragtbl *vec, uint32_t idx, p64_hazardptr_t *hpp)
 	//Not extendable, just do relaxed non-atomic read of first element
 	return vec[0];
     }
+#ifdef __arm__
+    struct fragtbl ft;
+    //64-bit load is atomic
+    __atomic_load(&vec[idx % 2], &ft, __ATOMIC_ACQUIRE);
+    return ft;
+#else
     struct idx_size i_s;
     struct fraglist *fl;
     uint32_t i = idx % 2;
@@ -246,6 +270,7 @@ read_fragtbl(struct fragtbl *vec, uint32_t idx, p64_hazardptr_t *hpp)
     }
     while (fl != __atomic_load_n(&vec[i].base, __ATOMIC_RELAXED));
     return (struct fragtbl) { i_s, fl };
+#endif
 }
 
 //Perform atomic write of specified fragtable
@@ -253,6 +278,12 @@ read_fragtbl(struct fragtbl *vec, uint32_t idx, p64_hazardptr_t *hpp)
 static inline struct fragtbl
 write_fragtbl(struct fragtbl *vec, uint32_t idx, struct fragtbl ft)
 {
+#ifdef __arm__
+    struct fragtbl old;
+    //64-bit exchange is atomic
+    __atomic_exchange(&vec[idx & 2], &ft, &old, __ATOMIC_ACQ_REL);
+    return old;
+#else
     union
     {
 	__int128 i128;
@@ -264,6 +295,7 @@ write_fragtbl(struct fragtbl *vec, uint32_t idx, struct fragtbl ft)
 				    neu.i128,
 				    __ATOMIC_ACQ_REL);
     return old.ft;
+#endif
 }
 
 struct p64_reassemble
@@ -315,6 +347,9 @@ p64_reassemble_alloc(uint32_t size,
 	    for (uint32_t i = 0; i < size; i++)
 	    {
 		re->ft[0].base[i] = FL_NULL;
+#ifdef __arm__
+		p64_spinlock_init(&re->ft[0].base[i].lock);
+#endif
 	    }
 	    return re;
 	}
@@ -423,9 +458,14 @@ insert_frags(p64_reassemble_t *re,
     union
     {
 	struct fraglist st;
+#ifndef __arm__
 	__int128 ui;
+#endif
     } old, neu;
 restart:
+#ifdef __arm__
+    p64_spinlock_acquire(&fl->lock);
+#endif
     __atomic_load(&fl->a, &old.st.a, __ATOMIC_RELAXED);
     __atomic_load(&fl->head, &old.st.head, __ATOMIC_RELAXED);
     if (UNLIKELY(old.st.a.closed))
@@ -458,6 +498,10 @@ restart:
 	{
 	    neu.st.a.earliest = earliest;
 	}
+#ifdef __arm__
+	*fl = neu.st;
+	p64_spinlock_release(&fl->lock);
+#else
 	if (!lockfree_compare_exchange_16((__int128 *)fl,
 					  &old.ui,
 					  neu.ui,
@@ -469,12 +513,17 @@ restart:
 	    PREFETCH_FOR_WRITE(fl);
 	    goto restart;
 	}
+#endif
 	//Fragment(s) inserted
     }
     else
     {
 	//We seem to have all fragments
 	//Write a null element to the fraglist slot
+#ifdef __arm__
+	*fl = FL_NULL;
+	p64_spinlock_release(&fl->lock);
+#else
 	neu.st = FL_NULL;
 	if (!lockfree_compare_exchange_16((__int128 *)fl,
 					  &old.ui,
@@ -487,6 +536,7 @@ restart:
 	    PREFETCH_FOR_WRITE(fl);
 	    goto restart;
 	}
+#endif
 
 	//Sort the fragments
 	frag = sort_frags(frag);//Includes old.st.head fraglist
@@ -615,11 +665,18 @@ expire_slot(p64_reassemble_t *re,
     union
     {
 	struct fraglist st;
+#ifndef __arm__
 	__int128 ui;
+#endif
     } old, neu;
+#ifdef __arm__
+    p64_spinlock_acquire(&fl->lock);
+#endif
     __atomic_load(&fl->a, &old.st.a, __ATOMIC_RELAXED);
     __atomic_load(&fl->head, &old.st.head, __ATOMIC_RELAXED);
+#ifndef __arm__
     do
+#endif
     {
 	if (old.st.head == NULL ||
 	    (int32_t)(old.st.a.earliest - time) >= 0)
@@ -635,13 +692,19 @@ expire_slot(p64_reassemble_t *re,
 	//Found fraglist with at least one stale fragment
 	//Swap in a null fraglist in its place
 	neu.st = FL_NULL;
+#ifdef __arm__
+	*fl = neu.st;
+	p64_spinlock_release(&fl->lock);
+#endif
     }
+#ifndef __arm__
     while (!lockfree_compare_exchange_16((__int128 *)fl,
 					 &old.ui,//Updated on failure
 					 neu.ui,
 					 /*weak=*/false,
 					 __ATOMIC_ACQUIRE,
 					 __ATOMIC_RELAXED));
+#endif
     //CAS succeeded, we own the fraglist
     //Find the stale fragments
     p64_fragment_t *stale = find_stale(&old.st.head, time);
@@ -713,7 +776,9 @@ migrate_slot(p64_reassemble_t *re,
     union
     {
 	struct fraglist st;
+#ifndef __arm__
 	__int128 ui;
+#endif
     } old, neu;
     //Clear slots in destination table
     uint32_t factor = 1U << (src.i_s.shift - dst->i_s.shift);
@@ -722,24 +787,38 @@ migrate_slot(p64_reassemble_t *re,
     for (uint32_t j = 0; j < factor; j++)
     {
 	dst->base[factor * i + j] = FL_NULL;
+#ifdef __arm__
+	p64_spinlock_init(&dst->base[factor * i + j].lock);
+#endif
     }
     //Compute address of slot in source table
     struct fraglist *slot = &src.base[i];
+#ifdef __arm__
+    p64_spinlock_acquire(&slot->lock);
+#endif
     //Read fraglist from source slot
     //Non-atomic read, later CAS will verify atomicity
     __atomic_load(&slot->head, &old.st.head,__ATOMIC_ACQUIRE);
     __atomic_load(&slot->a, &old.st.a, __ATOMIC_RELAXED);
+#ifndef __arm__
     do
+#endif
     {
 	//Set closed bit in source slot using CAS, fail if slot has changed
 	neu.st = FL_NULL_CLOSED;
+#ifdef __arm__
+	*slot = neu.st;
+	p64_spinlock_release(&slot->lock);
+#endif
     }
+#ifndef __arm__
     while (!lockfree_compare_exchange_16((__int128 *)slot,
 					 (__int128 *)&old,
 					 neu.ui,
 					 /*weak=*/true,
 					 __ATOMIC_ACQUIRE,
 					 __ATOMIC_ACQUIRE));
+#endif
     assert(old.st.a.closed == 0);
     if (old.st.head != NULL)
     {

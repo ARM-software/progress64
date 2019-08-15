@@ -41,8 +41,13 @@
 #define PREFETCH_LDXSTX(p) (void)(p)
 #endif
 
+#ifdef __arm__
+#define CACHE_LINE 32
+#define MAXTHREADS 16
+#else
 #define CACHE_LINE 64
 #define MAXTHREADS 128
+#endif
 #define MAXHPREFS 3
 #define MAXTIMERS 8192
 

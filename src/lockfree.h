@@ -5,6 +5,8 @@
 #ifndef _LOCKFREE_H
 #define _LOCKFREE_H
 
+#include "common.h"
+
 #define HAS_ACQ(mo) ((mo) != __ATOMIC_RELAXED && (mo) != __ATOMIC_RELEASE)
 #define HAS_RLS(mo) ((mo) == __ATOMIC_RELEASE || (mo) == __ATOMIC_ACQ_REL || (mo) == __ATOMIC_SEQ_CST)
 
@@ -16,6 +18,11 @@
 #include "lockfree/aarch64.h"
 #define lockfree_compare_exchange_pp_frail lockfree_compare_exchange_16_frail
 #define lockfree_compare_exchange_pp lockfree_compare_exchange_16
+
+#elif defined __arm__
+
+#define lockfree_compare_exchange_pp_frail __atomic_compare_exchange_8
+#define lockfree_compare_exchange_pp __atomic_compare_exchange_8
 
 #elif defined __x86_64__
 

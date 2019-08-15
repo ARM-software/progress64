@@ -135,6 +135,12 @@ enqueue_lock(p64_ptr_tag_t *qhead,
 static inline struct p64_ptr_tag
 atomic_load_ptr_tag(const struct p64_ptr_tag *loc, int mo)
 {
+#ifdef __arm__
+    //Armv7ve can do atomic load of ptr+tag (64 bits)
+    struct p64_ptr_tag pt;
+    __atomic_load(loc, &pt, mo);
+    return pt;
+#else
     (void)mo;
     struct p64_ptr_tag pt;
     do
@@ -146,6 +152,7 @@ atomic_load_ptr_tag(const struct p64_ptr_tag *loc, int mo)
     }
     while (__atomic_load_n(&loc->tag, __ATOMIC_RELAXED) != pt.tag);
     return pt;
+#endif
 }
 
 static inline int

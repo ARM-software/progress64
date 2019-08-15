@@ -8,9 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
-#ifndef __aarch64__
-#error
-#endif
+#ifdef __aarch64__
 
 /******************************************************************************
  * ARMv8/A64 load/store exclusive primitives
@@ -228,5 +226,9 @@ static inline uint32_t stxptr(void *var, void *val, int mm)
 {
     return stx((uintptr_t *)var, (uintptr_t)val, mm);
 }
+
+#else
+#error Unsupported architecture
+#endif
 
 #endif

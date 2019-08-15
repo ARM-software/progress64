@@ -19,7 +19,7 @@ Functionality
 | laxrob | 'lax' reorder buffer | lock-less
 | lfring | ring buffer | lock-free
 | qsbr | safe object reclamation using quiescent state based reclamation | reader wait-free, writer blocking
-| reassemble | IP reassembly | lock-free, resizeable
+| reassemble | IP reassembly | lock-free (1), resizeable
 | reorder | 'strict' reorder buffer | lock-less
 | ringbuf | classic ring buffer, support for user-defined element type | blocking & lock-less, lock-free dequeue
 | stack | Treiber stack with configurable ABA workaround (lock/tag/smr/llsc) | blocking & lock-free
@@ -27,6 +27,7 @@ Functionality
 
 "Lock-less" means that individual operations will not block (wait for other threads) but the whole data structure is not lock-free in the academic sense (e.g. linearizable, kill-tolerant). Example, an acquired slot in a reorder buffer must eventually be released or later released slots will not be retired and the reorder buffer will fill up. Acquire and release operations never block (so non-blocking in some limited sense) but the reorder buffer as a whole is neither lock-free nor obstruction-free.
 "Lock-free" and "wait-free" have the standard definitions from computer science.
+(1) Blocking (using per-bucket locks) on Armv7ve due to missing support for 128-bit atomic operations.
 
 ### Spin Locks & other blocking functions
 ----
@@ -58,7 +59,7 @@ Requirements
 
 HW/SW Support
 ----
-* Architectures - ARMv8/AArch64 and x86-64
+* Architectures - Armv7ve (Armv7a with LPAE/64-bit atomic LDRD/STRD, e.g. Cortex-A7/A15/A17), ARMv8/AArch64 and x86-64
 * OS - Linux, Windows and macOS (Darwin)
 
 Usage

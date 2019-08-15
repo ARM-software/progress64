@@ -69,6 +69,10 @@ endif
 endif
 CCFLAGS += -std=c11
 LDFLAGS += -std=c11
+#Enable when compiling for Armv7ve (make ARMV7VE=yes)
+ifeq ($(ARMV7VE),yes)
+CCFLAGS += -march=armv7ve
+endif
 #CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
 CCFLAGS += -g -ggdb -Wall -Wextra
 CCFLAGS += -fomit-frame-pointer

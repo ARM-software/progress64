@@ -24,6 +24,10 @@ _Generic((loc), \
 
 #include "arch/aarch64.h"
 
+#elif defined __arm__
+
+#include "arch/armv7a.h"
+
 #elif defined __x86_64__
 
 #include "arch/x86-64.h"
