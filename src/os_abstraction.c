@@ -3,8 +3,8 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 #ifdef _WIN32
+#include <malloc.h>
 #include <processthreadsapi.h>
-#define aligned_alloc(al, sz) _aligned_malloc((sz), (al))
 #elif defined __APPLE__
 #include <pthread.h>
 #elif defined __linux__
@@ -39,6 +39,10 @@ void *
 p64_malloc(size_t size, size_t alignment)
 {
     void *ptr;
+#ifdef _WIN32
+    //Always use _aligned_malloc since it can only be paired with _aligned_free
+    ptr = _aligned_malloc(size, alignment != 0 ? alignment : 1);
+#else
     if (alignment > 1)
     {
 #ifdef __APPLE__
@@ -59,13 +63,18 @@ p64_malloc(size_t size, size_t alignment)
     {
 	ptr = malloc(size);
     }
+#endif
     return ptr;
 }
 
 void
 p64_mfree(void *ptr)
 {
+#ifdef _WIN32
+    _aligned_free(ptr);
+#else
     free(ptr);
+#endif
 }
 
 #ifdef __linux__
