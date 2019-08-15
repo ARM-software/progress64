@@ -12,6 +12,20 @@
 #include "ldxstx.h"
 #endif
 
+static inline void *
+addr_dep(const void *ptr, uintptr_t dep)
+{
+    __asm__ volatile("add %x0, %x0, %x1\n"
+		     "sub %x0, %x0, %x1\n"
+		     : "+&r" (ptr)
+		     : "r" (dep)
+		     : );
+    return (void *)ptr;
+}
+
+#define addr_dep(ptr, dep) \
+((__typeof(ptr)) addr_dep((const void *)(ptr), (uintptr_t)(dep)))
+
 static inline uint64_t
 counter_freq(void)
 {

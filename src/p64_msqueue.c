@@ -132,17 +132,26 @@ enqueue_lock(p64_ptr_tag_t *qhead,
     p64_spinlock_release(lock);
 }
 
-static inline struct p64_ptr_tag
+static struct p64_ptr_tag
 atomic_load_ptr_tag(const struct p64_ptr_tag *loc, int mo)
 {
+    struct p64_ptr_tag pt;
 #ifdef __arm__
     //Armv7ve can do atomic load of ptr+tag (64 bits)
-    struct p64_ptr_tag pt;
     __atomic_load(loc, &pt, mo);
-    return pt;
+#elif defined __aarch64__
+    //Use address dependency to force program order of loads
+    do
+    {
+	pt.tag = __atomic_load_n(&loc->tag, mo);
+	pt.ptr = __atomic_load_n(addr_dep(&loc->ptr, pt.tag), __ATOMIC_RELAXED);
+	//The tag is strictly increasing, if it hasn't changed, the pointer
+	//also hasn't changed
+    }
+    while (__atomic_load_n(addr_dep(&loc->tag, pt.ptr), __ATOMIC_RELAXED) != pt.tag);
 #else
     (void)mo;
-    struct p64_ptr_tag pt;
+    //Use load-acquire to force program order of loads
     do
     {
 	pt.tag = __atomic_load_n(&loc->tag, __ATOMIC_ACQUIRE);
@@ -151,11 +160,11 @@ atomic_load_ptr_tag(const struct p64_ptr_tag *loc, int mo)
 	//also hasn't changed
     }
     while (__atomic_load_n(&loc->tag, __ATOMIC_RELAXED) != pt.tag);
-    return pt;
 #endif
+    return pt;
 }
 
-static inline int
+static int
 atomic_cas_ptr_tag(struct p64_ptr_tag *loc,
 		   struct p64_ptr_tag old,
 		   struct p64_ptr_tag neu,
