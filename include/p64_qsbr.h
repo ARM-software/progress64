@@ -19,8 +19,8 @@ extern "C"
 typedef struct p64_qsbrdomain p64_qsbrdomain_t;
 
 //Allocate a QSBR domain where each thread will be able to have up to
-//'maxobjs' objects waiting for reclamation. An unlimited number of objects
-//will be safe from premature reclamation
+//'maxobjs' retired objects waiting for reclamation (0 < maxobjs <= 0x80000000).
+//An unlimited number of objects will be safe from premature reclamation
 p64_qsbrdomain_t *p64_qsbr_alloc(uint32_t maxobjs);
 
 //Free a QSBR domain

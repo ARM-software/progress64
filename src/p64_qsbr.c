@@ -3,6 +3,7 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 #include <assert.h>
+#include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -41,6 +42,7 @@ struct p64_qsbrdomain
 {
     uint64_t current;//Current interval
     uint32_t maxobjs;
+    uint32_t ringmask;//(Power-of-two of maxobjs) - 1
     uint32_t high_wm;//High watermark of thread index
     uint64_t intervals[MAXTHREADS] ALIGNED(CACHE_LINE);//Each thread's last quiescent interval
 };
@@ -51,11 +53,18 @@ struct p64_qsbrdomain
 PUBLIC p64_qsbrdomain_t *
 p64_qsbr_alloc(uint32_t maxobjs)
 {
+    if (maxobjs < 1 || maxobjs > (UINT32_C(1) << 31))
+    {
+	fprintf(stderr, "qsbr: Invalid maxobjs %"PRIu32"\n", maxobjs);
+	fflush(stderr);
+	abort();
+    }
     p64_qsbrdomain_t *qsbr = p64_malloc(sizeof(p64_qsbrdomain_t), CACHE_LINE);
     if (qsbr != NULL)
     {
 	qsbr->current = 0;
 	qsbr->maxobjs = maxobjs;
+	qsbr->ringmask = ROUNDUP_POW2(maxobjs) - 1;
 	qsbr->high_wm = 0;
 	for (uint32_t i = 0; i < MAXTHREADS; i++)
 	{
@@ -70,10 +79,10 @@ p64_qsbr_alloc(uint32_t maxobjs)
 static uint64_t
 find_min(const uint64_t vec[], uint32_t num)
 {
-    uint64_t min = INFINITE;
-    for (uint32_t i = 0; i < num; i++)
+    uint64_t min = __atomic_load_n(&vec[0], __ATOMIC_RELAXED);
+    for (uint32_t i = 1; i < num; i++)
     {
-	uint64_t t = __atomic_load_n(&vec[i], __ATOMIC_ACQUIRE);
+	uint64_t t = __atomic_load_n(&vec[i], __ATOMIC_RELAXED);
 	if (t < min)
 	{
 	    min = t;
@@ -111,7 +120,8 @@ struct thread_state
     uint32_t recur;//Acquire/release recursion level
     uint32_t idx;//Thread index
     //Removed but not yet reclaimed objects
-    uint32_t nobjs;
+    uint32_t head, tail;
+    uint32_t ringmask;
     uint32_t maxobjs;
     struct object objs[];
 } ALIGNED(CACHE_LINE);
@@ -131,7 +141,7 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
 	abort();
     }
     size_t nbytes = sizeof(struct thread_state) +
-		    qsbr->maxobjs * sizeof(struct object);
+		    (qsbr->ringmask + 1) * sizeof(struct object);
     struct thread_state *ts = p64_malloc(nbytes, CACHE_LINE);
     if (ts == NULL)
     {
@@ -141,7 +151,9 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
     ts->interval = INFINITE;
     ts->recur = 0;
     ts->idx = idx;
-    ts->nobjs = 0;
+    ts->head = 0;
+    ts->tail = 0;
+    ts->ringmask = qsbr->ringmask;
     ts->maxobjs = qsbr->maxobjs;
     assert(qsbr->intervals[idx] == INFINITE);
     //Conditionally update high watermark of indexes
@@ -192,9 +204,9 @@ p64_qsbr_unregister(void)
     {
 	eprintf_not_registered();
     }
-    if (TS->nobjs != 0)
+    if (TS->head != TS->tail)
     {
-	fprintf(stderr, "qsbr: Thread has %u unreclaimed objects\n", TS->nobjs);
+	fprintf(stderr, "qsbr: Thread has %u unreclaimed objects\n", TS->head - TS->tail);
 	fflush(stderr);
 	abort();
     }
@@ -273,36 +285,26 @@ static uint32_t
 garbage_collect(void)
 {
     uint32_t numthrs = __atomic_load_n(&TS->qsbr->high_wm, __ATOMIC_ACQUIRE);
-    uint64_t interval = find_min(TS->qsbr->intervals, numthrs);
+    uint64_t min_interval = find_min(TS->qsbr->intervals, numthrs);
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
     //Traverse list of pending objects
-    uint32_t nobjs = 0;
-    for (uint32_t i = 0; i < TS->nobjs;)
+    while (TS->tail != TS->head)
     {
-	struct object obj = TS->objs[i++];
-	if (interval > obj.interval)
+	struct object *obj = &TS->objs[TS->tail & TS->ringmask];
+	if (min_interval <= obj->interval)
 	{
-	    //All threads have observed a later interval =>
-	    //No thread has any reference to this object, reclaim it
-	    obj.cb(obj.ptr);
-	}
-	else
-	{
-	    //Retired object still referenced, keep it in rlist
-	    TS->objs[nobjs++] = obj;
-	    //Keep the rest of the objects as well
-	    while (i < TS->nobjs)
-	    {
-		assert(TS->objs[i].interval >= TS->objs[i - 1].interval);
-		TS->objs[nobjs++] = TS->objs[i++];
-	    }
+	    //At least one thread has not observed a later interval
 	    break;
 	}
+	//All threads have observed a later interval =>
+	//No thread has any reference to this object, reclaim it
+	obj->cb(obj->ptr);
+	TS->tail++;
     }
     //Some objects may remain in the list of retired objects
-    TS->nobjs = nobjs;
     //Return number of remaining unreclaimed objects
     //Caller can compute number of available slots
-    return nobjs;
+    return TS->head - TS->tail;
 }
 
 //Retire an object
@@ -315,17 +317,14 @@ p64_qsbr_retire(void *ptr,
     {
 	eprintf_not_registered();
     }
-    if (UNLIKELY(TS->nobjs == TS->maxobjs))
+    if (UNLIKELY(TS->head - TS->tail == TS->maxobjs))
     {
 	if (garbage_collect() == TS->maxobjs)
 	{
 	    return false;//No space for object
 	}
     }
-    assert(TS->nobjs < TS->maxobjs);
-    uint32_t i = TS->nobjs++;
-    TS->objs[i].ptr = ptr;
-    TS->objs[i].cb = cb;
+    assert(TS->head - TS-tail < TS->maxobjs);
     //Create a new interval
     //Release order to ensure removal is observable before new interval is
     //created and can be observed
@@ -334,7 +333,10 @@ p64_qsbr_retire(void *ptr,
 					   1,
 					   __ATOMIC_RELEASE);
     //Retired object belongs to previous interval
-    TS->objs[i].interval = previous;
+    TS->objs[TS->head & TS->ringmask].ptr = ptr;
+    TS->objs[TS->head & TS->ringmask].cb = cb;
+    TS->objs[TS->head & TS->ringmask].interval = previous;
+    TS->head++;
     //The object can be reclaimed when all threads have observed
     //the new interval
     return true;
@@ -347,7 +349,7 @@ p64_qsbr_reclaim(void)
     {
 	eprintf_not_registered();
     }
-    if (TS->nobjs == 0)
+    if (TS->head == TS->tail)
     {
 	//Nothing to reclaim
 	return 0;
