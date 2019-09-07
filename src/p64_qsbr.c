@@ -324,7 +324,7 @@ p64_qsbr_retire(void *ptr,
 	    return false;//No space for object
 	}
     }
-    assert(TS->head - TS-tail < TS->maxobjs);
+    assert(TS->head - TS->tail < TS->maxobjs);
     //Create a new interval
     //Release order to ensure removal is observable before new interval is
     //created and can be observed
