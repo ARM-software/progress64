@@ -48,28 +48,22 @@ p64_antireplay_free(p64_antireplay_t *ar)
 }
 
 static inline uint32_t
-extract_bits(uint32_t v, uint32_t msb, uint32_t lsb)
-{
-    uint32_t width = msb - lsb + 1;
-    uint32_t mask = (1U << width) - 1U;
-    return v & (mask << lsb);
-}
-
-static inline uint32_t
 sn_to_index(p64_antireplay_t *ar, p64_antireplay_sn_t sn)
 {
     if (ar->swizzle)
     {
 	//Compute index to sequence number array but consecutive sequence
 	//numbers will be located in different cache lines
-	return (extract_bits(sn, 31, 6) |
-		extract_bits(sn, 5, 3) >> 3 |
-		extract_bits(sn, 2, 0) << 3) & ar->winmask;
+#if CACHE_LINE == 64
+	//64B cache line and 8B (64-bit) array elements =>
+	//8 elements/cache line
+	sn = sn ^ (sn & 7) << 3;
+#else
+	//Assume 128B cache line => 16 elements/cache line
+	sn = sn ^ (sn & 15) << 4;
+#endif
     }
-    else
-    {
-	return sn & ar->winmask;
-    }
+    return sn & ar->winmask;
 }
 
 p64_antireplay_result_t
