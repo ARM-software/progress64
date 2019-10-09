@@ -140,6 +140,27 @@ wait_until_equal32(uint32_t *loc, uint32_t val, int mm)
 #endif
 }
 
+static inline uint32_t
+wait_until_equal2_32(uint32_t *loc, uint32_t val0, uint32_t val1, int mm)
+{
+    uint32_t v;
+#ifdef USE_WFE
+    if ((v = __atomic_load_n(loc, mm)) != val0 && v != val1)
+    {
+	sevl();
+	while(wfe() && (v = ldx(loc, mm)) != val0 && v != val1)
+	{
+	}
+    }
+#else
+    while ((v = __atomic_load_n(loc, mm)) != val0 && v != val1)
+    {
+	doze();
+    }
+#endif
+    return v;
+}
+
 #if defined USE_WFE
 
 #define SEVL() sevl()

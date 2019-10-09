@@ -20,6 +20,11 @@ _Generic((loc), \
     uint32_t *: wait_until_equal32 \
     )((loc), (val), (mm))
 
+#define wait_until_equal2(loc, val0, val1, mm) \
+_Generic((loc), \
+    uint32_t *: wait_until_equal2_32 \
+    )((loc), (val0), (val1), (mm))
+
 #if defined __aarch64__
 
 #include "arch/aarch64.h"
