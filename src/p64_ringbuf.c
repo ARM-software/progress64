@@ -532,8 +532,44 @@ p64_ringbuf_release_(void *ptr,
     }
 }
 
-//Enqueue elements at tail
 UNROLL_LOOPS
+static inline void
+copy_voidptr(void **restrict dst, void *const *restrict src, uint32_t num)
+{
+    for (uint32_t i = 0; i < num; i++)
+    {
+	dst[i] = src[i];
+    }
+}
+
+static inline void
+write_slots(void **restrict rbring,
+	    void *const *restrict ev,
+	    const p64_ringbuf_result_t r)
+{
+    void **restrict ring0 = &rbring[r.index & r.mask];
+    if (LIKELY(r.actual <= 1))
+    {
+	ring0[0] = ev[0];
+	return;
+    }
+    uint32_t seg0 = r.mask + 1 - (r.index & r.mask);
+    if (LIKELY(r.actual <= seg0))
+    {
+	/* One contiguous range */
+	assert((r.index & r.mask) + seg0 <= r.mask + 1);
+	copy_voidptr(ring0, ev, r.actual);
+    }
+    else
+    {
+	/* Range wraps around end of ring => two subranges */
+	assert(seg0 < r.actual);
+	copy_voidptr(ring0, ev, seg0);
+	copy_voidptr(rbring, ev + seg0, r.actual - seg0);
+    }
+}
+
+//Enqueue elements at tail
 uint32_t
 p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 		    void *const *restrict ev,
@@ -575,10 +611,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     }
     else//SPENQ or MPENQ
     {
-	for (uint32_t i = 0; i < r.actual; i++)
-	{
-	    rb->ring[(r.index + i) & mask] = ev[i];
-	}
+	write_slots(rb->ring, ev, r);
     }
 
     //Step 3: release slots to consumer
@@ -595,6 +628,33 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     }
 
     return r.actual;
+}
+
+static inline void
+read_slots(void *const *restrict rbring,
+	   void **restrict ev,
+	   const p64_ringbuf_result_t r)
+{
+    void *const *restrict ring0 = &rbring[r.index & r.mask];
+    if (LIKELY(r.actual <= 1))
+    {
+	ev[0] = ring0[0];
+	return;
+    }
+    uint32_t seg0 = r.mask + 1 - (r.index & r.mask);
+    if (LIKELY(r.actual <= seg0))
+    {
+	/* One contiguous range */
+	assert((r.index & r.mask) + seg0 <= r.mask + 1);
+	copy_voidptr(ev, ring0, r.actual);
+    }
+    else
+    {
+	/* Range wraps around end of ring => two subranges */
+	assert(seg0 < r.actual);
+	copy_voidptr(ev, ring0, seg0);
+	copy_voidptr(ev + seg0, rbring, r.actual - seg0);
+    }
 }
 
 //Dequeue elements from head
@@ -626,10 +686,10 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	    }
 
 	    //Step 2: read slots in advance (fortunately non-destructive)
-	    for (uint32_t i = 0; i < (uint32_t)actual; i++)
-	    {
-		ev[i] = rb->ring[(head + i) & mask];
-	    }
+	    p64_ringbuf_result_t r = { .index = head,
+				       .actual = actual,
+				       .mask = mask };
+	    read_slots(rb->ring, ev, r);
 
 	    //Step 3: commit acquisition, release slots to producer
 	}
@@ -676,10 +736,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     }
     else//SCDEQ or MCDEQ
     {
-	for (uint32_t i = 0; i < r.actual; i++)
-	{
-	    ev[i] = rb->ring[(r.index + i) & mask];
-	}
+	read_slots(rb->ring, ev, r);
     }
 
     //Step 3: release slots to producer

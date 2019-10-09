@@ -42,22 +42,39 @@ P64_CONCAT(_name,_free)(P64_CONCAT(_name,_t) *rb) \
 } \
 \
 UNROLL_LOOPS \
+static inline void \
+P64_CONCAT(_name,_copy)(_type *restrict dst, const _type *restrict src, uint32_t num) \
+{ \
+    for (uint32_t i = 0; i < num; i++) \
+    { \
+	dst[i] = src[i]; \
+    } \
+} \
+\
 static inline uint32_t \
 P64_CONCAT(_name,_enqueue)(P64_CONCAT(_name,_t) *rb, _type const ev[], uint32_t num) \
 { \
     const struct p64_ringbuf_result r = p64_ringbuf_acquire_(rb, num, true); \
     if (r.actual != 0) \
     { \
-	for (uint32_t i = 0; i < r.actual; i++) \
+	uint32_t seg0 = r.mask + 1 - (r.index & r.mask); \
+	_type *ring0 = &rb->ring[r.index & r.mask]; \
+	if (r.actual <= seg0) \
 	{ \
-	    rb->ring[(r.index + i) & r.mask] = ev[i]; \
+	    /* One contiguous range */ \
+	    P64_CONCAT(_name,_copy)(ring0, ev, r.actual); \
+	} \
+	else \
+	{ \
+	    /* Range wraps around end of ring => two subranges */ \
+	    P64_CONCAT(_name,_copy)(ring0, ev, seg0); \
+	    P64_CONCAT(_name,_copy)(rb->ring, ev + seg0, r.actual - seg0); \
 	} \
 	(void)p64_ringbuf_release_(rb, r, true); \
     } \
     return r.actual; \
 } \
 \
-UNROLL_LOOPS \
 static inline uint32_t \
 P64_CONCAT(_name,_dequeue)(P64_CONCAT(_name,_t) *rb, _type ev[], uint32_t num, uint32_t *index) \
 { \
@@ -70,9 +87,18 @@ P64_CONCAT(_name,_dequeue)(P64_CONCAT(_name,_t) *rb, _type ev[], uint32_t num, u
 	    return r.actual; \
 	} \
 	*index = r.index; \
-	for (uint32_t i = 0; i < r.actual; i++) \
+	uint32_t seg0 = r.mask + 1 - (r.index & r.mask); \
+	const _type *ring0 = &rb->ring[r.index & r.mask]; \
+	if (r.actual <= seg0) \
 	{ \
-	    ev[i] = rb->ring[(r.index + i) & r.mask]; \
+	    /* One contiguous range */ \
+	    P64_CONCAT(_name,_copy)(ev, ring0, r.actual); \
+	} \
+	else \
+	{ \
+	    /* Range wraps around end of ring => two subranges */ \
+	    P64_CONCAT(_name,_copy)(ev, ring0, seg0); \
+	    P64_CONCAT(_name,_copy)(ev + seg0, rb->ring, r.actual - seg0); \
 	} \
     } \
     while (!p64_ringbuf_release_(rb, r, false)); \
