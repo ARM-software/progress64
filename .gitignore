@@ -25,6 +25,7 @@ rwsync
 rwsync_r
 stack
 tfrwlock
+tfrwlock_r
 timer
 tags
 TAGS
