@@ -41,6 +41,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | semaphore | counting semaphore | rw, fcfs |
 | spinlock | basic CAS-based spin lock | mutex |
 | tfrwlock | task fair reader/writer lock | rw, fcfs |
+| tfrwlock\_r | recursive version of tfrw lock | rw, fcfs, recursive |
 | tktlock | ticket lock | mutex, fcfs |
 
 "mutex" - mutual exclusion, only one thread at a time can acquire lock.  
