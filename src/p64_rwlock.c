@@ -5,7 +5,6 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_rwlock.h"
@@ -13,6 +12,7 @@
 
 #include "arch.h"
 #include "common.h"
+#include "err_hnd.h"
 
 #define RWLOCK_WRITER (1U << 31)
 #define RWLOCK_READERS (~RWLOCK_WRITER)
@@ -90,9 +90,8 @@ p64_rwlock_release_rd(p64_rwlock_t *lock)
     //if (UNLIKELY((prevl & RWLOCK_WRITER) != 0 || prevl == 0))
     if (UNLIKELY((prevl & RWLOCK_READERS) == 0))
     {
-	fprintf(stderr, "Invalid read release of RW lock %p\n", lock);
-	fflush(stderr);
-	abort();
+	report_error("rwlock", "invalid read release", lock);
+	return;
     }
 }
 
@@ -136,9 +135,8 @@ p64_rwlock_release_wr(p64_rwlock_t *lock)
 {
     if (UNLIKELY(*lock != RWLOCK_WRITER))
     {
-	fprintf(stderr, "Invalid write release of RW lock %p\n", lock);
-	fflush(stderr);
-	abort();
+	report_error("rwlock", "invalid write release", lock);
+	return;
     }
     //Clear writer flag
 #ifdef USE_DMB

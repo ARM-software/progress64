@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #ifndef PRIVATE
@@ -24,18 +23,17 @@ typedef struct p64_qsbrdomain p64_qsbrdomain_t;
 #include "arch.h"
 #include "lockfree.h"
 #include "common.h"
+#include "err_hnd.h"
 #include "thr_idx.h"
 
 #ifndef PRIVATE
 static void
-eprintf_not_registered(void)
+report_thread_not_registered(void)
 {
-    fprintf(stderr, "qsbr: p64_qsbr_register() not called\n");
-    fflush(stderr);
-    abort();
+    report_error("qsbr", "thread not registered", 0);
 }
 #else
-#define eprintf_not_registered(x)
+#define report_thread_not_registered(x)
 #endif
 
 struct p64_qsbrdomain
@@ -55,9 +53,8 @@ p64_qsbr_alloc(uint32_t maxobjs)
 {
     if (maxobjs < 1 || maxobjs > (UINT32_C(1) << 31))
     {
-	fprintf(stderr, "qsbr: Invalid maxobjs %"PRIu32"\n", maxobjs);
-	fflush(stderr);
-	abort();
+	report_error("qsbr", "invalid maxobjs", maxobjs);
+	return NULL;
     }
     p64_qsbrdomain_t *qsbr = p64_malloc(sizeof(p64_qsbrdomain_t), CACHE_LINE);
     if (qsbr != NULL)
@@ -97,9 +94,8 @@ p64_qsbr_free(p64_qsbrdomain_t *qsbr)
     uint64_t interval = find_min(qsbr->intervals, qsbr->high_wm);
     if (interval != INFINITE)
     {
-	fprintf(stderr, "qsbr: Registered threads still present\n");
-	fflush(stderr);
-	abort();
+	report_error("qsbr", "registered threads still present", 0);
+	return;
     }
     p64_mfree(qsbr);
 }
@@ -136,16 +132,16 @@ alloc_ts(p64_qsbrdomain_t *qsbr)
     int32_t idx = p64_idx_alloc();
     if (idx < 0)
     {
-	fprintf(stderr, "qsbr: Too many registered threads\n");
-	fflush(stderr);
-	abort();
+	report_error("qsbr", "too many registered threads", 0);
+	return NULL;
     }
     size_t nbytes = sizeof(struct thread_state) +
 		    (qsbr->ringmask + 1) * sizeof(struct object);
     struct thread_state *ts = p64_malloc(nbytes, CACHE_LINE);
     if (ts == NULL)
     {
-	perror("malloc"), exit(EXIT_FAILURE);
+	report_error("qsbr", "failed to allocate thread-local data", 0);
+	return NULL;
     }
     ts->qsbr = qsbr;
     ts->interval = INFINITE;
@@ -166,7 +162,8 @@ p64_qsbr_reactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     uint64_t current = __atomic_load_n(&TS->qsbr->current, __ATOMIC_RELAXED);
     __atomic_store_n(&TS->qsbr->intervals[TS->idx], current, __ATOMIC_RELAXED);
@@ -181,6 +178,10 @@ p64_qsbr_register(p64_qsbrdomain_t *qsbr)
     if (UNLIKELY(TS == NULL))
     {
 	TS = alloc_ts(qsbr);
+	if (UNLIKELY(TS == NULL))
+	{
+	    return;
+	}
     }
     p64_qsbr_reactivate();
 }
@@ -190,7 +191,8 @@ p64_qsbr_deactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     //Mark thread as inactive, no references kept
     __atomic_store_n(&TS->qsbr->intervals[TS->idx], INFINITE, __ATOMIC_RELEASE);
@@ -202,13 +204,14 @@ p64_qsbr_unregister(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (TS->head != TS->tail)
     {
-	fprintf(stderr, "qsbr: Thread has %u unreclaimed objects\n", TS->head - TS->tail);
-	fflush(stderr);
-	abort();
+	report_error("qsbr", "thread has unreclaimed objects",
+		     TS->head - TS->tail);
+	return;
     }
     p64_qsbr_deactivate();
     p64_idx_free(TS->idx);
@@ -234,13 +237,13 @@ p64_qsbr_quiescent(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (UNLIKELY(TS->interval == INFINITE))
     {
-	fprintf(stderr, "qsbr: Inactive thread calling p64_qsbr_quiescent()\n");
-	fflush(stderr);
-	abort();
+	report_error("qsbr", "thread is inactive", 0);
+	return;
     }
     quiescent();
 }
@@ -250,13 +253,13 @@ p64_qsbr_acquire(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (UNLIKELY(TS->interval == INFINITE))
     {
-	fprintf(stderr, "qsbr: Inactive thread calling p64_qsbr_acquire()\n");
-	fflush(stderr);
-	abort();
+	report_error("qsbr", "thread is inactive", 0);
+	return;
     }
     TS->recur++;
 }
@@ -266,13 +269,13 @@ p64_qsbr_release(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (UNLIKELY(TS->recur == 0))
     {
-	fprintf(stderr, "qsbr: mismatched call to p64_qsbr_release()\n");
-	fflush(stderr);
-	abort();
+	report_error("qsbr", "excess release call", 0);
+	return;
     }
     if (--TS->recur == 0)
     {
@@ -315,7 +318,8 @@ p64_qsbr_retire(void *ptr,
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return false;
     }
     if (UNLIKELY(TS->head - TS->tail == TS->maxobjs))
     {
@@ -347,7 +351,8 @@ p64_qsbr_reclaim(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return 0;
     }
     if (TS->head == TS->tail)
     {
@@ -359,4 +364,4 @@ p64_qsbr_reclaim(void)
     return nremaining;
 }
 
-#undef eprintf_not_registered
+#undef report_thread_not_registered

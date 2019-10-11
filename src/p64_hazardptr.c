@@ -41,11 +41,9 @@ bitmask(uint32_t n)
 }
 
 static void
-eprintf_not_registered(void)
+report_thread_not_registered(void)
 {
-    fprintf(stderr, "hazardptr: p64_hazptr_register() not called\n");
-    fflush(stderr);
-    abort();
+    report_error("hazardptr", "thread not registered", 0);
 }
 
 #define IS_NULL_PTR(ptr) ((uintptr_t)(ptr) < CACHE_LINE)
@@ -85,9 +83,8 @@ p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
     }
     if (nrefs < 1 || nrefs > 32)
     {
-	fprintf(stderr, "hazardptr: Invalid number of references\n");
-	fflush(stderr);
-	abort();
+	report_error("hazardptr", "invalid number of references", nrefs);
+	return NULL;
     }
     uint32_t nrefs_rounded = roundup(nrefs);
     size_t nbytes = sizeof(p64_hpdomain_t) +
@@ -123,9 +120,9 @@ p64_hazptr_free(p64_hpdomain_t *hpd)
 	{
 	    if (hpd->hp[t * nrefs_rounded + i].ref != NULL)
 	    {
-		fprintf(stderr, "hazardptr: References still present\n");
-		fflush(stderr);
-		abort();
+		report_error("hazardptr", "references still present",
+			     hpd->hp[t * nrefs_rounded + i].ref);
+		return;
 	    }
 	}
     }
@@ -170,9 +167,8 @@ alloc_ts(p64_hpdomain_t *hpd)
     int32_t idx = p64_idx_alloc();
     if (idx < 0)
     {
-	fprintf(stderr, "hazardptr: Too many registered threads\n");
-	fflush(stderr);
-	abort();
+	report_error("hazardptr", "too many registered threads", 0);
+	return NULL;
     }
 
     size_t nbytes = sizeof(struct thread_state) +
@@ -181,7 +177,8 @@ alloc_ts(p64_hpdomain_t *hpd)
     struct thread_state *ts = p64_malloc(nbytes, CACHE_LINE);
     if (ts == NULL)
     {
-	perror("malloc"), exit(EXIT_FAILURE);
+	report_error("hazardptr", "failed to allocate thread-local data", 0);
+	return NULL;
     }
     uint32_t nrefs_rounded = roundup(hpd->nrefs);
     ts->hpd = hpd;
@@ -207,7 +204,8 @@ p64_hazptr_reactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (HAS_QSBR(TS))
     {
@@ -229,6 +227,10 @@ p64_hazptr_register(p64_hpdomain_t *hpd)
 	    return;
 	}
 	TS = alloc_ts(hpd);
+	if (TS == NULL)
+	{
+	    return;
+	}
     }
     p64_hazptr_reactivate();
 }
@@ -238,7 +240,8 @@ p64_hazptr_deactivate(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (HAS_QSBR(TS))
     {
@@ -248,9 +251,8 @@ p64_hazptr_deactivate(void)
     //Nothing to do
     if (TS->free != bitmask(TS->nrefs))
     {
-	fprintf(stderr, "hazardptr: Thread has allocated hazard pointers\n");
-	fflush(stderr);
-	abort();
+	report_error("hazardptr", "thread has allocated hazard pointers", 0);
+	return;
     }
 }
 
@@ -259,7 +261,8 @@ p64_hazptr_unregister(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (HAS_QSBR(TS))
     {
@@ -269,10 +272,8 @@ p64_hazptr_unregister(void)
     }
     if (TS->nobjs != 0)
     {
-	fprintf(stderr, "hazardptr: Thread has %u unreclaimed objects\n",
-		TS->nobjs);
-	fflush(stderr);
-	abort();
+	report_error("hazardptr", "thread has unreclaimed objects", TS->nobjs);
+	return;
     }
     p64_hazptr_deactivate();
     p64_idx_free(TS->idx);
@@ -303,21 +304,20 @@ hazptr_free(p64_hazardptr_t hp)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     uint32_t idx = hp - &TS->hp[0].ref;
     if (UNLIKELY(idx >= TS->nrefs))
     {
-	fprintf(stderr, "Invalid hazard pointer %p\n", hp);
-	fflush(stderr);
-	abort();
+	report_error("hazardptr", "invalid hazard pointer", hp);
+	return;
     }
     assert(IS_NULL_PTR(*hp));
     if (UNLIKELY((TS->free & (1U << idx)) != 0))
     {
-	fprintf(stderr, "Hazard pointer %p already free\n", hp);
-	fflush(stderr);
-	abort();
+	report_error("hazardptr", "hazard pointer already free", hp);
+	return;
     }
     TS->free |= 1U << idx;
     TS->fl[idx].file = NULL;
@@ -332,7 +332,8 @@ p64_hazptr_annotate(p64_hazardptr_t hp,
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (HAS_QSBR(TS))
     {
@@ -343,9 +344,8 @@ p64_hazptr_annotate(p64_hazardptr_t hp,
 	uint32_t idx = hp - &TS->hp[0].ref;
 	if (UNLIKELY(idx >= TS->nrefs))
 	{
-	    fprintf(stderr, "Invalid hazard pointer %p\n", hp);
-	    fflush(stderr);
-	    abort();
+	    report_error("hazardptr", "invalid hazard pointer", hp);
+	    return;
 	}
 	TS->fl[idx].file = file;
 	TS->fl[idx].line = line;
@@ -357,7 +357,8 @@ p64_hazptr_dump(FILE *fp)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return 0;
     }
     if (HAS_QSBR(TS))
     {
@@ -392,7 +393,8 @@ p64_hazptr_acquire(void **pptr,
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return NULL;
     }
     if (HAS_QSBR(TS))
     {
@@ -433,11 +435,11 @@ p64_hazptr_acquire(void **pptr,
 	    *hp = hazptr_alloc();
 	    if (UNLIKELY(*hp == P64_HAZARDPTR_NULL))
 	    {
-		//No more hazard pointers available => programming error
-		fprintf(stderr, "Failed to allocate hazard pointer\n");
-		p64_hazptr_dump(stderr);
-		fflush(stderr);
-		abort();
+		//No more hazard pointers available =>
+		//programming or configuration error
+		report_error("hazardptr",
+			     "failed to allocate hazard pointer", 0);
+		return NULL;
 	    }
 	}
 	//Step 2b: Initialise hazard pointer with reference
@@ -645,7 +647,8 @@ p64_hazptr_retire(void *ptr,
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return false;
     }
     if (HAS_QSBR(TS))
     {
@@ -671,7 +674,8 @@ p64_hazptr_reclaim(void)
 {
     if (UNLIKELY(TS == NULL))
     {
-	eprintf_not_registered();
+	report_thread_not_registered();
+	return 0;
     }
     if (HAS_QSBR(TS))
     {

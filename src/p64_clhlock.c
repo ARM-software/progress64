@@ -5,7 +5,6 @@
 
 #include <assert.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_clhlock.h"
@@ -14,6 +13,7 @@
 #include "common.h"
 #include "arch.h"
 #include "os_abstraction.h"
+#include "err_hnd.h"
 
 #define CLH_GO 0
 #define CLH_WAIT 1
@@ -30,8 +30,8 @@ alloc_clhnode(void)
     p64_clhnode_t *node = p64_malloc(sizeof(p64_clhnode_t), CACHE_LINE);
     if (node == NULL)
     {
-	perror("p64_malloc");
-	exit(EXIT_FAILURE);
+	report_error("clhlock", "failed to allocate clhnode", 0);
+	return NULL;
     }
     node->prev = NULL;
     node->wait = CLH_WAIT;
@@ -42,8 +42,11 @@ void
 p64_clhlock_init(p64_clhlock_t *lock)
 {
     lock->tail = alloc_clhnode();
-    lock->tail->prev = NULL;
-    lock->tail->wait = CLH_GO;
+    if (lock->tail != NULL)
+    {
+	lock->tail->prev = NULL;
+	lock->tail->wait = CLH_GO;
+    }
 }
 
 void

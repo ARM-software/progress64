@@ -6,7 +6,6 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_ringbuf.h"
@@ -15,6 +14,7 @@
 
 #include "arch.h"
 #include "common.h"
+#include "err_hnd.h"
 #ifdef USE_LDXSTX
 #include "ldxstx.h"
 #endif
@@ -71,7 +71,7 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
     unsigned long ringsz = ROUNDUP_POW2(nelems);
     if (nelems == 0 || ringsz == 0 || ringsz > 0x80000000)
     {
-	fprintf(stderr, "ringbuf: Invalid number of elements %u\n", nelems);
+	report_error("ringbuf", "invalid number of elements", nelems);
 	return NULL;
     }
     //Can't specify both single-producer and non-blocking enqueue
@@ -89,7 +89,7 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	(flags & invalid_combo3) == invalid_combo3 ||
 	((flags & (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_NBDEQ)) != 0 && esize != sizeof(void *)))
     {
-	fprintf(stderr, "ringbuf: Invalid flags %#x\n", flags);
+	report_error("ringbuf", "invalid flags", flags);
 	return NULL;
     }
     size_t nbytes = sizeof(p64_ringbuf_t) + ringsz * esize;
@@ -146,7 +146,8 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
     {
 	if (rb->prod.head.cur != rb->cons.head/*tail*/.cur)
 	{
-	    fprintf(stderr, "Ring buffer %p is not empty\n", rb);
+	    report_error("ringbuf", "ring buffer not empty", rb);
+	    return;
 	}
 	p64_mfree(rb);
     }

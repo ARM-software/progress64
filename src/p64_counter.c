@@ -5,7 +5,6 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_counter.h"
@@ -16,21 +15,18 @@
 #include "common.h"
 #include "arch.h"
 #include "thr_idx.h"
+#include "err_hnd.h"
 
 static void
-eprintf_invalid_counter(p64_counter_t cntid)
+report_invalid_counter(p64_counter_t cntid)
 {
-    fprintf(stderr, "counter: Invalid counter %u\n", cntid);
-    fflush(stderr);
-    abort();
+    report_error("counter", "invalid counter", cntid);
 }
 
 static void
-eprintf_thread_not_registered(void)
+report_thread_not_registered(void)
 {
-    fprintf(stderr, "counter: Thread not registered\n");
-    fflush(stderr);
-    abort();
+    report_error("counter", "thread not registered", 0);
 }
 
 struct p64_cntdomain
@@ -89,9 +85,8 @@ p64_cntdomain_free(p64_cntdomain_t *cntd)
     {
 	if (__atomic_load_n(&cntd->perthread[i], __ATOMIC_RELAXED) != NULL)
 	{
-	    fprintf(stderr, "counter: Threads still registered\n");
-	    fflush(stderr);
-	    abort();
+	    report_error("counter", "threads still registered", 0);
+	    return;
 	}
     }
     p64_mfree(cntd);
@@ -112,15 +107,15 @@ p64_cntdomain_register(p64_cntdomain_t *cntd)
     }
     if (UNLIKELY(cntd->perthread[pth.tidx] != NULL))
     {
-	eprintf_thread_not_registered();
+	report_thread_not_registered();
+	return;
     }
     size_t sz = cntd->ncounters * sizeof(uint64_t);
     uint64_t *counters = p64_malloc(sz, 0);
     if (counters == NULL)
     {
-	fprintf(stderr, "counter: Failed to allocate private stash\n");
-	fflush(stderr);
-	abort();
+	report_error("counter", "failed to allocate private stash", cntd);
+	return;
     }
     //Initialise all private counters
     memset(counters, 0, sz);
@@ -133,12 +128,14 @@ p64_cntdomain_unregister(p64_cntdomain_t *cntd)
 {
     if (UNLIKELY(pth.count == 0))
     {
-	eprintf_thread_not_registered();
+	report_thread_not_registered();
+	return;
     }
     uint64_t *counters = cntd->perthread[pth.tidx];
     if (UNLIKELY(counters == NULL))
     {
-	eprintf_thread_not_registered();
+	report_thread_not_registered();
+	return;
     }
     //'Move' all counters from private to shared locations
     for (uint32_t i = 0; i < cntd->ncounters; i++)
@@ -201,14 +198,14 @@ p64_counter_free(p64_cntdomain_t *cntd, p64_counter_t cntid)
     if (UNLIKELY(cntid == P64_COUNTER_INVALID ||
 		 cntid >= cntd->ncounters))
     {
-	eprintf_invalid_counter(cntid);
+	report_invalid_counter(cntid);
+	return;
     }
     //Check that bit is not already set (counter is free)
     if (cntd->free[cntid / BITSPERWORD] & (UINT64_C(1) << (cntid % BITSPERWORD)))
     {
-	fprintf(stderr, "counter: Counter %u already free\n", cntid);
-	fflush(stderr);
-	abort();
+	report_error("counter", "counter already free", cntid);
+	return;
     }
     //Set free bit and free counter
     __atomic_fetch_or(&cntd->free[cntid / BITSPERWORD],
@@ -221,12 +218,14 @@ p64_counter_add(p64_cntdomain_t *cntd, p64_counter_t cntid, uint64_t val)
 {
     if (UNLIKELY(pth.count == 0))
     {
-	eprintf_thread_not_registered();
+	report_thread_not_registered();
+	return;
     }
     if (UNLIKELY(cntid == P64_COUNTER_INVALID ||
 		 cntid >= cntd->ncounters))
     {
-	eprintf_invalid_counter(cntid);
+	report_invalid_counter(cntid);
+	return;
     }
     uint64_t *counters = cntd->perthread[pth.tidx];
     uint64_t old = __atomic_load_n(&counters[cntid], __ATOMIC_RELAXED);
@@ -239,7 +238,8 @@ p64_counter_read(p64_cntdomain_t *cntd, p64_counter_t cntid)
     if (UNLIKELY(cntid == P64_COUNTER_INVALID ||
 		 cntid >= cntd->ncounters))
     {
-	eprintf_invalid_counter(cntid);
+	report_invalid_counter(cntid);
+	return 0;
     }
     p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
     uint64_t sh0, sh1, sum;
@@ -276,7 +276,8 @@ p64_counter_reset(p64_cntdomain_t *cntd, p64_counter_t cntid)
     if (UNLIKELY(cntid == P64_COUNTER_INVALID ||
 		 cntid >= cntd->ncounters))
     {
-	eprintf_invalid_counter(cntid);
+	report_invalid_counter(cntid);
+	return;
     }
     uint64_t cur = p64_counter_read(cntd, cntid);
     __atomic_fetch_sub(&cntd->shared[cntid], cur, __ATOMIC_RELAXED);

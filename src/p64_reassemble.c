@@ -5,7 +5,6 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_hazardptr.h"
@@ -17,6 +16,7 @@
 #include "common.h"
 #include "lockfree.h"
 #include "arch.h"
+#include "err_hnd.h"
 
 #ifdef __aarch64__
 #define lockfree_compare_exchange_16 lockfree_compare_exchange_16_frail
@@ -320,9 +320,8 @@ p64_reassemble_alloc(uint32_t size,
 {
     if (size < 1 || !IS_POWER_OF_TWO(size))
     {
-	fprintf(stderr, "Invalid fragment table size %u\n", size);
-	fflush(stderr);
-	abort();
+	report_error("reassemble", "invalid fragment table size", size);
+	return NULL;
     }
     p64_reassemble_t *re = p64_malloc(sizeof(p64_reassemble_t), CACHE_LINE);
     if (re != NULL)

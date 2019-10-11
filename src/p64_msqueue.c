@@ -4,7 +4,6 @@
 
 #include <assert.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -14,6 +13,7 @@
 #include "build_config.h"
 #include "arch.h"
 #include "lockfree.h"
+#include "err_hnd.h"
 #ifdef USE_LDXSTX
 #include "ldxstx.h"
 #endif
@@ -64,9 +64,8 @@ p64_msqueue_init(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail,
 {
     if (aba_workaround > P64_ABA_SMR)
     {
-	fprintf(stderr, "msqueue: Invalid aba_workaround %u\n", aba_workaround);
-	fflush(stderr);
-	abort();
+	report_error("msqueue", "invalid ABA workaround", aba_workaround);
+	return;
     }
     dummy->next.ptr = MSQ_NULL(qhead);
     dummy->next.tag = aba_workaround;
@@ -95,19 +94,16 @@ p64_msqueue_fini(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail)
     (void)qtail;
     if (qhead->ptr->next.ptr != MSQ_NULL(qhead))
     {
-	fprintf(stderr, "msqueue %p not empty\n", qhead);
-	fflush(stderr);
-	abort();
+	report_error("msqueue", "queue not empty", qhead);
+	return NULL;
     }
     return qhead->ptr;
 }
 
 static void
-eprintf_too_large(void)
+report_data_size_too_large(uint32_t size)
 {
-    fprintf(stderr, "msqueue: data size too large\n");
-    fflush(stderr);
-    abort();
+    report_error("msqueue", "data size too large", size);
 }
 
 static void
@@ -297,7 +293,8 @@ p64_msqueue_enqueue(p64_ptr_tag_t *qhead,
 {
     if (UNLIKELY(size > elem->max_size))
     {
-	eprintf_too_large();
+	report_data_size_too_large(size);
+	return;
     }
     memcpy(elem->data, data, elem->cur_size = size);
     uint32_t aba = qtail->tag % TAG_INC;
@@ -333,7 +330,8 @@ dequeue_lock(p64_ptr_tag_t *qhead,
     {
 	if (head->next.ptr->cur_size > *size)
 	{
-	    eprintf_too_large();
+	    report_data_size_too_large(head->next.ptr->cur_size);
+	    goto leave;
 	}
 	memcpy(data, head->next.ptr->data, *size = head->next.ptr->cur_size);
 	qhead->ptr = head->next.ptr;
@@ -341,6 +339,7 @@ dequeue_lock(p64_ptr_tag_t *qhead,
 	assert(msqueue_assert(qhead, qtail) == num - 1);
     }
     //Else only dummy node in msqueue
+leave:
     p64_spinlock_release(lock);
     if (elem != NULL)
     {
@@ -385,7 +384,8 @@ dequeue_tag(p64_ptr_tag_t *qhead,
 	//Read data before CAS or we will race with another dequeue
 	if (next->cur_size > *size)
 	{
-	    eprintf_too_large();
+	    report_data_size_too_large(next->cur_size);
+	    return NULL;
 	}
 	memcpy(data, next->data, *size = next->cur_size);
 	if (atomic_cas_ptr_tag(qhead,
@@ -454,7 +454,8 @@ dequeue_smr(p64_ptr_tag_t *qhead,
 	    //head is now ours
 	    if (next->cur_size > *size)
 	    {
-		eprintf_too_large();
+		report_data_size_too_large(next->cur_size);
+		goto leave;
 	    }
 	    memcpy(data, next->data, *size = next->cur_size);
 	    break;
@@ -462,6 +463,7 @@ dequeue_smr(p64_ptr_tag_t *qhead,
     }
     assert(head->next.tag != NOTINQUEUE);
     head->next.tag = NOTINQUEUE;
+leave:
     p64_hazptr_release(&hp0);
     p64_hazptr_release(&hp1);
     //Returned node must be retired and reclaimed before it is used again

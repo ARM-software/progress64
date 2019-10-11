@@ -2,7 +2,6 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -12,6 +11,7 @@
 #include "lockfree.h"
 #include "common.h"
 #include "os_abstraction.h"
+#include "err_hnd.h"
 
 struct p64_antireplay
 {
@@ -25,7 +25,8 @@ p64_antireplay_alloc(uint32_t winsize, bool swizzle)
 {
     if (winsize == 0 || !IS_POWER_OF_TWO(winsize))
     {
-	fprintf(stderr, "Invalid window size %u\n", winsize), abort();
+	report_error("antireplay", "invalid window size", winsize);
+	return NULL;
     }
     size_t nbytes = sizeof(p64_antireplay_t) +
 		    winsize * sizeof(p64_antireplay_sn_t);

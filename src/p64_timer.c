@@ -5,7 +5,6 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_timer.h"
@@ -14,6 +13,7 @@
 #include "arch.h"
 #include "lockfree.h"
 #include "common.h"
+#include "err_hnd.h"
 
 struct timer
 {
@@ -230,7 +230,8 @@ p64_timer_tick_set(p64_tick_t tck)
 {
     if (tck == P64_TIMER_TICK_INVALID)
     {
-	fprintf(stderr, "End of time reached\n"), abort();
+	report_error("timer", "invalid tick", tck);
+	return;
     }
     p64_tick_t old = __atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
     do
@@ -296,12 +297,14 @@ p64_timer_free(p64_timer_t idx)
 {
     if (UNLIKELY((uint32_t)idx >= g_timer.hiwmark))
     {
-	fprintf(stderr, "Invalid timer %d\n", idx), abort();
+	report_error("timer", "invalid timer", idx);
+	return;
     }
     if (__atomic_load_n(&g_timer.expirations[idx], __ATOMIC_ACQUIRE) !=
 	P64_TIMER_TICK_INVALID)
     {
-	fprintf(stderr, "Cannot free active timer %u\n", idx), abort();
+	report_error("timer", "cannot free active timer", idx);
+	return;
     }
     struct timer *tim = &g_timer.timers[idx];
     union
@@ -334,7 +337,8 @@ update_expiration(p64_timer_t idx,
     p64_tick_t old;
     if (UNLIKELY((uint32_t)idx >= g_timer.hiwmark))
     {
-	fprintf(stderr, "Invalid timer %d\n", idx), abort();
+	report_error("timer", "invalid timer", idx);
+	return false;
     }
     do
     {
@@ -367,9 +371,8 @@ p64_timer_set(p64_timer_t idx,
 {
     if (UNLIKELY(exp == P64_TIMER_TICK_INVALID))
     {
-	fprintf(stderr, "Invalid expiration time %"PRIu64" for timer %d\n",
-		exp, idx);
-	abort();
+	report_error("timer", "invalid expiration time", exp);
+	return false;
     }
     return update_expiration(idx, exp, false, __ATOMIC_RELEASE);
 }
@@ -380,9 +383,8 @@ p64_timer_reset(p64_timer_t idx,
 {
     if (UNLIKELY(exp == P64_TIMER_TICK_INVALID))
     {
-	fprintf(stderr, "Invalid expiration time %"PRIu64" for timer %d\n",
-		exp, idx);
-	abort();
+	report_error("timer", "invalid expiration time", exp);
+	return false;
     }
     return update_expiration(idx, exp, true, __ATOMIC_RELEASE);
 }

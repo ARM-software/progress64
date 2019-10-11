@@ -6,7 +6,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,6 +15,7 @@
 #include "arch.h"
 #include "common.h"
 #include "os_abstraction.h"
+#include "err_hnd.h"
 
 struct p64_laxrob
 {
@@ -51,13 +51,13 @@ p64_laxrob_alloc(uint32_t nslots,
     assert(!IS_BUSY(IDLE));
     if (nslots < 1 || nslots > 0x80000000)
     {
-	fprintf(stderr, "Invalid laxrob size %u\n", nslots);
-	abort();
+	report_error("laxrob", "invalid size", nslots);
+	return NULL;
     }
     if (vecsz < 1 || vecsz > 0x80000000)
     {
-	fprintf(stderr, "Invalid laxrob output vector size %u\n", vecsz);
-	abort();
+	report_error("laxrob", "invalid output vector size", vecsz);
+	return NULL;
     }
     unsigned long ringsize = ROUNDUP_POW2(nslots);
     size_t nbytes = sizeof(p64_laxrob_t) +
@@ -94,8 +94,8 @@ p64_laxrob_free(p64_laxrob_t *rob)
 	{
 	    if (rob->ring[(rob->oldest + i) & rob->mask] != NULL)
 	    {
-		fprintf(stderr, "Reorder buffer %p is not empty\n", rob);
-		abort();
+		report_error("reorder", "reorder buffer not empty", rob);
+		return;
 	    }
 	}
 	p64_mfree(rob);

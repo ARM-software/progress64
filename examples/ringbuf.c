@@ -2,14 +2,31 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+#include <inttypes.h>
+#include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
+#include "p64_errhnd.h"
 #include "p64_ringbuf_template.h"
+
 //Instantiate the ring buffer template using uintptr_t as the ring element
 P64_RINGBUF(p64_ringbuf_uip, uintptr_t)
 
 #include "expect.h"
+
+static jmp_buf jmpbuf;
+
+static int
+error_handler(const char *module, const char *error, uintptr_t val)
+{
+    EXPECT(strcmp(module, "ringbuf") == 0 &&
+	   strcmp(error, "invalid flags") == 0 &&
+	   val == (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ));
+    longjmp(jmpbuf, 1);
+    //Not reached
+}
 
 static void
 test_rb(uint32_t flags)
@@ -79,8 +96,13 @@ int main(void)
     test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_NBDEQ);
     printf("testing SP/NBDEQ ring buffer\n");
     test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_NBDEQ);
-    printf("testing NBEBQ/LFDEQ ring buffer\n");
-    test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ);
+    printf("testing NBEBQ/LFDEQ ring buffer\n");//Invalid flags
+    p64_errhnd_install(error_handler);
+    if (setjmp(jmpbuf) == 0)
+    {
+	test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ);
+    }
+    //Else longjumped back from error handler
     printf("ringbuf test complete\n");
     return 0;
 }

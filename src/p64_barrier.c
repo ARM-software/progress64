@@ -8,10 +8,16 @@
 #include "build_config.h"
 
 #include "arch.h"
+#include "err_hnd.h"
 
 void
 p64_barrier_init(p64_barrier_t *br, uint32_t numthreads)
 {
+    if (numthreads == 0 || numthreads > 0x10000000)
+    {
+	report_error("barrier", "invalid number of threads", numthreads);
+	return;
+    }
     br->numthr = numthreads;
     br->waiting = 0;
 }

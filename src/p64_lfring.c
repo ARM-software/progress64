@@ -6,7 +6,6 @@
 #include <inttypes.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_lfring.h"
@@ -16,6 +15,7 @@
 #include "arch.h"
 #include "lockfree.h"
 #include "common.h"
+#include "err_hnd.h"
 #ifdef USE_LDXSTX
 #include "ldxstx.h"
 #endif
@@ -49,11 +49,13 @@ p64_lfring_alloc(uint32_t nelems, uint32_t flags)
     unsigned long ringsz = ROUNDUP_POW2(nelems);
     if (nelems == 0 || ringsz == 0 || ringsz > 0x80000000)
     {
-	fprintf(stderr, "Invalid number of elements %u\n", nelems), abort();
+	report_error("lfring", "invalid number of elements", nelems);
+	return NULL;
     }
     if ((flags & ~SUPPORTED_FLAGS) != 0)
     {
-	fprintf(stderr, "Invalid flags %x\n", flags), abort();
+	report_error("lfring", "invalid flags", flags);
+	return NULL;
     }
 
     size_t nbytes = sizeof(p64_lfring_t) + ringsz * sizeof(struct element);
@@ -81,7 +83,8 @@ p64_lfring_free(p64_lfring_t *lfr)
     {
 	if (lfr->head != lfr->tail)
 	{
-	    fprintf(stderr, "Lock-free ring %p is not empty\n", lfr);
+	    report_error("lfring", "ring buffer not empty", lfr);
+	    return;
 	}
 	p64_mfree(lfr);
     }

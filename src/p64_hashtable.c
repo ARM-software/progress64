@@ -19,6 +19,7 @@
 #include "common.h"
 #include "lockfree.h"
 #include "os_abstraction.h"
+#include "err_hnd.h"
 
 #define MARK_REMOVE 1UL
 #define HAS_MARK(ptr) (((uintptr_t)(ptr) & MARK_REMOVE) != 0)
@@ -114,7 +115,8 @@ p64_hashtable_free(p64_hashtable_t *ht)
 #ifndef NDEBUG
 	if (ht->nused != 0)
 	{
-	    fprintf(stderr, "Hash table %p is not empty\n", ht), abort();
+	    report_error("hashtable", "hash table not empty", ht);
+	    //return; TODO?
 	}
 #endif
 	p64_mfree(ht);
@@ -339,7 +341,10 @@ list_insert(p64_hashelem_t *prnt,
 	}
 	else if (UNLIKELY(this == he))
 	{
-	    fprintf(stderr, "Element already in hash table\n"), abort();
+	    report_error("hashtable", "element already present", he);
+	    p64_hazptr_release(&hpprnt);
+	    p64_hazptr_release_ro(&hpthis);
+	    return;
 	}
 	else if (UNLIKELY(HAS_MARK(this->next)))
 	{

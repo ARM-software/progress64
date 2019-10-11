@@ -4,13 +4,13 @@
 
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_tfrwlock_r.h"
 
 #include "common.h"
 #include "os_abstraction.h"
+#include "err_hnd.h"
 
 //Must not be larger than number of bits in release_mask below
 #define STACKSIZE 32
@@ -53,9 +53,8 @@ p64_tfrwlock_r_acquire_rd(p64_tfrwlock_r_t *lock)
     }
     if (UNLIKELY(pth.depth == STACKSIZE))
     {
-	fprintf(stderr, "tfrwlock_r: too many calls p64_tfrwlock_r_acquire_rd/wr\n");
-	fflush(stderr);
-	abort();
+	report_error("tfrwlock_r", "lock stack full", lock);
+	return;
     }
     if (!find_lock(lock))
     {
@@ -72,15 +71,13 @@ p64_tfrwlock_r_release_rd(p64_tfrwlock_r_t *lock)
 {
     if (UNLIKELY(pth.depth == 0))
     {
-	fprintf(stderr, "tfrwlock_r: superfluous call to p64_tfrwlock_r_release_rd()\n");
-	fflush(stderr);
-	abort();
+	report_error("tfrwlock_r", "lock stack empty", lock);
+	return;
     }
     else if (UNLIKELY(pth.stack[pth.depth - 1] != lock))
     {
-	fprintf(stderr, "tfrwlock_r: p64_tfrwlock_r_release_rd() called for wrong lock\n");
-	fflush(stderr);
-	abort();
+	report_error("tfrwlock_r", "releasing wrong lock", lock);
+	return;
     }
     pth.depth--;
     if (pth.release_mask & (UINT32_C(1) << pth.depth))
@@ -99,17 +96,16 @@ p64_tfrwlock_r_acquire_wr(p64_tfrwlock_r_t *lock)
     }
     if (UNLIKELY(pth.depth == STACKSIZE))
     {
-	fprintf(stderr, "tfrwlock_r: too many calls p64_tfrwlock_r_acquire_rd/wr\n");
-	fflush(stderr);
-	abort();
+	report_error("tfrwlock_r", "lock stack full", lock);
+	return;
     }
     if (__atomic_load_n(&lock->owner, __ATOMIC_RELAXED) != pth.threadid)
     {
 	if (UNLIKELY(find_lock(lock)))
 	{
-	    fprintf(stderr, "tfrwlock_r: acquire-write after acquire-read\n");
-	    fflush(stderr);
-	    abort();
+	    report_error("tfrwlock_r", "acquire-write after acquire-read",
+			 lock);
+	    return;
 	}
 	uint16_t tkt;
 	p64_tfrwlock_acquire_wr(&lock->tfrwlock, &tkt);
@@ -126,15 +122,13 @@ p64_tfrwlock_r_release_wr(p64_tfrwlock_r_t *lock)
 {
     if (UNLIKELY(pth.depth == 0))
     {
-	fprintf(stderr, "tfrwlock_r: superfluous call to p64_tfrwlock_r_release_wr()\n");
-	fflush(stderr);
-	abort();
+	report_error("tfrwlock_r", "lock stack empty", lock);
+	return;
     }
     else if (UNLIKELY(pth.stack[pth.depth - 1] != lock))
     {
-	fprintf(stderr, "tfrwlock_r: p64_tfrwlock_r_release_wr() called for wrong lock\n");
-	fflush(stderr);
-	abort();
+	report_error("tfrwlock_r", "releasing wrong lock", lock);
+	return;
     }
     pth.depth--;
     if (pth.release_mask & (UINT32_C(1) << pth.depth))

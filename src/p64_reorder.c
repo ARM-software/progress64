@@ -6,7 +6,6 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -16,6 +15,7 @@
 
 #include "arch.h"
 #include "common.h"
+#include "err_hnd.h"
 
 struct hi
 {
@@ -46,7 +46,8 @@ p64_reorder_alloc(uint32_t nelems,
 {
     if (nelems < 1 || nelems > 0x80000000)
     {
-	fprintf(stderr, "Invalid reorder buffer size %u\n", nelems), abort();
+	report_error("reorder", "invalid reorder buffer size", nelems);
+	return NULL;
     }
     unsigned long ringsize = ROUNDUP_POW2(nelems);
     size_t nbytes = sizeof(p64_reorder_t) + ringsize * sizeof(void *);
@@ -78,7 +79,8 @@ p64_reorder_free(p64_reorder_t *rob)
     {
 	if (!rob->user_acquire && rob->hi.head != rob->tail)
 	{
-	    fprintf(stderr, "Reorder buffer %p is not empty\n", rob), abort();
+	    report_error("reorder", "reorder buffer not empty", rob);
+	    return;
 	}
 	p64_mfree(rob);
     }
@@ -156,7 +158,8 @@ p64_reorder_release(p64_reorder_t *rob,
     }
     else if (UNLIKELY(AFTER(sn + nelems, rob->tail)))
     {
-	fprintf(stderr, "Invalid sequence number %u\n", sn + nelems), abort();
+	report_error("reorder", "invalid sequence number", sn + nelems);
+	return;
     }
     //Store our elements in reorder buffer, releasing them
     //Separate release fence so we can use store-relaxed below
@@ -165,7 +168,8 @@ p64_reorder_release(p64_reorder_t *rob,
     {
 	if (UNLIKELY(elems[i] == NULL))
 	{
-	    fprintf(stderr, "Invalid NULL element\n"), abort();
+	    report_error("reorder", "invalid NULL element", 0);
+	    return;
 	}
 	assert(rob->ring[(sn + i) & mask] == NULL);
 	__atomic_store_n(&rob->ring[(sn + i) & mask], elems[i],

@@ -5,13 +5,13 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_rwlock_r.h"
 
 #include "common.h"
 #include "os_abstraction.h"
+#include "err_hnd.h"
 
 //Must not be larger than number of bits in release_mask below
 #define STACKSIZE 32
@@ -53,9 +53,8 @@ p64_rwlock_r_acquire_rd(p64_rwlock_r_t *lock)
     }
     if (UNLIKELY(pth.depth == STACKSIZE))
     {
-	fprintf(stderr, "rwlock_r: too many calls p64_rwlock_r_acquire_rd/wr\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "lock stack full", lock);
+	return;
     }
     if (!find_lock(lock))
     {
@@ -76,9 +75,8 @@ p64_rwlock_r_try_acquire_rd(p64_rwlock_r_t *lock)
     }
     if (UNLIKELY(pth.depth == STACKSIZE))
     {
-	fprintf(stderr, "rwlock_r: too many calls p64_rwlock_r_acquire_rd/wr\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "lock stack full", lock);
+	return false;
     }
     if (!find_lock(lock))
     {
@@ -99,15 +97,13 @@ p64_rwlock_r_release_rd(p64_rwlock_r_t *lock)
 {
     if (UNLIKELY(pth.depth == 0))
     {
-	fprintf(stderr, "rwlock_r: superfluous call to p64_rwlock_r_release_rd()\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "lock stack empty", lock);
+	return;
     }
     else if (UNLIKELY(pth.stack[pth.depth - 1] != lock))
     {
-	fprintf(stderr, "rwlock_r: p64_rwlock_r_release_rd() called for wrong lock\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "releasing wrong lock", lock);
+	return;
     }
     pth.depth--;
     if (pth.release_mask & (1UL << pth.depth))
@@ -126,17 +122,15 @@ p64_rwlock_r_acquire_wr(p64_rwlock_r_t *lock)
     }
     if (UNLIKELY(pth.depth == STACKSIZE))
     {
-	fprintf(stderr, "rwlock_r: too many calls p64_rwlock_r_acquire_rd/wr\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "lock stack full", lock);
+	return;
     }
     if (__atomic_load_n(&lock->owner, __ATOMIC_RELAXED) != pth.threadid)
     {
 	if (UNLIKELY(find_lock(lock)))
 	{
-	    fprintf(stderr, "rwlock_r: acquire-write after acquire-read\n");
-	    fflush(stderr);
-	    abort();
+	    report_error("rwlock_r", "acquire-write after acquire-read", lock);
+	    return;
 	}
 	p64_rwlock_acquire_wr(&lock->rwlock);
 	__atomic_store_n(&lock->owner, pth.threadid, __ATOMIC_RELAXED);
@@ -155,9 +149,8 @@ p64_rwlock_r_try_acquire_wr(p64_rwlock_r_t *lock)
     }
     if (UNLIKELY(pth.depth == STACKSIZE))
     {
-	fprintf(stderr, "rwlock_r: too many calls p64_rwlock_r_acquire_rd/wr\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "lock stack full", lock);
+	return false;
     }
     if (__atomic_load_n(&lock->owner, __ATOMIC_RELAXED) != pth.threadid)
     {
@@ -183,15 +176,13 @@ p64_rwlock_r_release_wr(p64_rwlock_r_t *lock)
 {
     if (UNLIKELY(pth.depth == 0))
     {
-	fprintf(stderr, "rwlock_r: superfluous call to p64_rwlock_r_release_wr()\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "lock stack empty", lock);
+	return;
     }
     else if (UNLIKELY(pth.stack[pth.depth - 1] != lock))
     {
-	fprintf(stderr, "rwlock_r: p64_rwlock_r_release_wr() called for wrong lock\n");
-	fflush(stderr);
-	abort();
+	report_error("rwlock_r", "releasing wrong lock", lock);
+	return;
     }
     pth.depth--;
     if (pth.release_mask & (1UL << pth.depth))

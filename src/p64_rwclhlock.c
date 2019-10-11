@@ -24,6 +24,7 @@
 #include "common.h"
 #include "arch.h"
 #include "os_abstraction.h"
+#include "err_hnd.h"
 
 #ifdef __linux__
 static inline int
@@ -83,13 +84,13 @@ struct p64_rwclhnode
 };
 
 static p64_rwclhnode_t *
-alloc_rwclhnode(void)
+alloc_rwclhnode(p64_rwclhlock_t *lock)
 {
     p64_rwclhnode_t *node = p64_malloc(sizeof(p64_rwclhnode_t), CACHE_LINE);
-    if (node == NULL)
+    if (UNLIKELY(node == NULL))
     {
-	perror("p64_malloc");
-	exit(EXIT_FAILURE);
+	report_error("rwclh", "failed to allocate rwclhnode", lock);
+	return NULL;
     }
     return node;
 }
@@ -97,7 +98,11 @@ alloc_rwclhnode(void)
 void
 p64_rwclhlock_init(p64_rwclhlock_t *lock, uint32_t spin_tmo_ns)
 {
-    lock->tail = alloc_rwclhnode();
+    lock->tail = alloc_rwclhnode(lock);
+    if (lock->tail == NULL)
+    {
+	return;
+    }
     lock->tail->prev = NULL;
     lock->tail->futex = SIGNAL_REL;
     lock->tail->reader = false;
@@ -210,7 +215,11 @@ enqueue(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep, bool reader)
     //When called first time, we will not have a node yet so allocate one
     if (node == NULL)
     {
-	*nodep = node = alloc_rwclhnode();
+	*nodep = node = alloc_rwclhnode(lock);
+	if (UNLIKELY(node == NULL))
+	{
+	    return NULL;
+	}
 	node->spin_tmo = lock->spin_tmo;
     }
     node->prev = NULL;

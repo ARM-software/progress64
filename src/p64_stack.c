@@ -4,7 +4,6 @@
 
 #include <assert.h>
 #include <stddef.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_stack.h"
@@ -12,6 +11,7 @@
 #include "p64_spinlock.h"
 #include "build_config.h"
 #include "arch.h"
+#include "err_hnd.h"
 #include "lockfree.h"
 #ifdef USE_LDXSTX
 #include "ldxstx.h"
@@ -33,9 +33,8 @@ p64_stack_init(p64_stack_t *stk, uint32_t aba_workaround)
     if (aba_workaround > P64_ABA_SMR)
 #endif
     {
-	fprintf(stderr, "stack: Invalid aba_workaround %u\n", aba_workaround);
-	fflush(stderr);
-	abort();
+	report_error("stack", "invalid ABA workaround", aba_workaround);
+	return;
     }
     stk->head = NULL;
     stk->tag = aba_workaround;//2 lsb of tag is aba_workaround

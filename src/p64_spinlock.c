@@ -3,7 +3,6 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 #include <stdbool.h>
-#include <stdio.h>
 
 #include "p64_spinlock.h"
 #include "build_config.h"

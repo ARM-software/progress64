@@ -5,7 +5,6 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "p64_rwsync.h"
@@ -13,6 +12,7 @@
 
 #include "common.h"
 #include "arch.h"
+#include "err_hnd.h"
 
 #define RWSYNC_WRITER 1U
 
@@ -76,9 +76,8 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
     p64_rwsync_t cur = *sync;
     if (UNLIKELY(cur & RWSYNC_WRITER) == 0)
     {
-	fprintf(stderr, "Invalid write release of RW sync %p\n", sync);
-	fflush(stderr);
-	abort();
+	report_error("rwsync", "invalid write release", sync);
+	return;
     }
 
     //Increment, clearing writer flag
