@@ -412,14 +412,30 @@ p64_hazptr_acquire(void **pptr,
     //Reset any existing hazard pointer
     if (*hp != P64_HAZARDPTR_NULL)
     {
-	//Release MO to let any pending stores complete before the reference
-	//is abandoned
-	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
+	if (**hp != NULL)
+	{
+	    //Release MO to let any pending stores complete before the
+	    //reference is abandoned
+	    __atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
+	}
     }
     for (;;)
     {
 	//Step 1: Read location
 	void *ptr = __atomic_load_n(pptr, __ATOMIC_RELAXED);
+	//If the object 'ptr' points to (if any) is freed, 'ptr' will be
+	//invalid and the following usage of 'ptr' may exhibit undefined
+	//behaviour (bad!). But how can the compiler prove that the
+	//corresponding object is freed if that happens asynchronously
+	//in a different thread? If the object is not freed, the behaviour
+	//is well defined. Thus I posit that the compiler must assume that
+	//no UB is exhibited.
+	//An alternative implementation could use "uintptr_t ptr;" and the
+	//appropriate casts between void pointer and uintptr_t but 'ptr'
+	//would still have to be cast back to a (void) pointer for the
+	//prefetch and hazard pointer write operations, thus resurfacing
+	//any potential UB.
+
 	//All pointers into the zeroth cache line are treated as NULL ptrs
 	if (UNLIKELY(IS_NULL_PTR(ptr)))
 	{
@@ -476,7 +492,10 @@ p64_hazptr_release(p64_hazardptr_t *hp)
 	    return;
 	}
 	//Reset hazard pointer
-	__atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
+	if (**hp != NULL)
+	{
+	    __atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
+	}
 	//Release hazard pointer
 	hazptr_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
@@ -500,9 +519,12 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
 	    *hp = P64_HAZARDPTR_NULL;
 	    return;
 	}
-	smp_fence(LoadStore);//Load-only barrier
-	//Reset hazard pointer
-	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
+	if (**hp != NULL)
+	{
+	    smp_fence(LoadStore);//Load-only barrier
+	    //Reset hazard pointer
+	    __atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
+	}
 	//Release hazard pointer
 	hazptr_free(*hp);
 	*hp = P64_HAZARDPTR_NULL;
