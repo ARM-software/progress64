@@ -5,7 +5,7 @@ PROGRESS64 is a C library of scalable functions for concurrent programs. It prov
 A secondary purpose is to inform and inspire the use of the C11-based memory model (especially Release Consistency i.e. using load-acquire/store-release) for multithreaded programming.
 
 ## Functionality
-### Lock-less and lock-free/wait-free functions
+### Non-blocking functions
 | Name | Description | Properties |
 | ---- | ---- | :----: |
 | antireplay | replay protection | lock-free/wait-free
@@ -13,21 +13,23 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | hashtable | hash table | lock-free
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
 | msqueue | Michael & Scott queue with configurable ABA workaround (lock/tag/smr) | blocking & lock-free
-| laxrob | 'lax' reorder buffer | lock-less
+| laxrob | 'lax' reorder buffer | non-blocking (1)
 | lfring | ring buffer | lock-free
+| mbtrie | multi-bit trie | reader lock-free/wait-free, writer non-blocking (2)
 | qsbr | safe object reclamation using quiescent state based reclamation | reader wait-free, writer blocking
-| reassemble | IP reassembly | lock-free (1), resizeable
-| reorder | 'strict' reorder buffer | lock-less
-| ringbuf | classic ring buffer, support for user-defined element type | blocking & lock-less, lock-free dequeue
+| reassemble | IP reassembly | lock-free (3), resizeable
+| reorder | 'strict' reorder buffer | non-blocking (2)
+| ringbuf | classic ring buffer, support for user-defined element type | blocking & non-blocking (2), lock-free dequeue
 | stack | Treiber stack with configurable ABA workaround (lock/tag/smr/llsc) | blocking & lock-free
 | timer | timers | lock-free
 
-"Lock-less" means that individual operations will not block (wait for other threads) but the whole data structure is not lock-free in the academic sense (e.g. linearizable, kill-tolerant). Example, an acquired slot in a reorder buffer must eventually be released or later released slots will not be retired and the reorder buffer will fill up. Acquire and release operations never block (so non-blocking in some limited sense) but the reorder buffer as a whole is neither lock-free nor obstruction-free.
-"Lock-free" and "wait-free" have the standard definitions from computer science.
+"Obstruction-free", "lock-free" and "wait-free" have the standard definitions from computer science.
 
-(1) Blocking (using per-bucket locks) on Armv7ve due to missing support for 128-bit atomic operations.
+(1) Non-blocking but not linearizable
+(2) Non-blocking but not linearizable in all situations
+(3) Blocking (using per-bucket locks) on Armv7ve due to missing support for 128-bit atomic operations.
 
-### Spin Locks & other blocking functions
+### Locks & other blocking functions
 | Name | Description | Properties |
 | ---- | ---- | :----: |
 | barrier | thread barrier | blocking |
@@ -72,12 +74,13 @@ Use library through the provided C header files. Or copy source files into your 
 * Hazardptr and QSBR support one reclamation domain only. This is a trade-off that simplifies the API and usage. For QSBR, multiple reclamation domains do make sense...
 * The hazard pointer implementation is non-blocking (wait-free) when a thread has space for more retired objects than the total number of hazard pointers (for all threads).
 * The hazard pointer API will actually use the QSBR implementation when 'nrefs' (number of hazard pointers per thread) is set to 0 when the hazard pointer domain is allocated.
-* The resizeable reassembly function is experimental and has not yet endured a stress test.
+* The resizeable reassembly function is experimental and has not yet endured stress testing.
+* The mbtrie is experimental and has not yet endured stress testing.
 * When using Safe Memory Reclamation as ABA workaround with the Treiber stack, LIFO order is not guaranteed (so not really a LIFO stack...)
 
 ## TODO
 * Some missing examples
-* Multithreaded stress test programs for e.g. hash table, reassembly, reorder
+* Multithreaded stress test programs for e.g. hash table, reassembly, reorder, mbtrie
 * Use C11 features instead of GNU extensions and other non-standard features
 * Remove "_" from P64 defines
 

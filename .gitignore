@@ -8,11 +8,13 @@ clhlock
 core
 counter
 hashtable
+mbtrie
 msqueue
 laxrob
 lfring
 libprogress64.a
 bm_lock
+bm_mbtrie
 perf.data*
 pfrwlock
 qsbr
