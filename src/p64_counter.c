@@ -24,7 +24,7 @@ report_invalid_counter(p64_counter_t cntid)
 }
 
 static void
-report_thread_not_registered(void)
+report_thr_not_registered(void)
 {
     report_error("counter", "thread not registered", 0);
 }
@@ -107,7 +107,7 @@ p64_cntdomain_register(p64_cntdomain_t *cntd)
     }
     if (UNLIKELY(cntd->perthread[pth.tidx] != NULL))
     {
-	report_thread_not_registered();
+	report_thr_not_registered();
 	return;
     }
     size_t sz = cntd->ncounters * sizeof(uint64_t);
@@ -128,13 +128,13 @@ p64_cntdomain_unregister(p64_cntdomain_t *cntd)
 {
     if (UNLIKELY(pth.count == 0))
     {
-	report_thread_not_registered();
+	report_thr_not_registered();
 	return;
     }
     uint64_t *counters = cntd->perthread[pth.tidx];
     if (UNLIKELY(counters == NULL))
     {
-	report_thread_not_registered();
+	report_thr_not_registered();
 	return;
     }
     //'Move' all counters from private to shared locations
@@ -218,7 +218,7 @@ p64_counter_add(p64_cntdomain_t *cntd, p64_counter_t cntid, uint64_t val)
 {
     if (UNLIKELY(pth.count == 0))
     {
-	report_thread_not_registered();
+	report_thr_not_registered();
 	return;
     }
     if (UNLIKELY(cntid == P64_COUNTER_INVALID ||
