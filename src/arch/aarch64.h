@@ -20,7 +20,8 @@ addr_dep(const void *ptr, uintptr_t dep)
 		     : "+&r" (ptr)
 		     : "r" (dep)
 		     : );
-    return (void *)ptr;
+    //Cast to remove const'ness of void ptr
+    return (union { const void *cvp; void *vp; }){ .cvp = ptr }.vp;
 }
 
 #define addr_dep(ptr, dep) \
