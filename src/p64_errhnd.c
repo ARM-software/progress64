@@ -32,7 +32,7 @@ report_error(const char *module, const char *error, uintptr_t val)
     {
 	fprintf(stderr, "Module \"%s\" reported error \"%s\" (%p/%"PRIuPTR")\n",
 		module, error, (void *)val, val);
-	fflush(stderr);
+	fflush(NULL);
     }
     switch (action)
     {
