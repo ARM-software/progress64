@@ -13,6 +13,7 @@
 
 #include "p64_hazardptr.h"
 #undef p64_hazptr_acquire
+#undef p64_hazptr_acquire_mask
 #include "build_config.h"
 #include "os_abstraction.h"
 
@@ -45,8 +46,6 @@ report_thread_not_registered(void)
 {
     report_error("hazardptr", "thread not registered", 0);
 }
-
-#define IS_NULL_PTR(ptr) ((uintptr_t)(ptr) < CACHE_LINE)
 
 typedef void *userptr_t;
 
@@ -290,7 +289,7 @@ hazptr_alloc(void)
     {
 	uint32_t idx = __builtin_ctz(TS->free);
 	TS->free &= ~(1U << idx);
-	assert(IS_NULL_PTR(TS->hp[idx].ref));
+	assert(TS->hp[idx].ref == NULL);
 	//printf("hazptr_alloc(%u)\n", idx);
 	return &TS->hp[idx].ref;
     }
@@ -313,7 +312,7 @@ hazptr_free(p64_hazardptr_t hp)
 	report_error("hazardptr", "invalid hazard pointer", hp);
 	return;
     }
-    assert(IS_NULL_PTR(*hp));
+    assert(*hp == NULL);
     if (UNLIKELY((TS->free & (1U << idx)) != 0))
     {
 	report_error("hazardptr", "hazard pointer already free", hp);
@@ -418,8 +417,9 @@ hazptr_qsbr_free(p64_hazardptr_t *hp)
 //Allocate a new hazard pointer if necessary
 //Don't free any allocated hazard pointer even if is not actually used
 void *
-p64_hazptr_acquire(void **pptr,
-		   p64_hazardptr_t *hp)
+p64_hazptr_acquire_mask(void **pptr,
+		        p64_hazardptr_t *hp,
+			uintptr_t mask)
 {
     if (UNLIKELY(TS == NULL))
     {
@@ -467,15 +467,15 @@ p64_hazptr_acquire(void **pptr,
 	//would still have to be cast back to a (void) pointer for the
 	//prefetch and hazard pointer write operations, thus resurfacing
 	//any potential UB.
+	void *masked_ptr = (void *)((uintptr_t)ptr & mask);
 
-	//All pointers into the zeroth cache line are treated as NULL ptrs
-	if (UNLIKELY(IS_NULL_PTR(ptr)))
+	if (UNLIKELY(masked_ptr == NULL))
 	{
 	    //*hp may be valid
 	    return ptr;
 	}
 	//Speculatively prefetch-for-read as early as possible
-	PREFETCH_FOR_READ(ptr);
+	PREFETCH_FOR_READ(masked_ptr);
 
 	//Step 2a: Allocate hazard pointer if necessary
 	if (*hp == P64_HAZARDPTR_NULL)
@@ -491,7 +491,7 @@ p64_hazptr_acquire(void **pptr,
 	    }
 	}
 	//Step 2b: Initialise hazard pointer with reference
-	__atomic_store_n(*hp, ptr, __ATOMIC_SEQ_CST);
+	__atomic_store_n(*hp, masked_ptr, __ATOMIC_SEQ_CST);
 
 	//Sequential consistency will separate the store and the load
 
@@ -504,6 +504,12 @@ p64_hazptr_acquire(void **pptr,
 	//Step 4: Lost the race, reset hazard pointer and restart
 	__atomic_store_n(*hp, NULL, __ATOMIC_RELAXED);
     }
+}
+
+void *
+p64_hazptr_acquire(void **pptr, p64_hazardptr_t *hp)
+{
+    return p64_hazptr_acquire_mask(pptr, hp, ~(uintptr_t)0);
 }
 
 //Release the reference to the object, assume changes have been made
@@ -585,11 +591,11 @@ collect_refs(userptr_t refs[],
 	    userptr_t ptr1 = __atomic_load_n(hp1, __ATOMIC_RELAXED);
 	    hp0++;
 	    hp1++;
-	    if (!IS_NULL_PTR(ptr0))
+	    if (ptr0 != NULL)
 	    {
 		refs[nrefs++] = ptr0;
 	    }
-	    if (!IS_NULL_PTR(ptr1))
+	    if (ptr1 != NULL)
 	    {
 		refs[nrefs++] = ptr1;
 	    }
@@ -603,7 +609,7 @@ collect_refs(userptr_t refs[],
 	{
 	    userptr_t ptr0 = __atomic_load_n(hp0, __ATOMIC_RELAXED);
 	    hp0++;
-	    if (!IS_NULL_PTR(ptr0))
+	    if (ptr0 != NULL)
 	    {
 		refs[nrefs++] = ptr0;
 	    }

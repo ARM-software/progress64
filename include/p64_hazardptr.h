@@ -55,13 +55,31 @@ void p64_hazptr_deactivate(void);
 //p64_hazptr_acquire() has acquire memory ordering
 void *p64_hazptr_acquire(void **pptr, p64_hazardptr_t *hp);
 #ifdef NDEBUG
-#define p64_hazptr_acquire(pptr, mm) \
-    (__typeof(*pptr))p64_hazptr_acquire((void **)(pptr), (mm))
+#define p64_hazptr_acquire(_p, _h) \
+    (__typeof(*_p))p64_hazptr_acquire((void **)(_p), (_h))
 #else
-#define p64_hazptr_acquire(_a, _b) \
+#define p64_hazptr_acquire(_p, _h) \
 ({ \
-    p64_hazardptr_t *_c = (_b); \
-    __typeof(*_a) _d = (__typeof(*_a))p64_hazptr_acquire((void **)(_a), _c); \
+    p64_hazardptr_t *_c = (_h); \
+    __typeof(*_p) _d = (__typeof(*_p))p64_hazptr_acquire((void **)(_p), _c); \
+    if (*(_c) != P64_HAZARDPTR_NULL) \
+	p64_hazptr_annotate(*(_c), __FILE__, __LINE__); \
+    _d; \
+})
+#endif
+
+//Like p64_hazptr_acquire() but bitwise-and with mask before saving address in
+//hazard pointer. This allows for pointers were some bits are used for other
+//purposes
+void *p64_hazptr_acquire_mask(void **pptr, p64_hazardptr_t *hp, uintptr_t mask);
+#ifdef NDEBUG
+#define p64_hazptr_acquire_mask(_p, _h, _m) \
+    (__typeof(*_p))p64_hazptr_acquire_mask((void **)(_p), (_h), (_m))
+#else
+#define p64_hazptr_acquire_mask(_p, _h, _m) \
+({ \
+    p64_hazardptr_t *_c = (_h); \
+    __typeof(*_p) _d = (__typeof(*_p))p64_hazptr_acquire_mask((void **)(_p), _c, (_m)); \
     if (*(_c) != P64_HAZARDPTR_NULL) \
 	p64_hazptr_annotate(*(_c), __FILE__, __LINE__); \
     _d; \
