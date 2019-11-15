@@ -379,8 +379,38 @@ p64_hazptr_dump(FILE *fp)
     return __builtin_popcount(TS->free);
 }
 
-static THREAD_LOCAL uint32_t _free_hp = ~0;
-static THREAD_LOCAL void *_hp[32];
+static THREAD_LOCAL uint32_t qsbr_free_hp = ~UINT32_C(0);
+static THREAD_LOCAL void *qsbr_hp[32];
+
+static void
+hazptr_qsbr_alloc(p64_hazardptr_t *hp)
+{
+    if (UNLIKELY(qsbr_free_hp == 0))
+    {
+	report_error("hazardptr", "failed to allocate hazard pointer", 0);
+	return;
+    }
+    uint32_t idx = __builtin_ctz(qsbr_free_hp);
+    qsbr_free_hp &= ~(UINT32_C(1) << idx);
+    *hp = &qsbr_hp[idx];
+}
+
+static void
+hazptr_qsbr_free(p64_hazardptr_t *hp)
+{
+    uint32_t idx = *hp - qsbr_hp;
+    if (UNLIKELY(idx >= 32 || (qsbr_free_hp & (UINT32_C(1) << idx)) != 0))
+    {
+	report_error("hazardptr", "invalid hazard pointer", *hp);
+	return;
+    }
+    qsbr_free_hp |= UINT32_C(1) << idx;
+    if (qsbr_free_hp == ~UINT32_C(0))
+    {
+	p64_qsbr_quiescent();
+    }
+    *hp = P64_HAZARDPTR_NULL;
+}
 
 //Safely acquire a reference to the object whose pointer is stored at the
 //specified location
@@ -398,15 +428,17 @@ p64_hazptr_acquire(void **pptr,
     }
     if (HAS_QSBR(TS))
     {
-	//Allocate hazard pointer if necessary
+	void *ptr = __atomic_load_n(pptr, __ATOMIC_ACQUIRE);
+	void *masked_ptr = (void *)((uintptr_t)ptr & mask);
+	if (UNLIKELY(masked_ptr == NULL))
+	{
+	    return ptr;
+	}
+	//Allocate hazard pointer only if necessary
 	if (*hp == P64_HAZARDPTR_NULL)
 	{
-	    assert(_free_hp != 0);
-	    uint32_t idx = __builtin_ctz(_free_hp);
-	    _free_hp &= ~(1U << idx);
-	    *hp = &_hp[idx];
+	    hazptr_qsbr_alloc(hp);
 	}
-	void *ptr = __atomic_load_n(pptr, __ATOMIC_ACQUIRE);
 	return ptr;
     }
     //Reset any existing hazard pointer
@@ -482,13 +514,7 @@ p64_hazptr_release(p64_hazardptr_t *hp)
     {
 	if (HAS_QSBR(TS))
 	{
-	    uint32_t idx = _hp - *hp;
-	    _free_hp |= 1U << idx;
-	    if (_free_hp == ~0U)
-	    {
-		p64_qsbr_quiescent();
-	    }
-	    *hp = P64_HAZARDPTR_NULL;
+	    hazptr_qsbr_free(hp);
 	    return;
 	}
 	//Reset hazard pointer
@@ -510,13 +536,7 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
     {
 	if (HAS_QSBR(TS))
 	{
-	    uint32_t idx = _hp - *hp;
-	    _free_hp |= 1U << idx;
-	    if (_free_hp == ~0U)
-	    {
-		p64_qsbr_quiescent();
-	    }
-	    *hp = P64_HAZARDPTR_NULL;
+	    hazptr_qsbr_free(hp);
 	    return;
 	}
 	if (**hp != NULL)
@@ -701,7 +721,7 @@ p64_hazptr_reclaim(void)
     }
     if (HAS_QSBR(TS))
     {
-	if (_free_hp == ~0U)
+	if (qsbr_free_hp == ~UINT32_C(0))
 	{
 	    p64_qsbr_quiescent();
 	}
