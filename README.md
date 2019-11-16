@@ -1,4 +1,5 @@
 # PROGRESS64
+Progress by Design
 ## Purpose
 PROGRESS64 is a C library of scalable functions for concurrent programs. It provides functionality which is often required in multithreaded networking applications. The general goal is to provide primitives which enable scalable and preferably non-blocking concurrent applications.
 
@@ -12,7 +13,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | counter | shared counters | reader obstruction-free, writer wait-free
 | hashtable | hash table | lock-free
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
-| msqueue | Michael & Scott queue with configurable ABA workaround (lock/tag/smr) | blocking & lock-free
+| msqueue | Michael & Scott queue with configurable ABA workaround (lock/tag/smr) | blocking/lock-free
 | laxrob | 'lax' reorder buffer | non-blocking (1)
 | lfring | ring buffer | lock-free
 | mbtrie | multi-bit trie | reader lock-free/wait-free, writer non-blocking (2)
@@ -20,14 +21,14 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | reassemble | IP reassembly | lock-free (3), resizeable
 | reorder | 'strict' reorder buffer | non-blocking (2)
 | ringbuf | classic ring buffer, support for user-defined element type | blocking & non-blocking (2), lock-free dequeue
-| stack | Treiber stack with configurable ABA workaround (lock/tag/smr/llsc) | blocking & lock-free
+| stack | Treiber stack with configurable ABA workaround (lock/tag/smr/llsc) | blocking/lock-free
 | timer | timers | lock-free
 
 "Obstruction-free", "lock-free" and "wait-free" have the standard definitions from computer science.
 
-(1) Non-blocking but not linearizable
-(2) Non-blocking but not linearizable in all situations
-(3) Blocking (using per-bucket locks) on Armv7ve due to missing support for 128-bit atomic operations.
+(1) Non-blocking but not linearizable  
+(2) Non-blocking but not linearizable in all situations  
+(3) Blocking (using per-bucket locks) on ARMv7ve due to missing support for 128-bit atomic operations.
 
 ### Locks & other blocking functions
 | Name | Description | Properties |
@@ -54,15 +55,15 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 "sleep" - waiting thread will sleep after spinning has timed out.
 
 ## Requirements
-* A C11 compiler (e.g. GCC or Clang) which supports the '\_\_atomic' builtins and inline assembler. A lot of other GCC'isms are used as well.
+* A C11 compiler (e.g. GCC or Clang) which supports the '\_\_atomic' builtins and inline assembler. Several other GCC'isms are used as well.
 * Several functions require 64-bit and 128-bit atomics (e.g. CAS) support in the hardware.
 
 ## HW/SW Support
   * Architectures
-    * Armv7ve (Armv7a with LPAE/64-bit atomic LDRD/STRD, e.g. Cortex-A7/A15/A17)
+    * ARMv7ve (ARMv7a with LPAE/64-bit atomic LDRD/STRD, e.g. Cortex-A7/A15/A17; also ARMv8 in AArch32 state)
     * ARMv8/AArch64 (aka ARM64)
     * x86-64
-  * OS
+  * Operating Systems
     * Linux
     * Windows
     * macOS (Darwin)
