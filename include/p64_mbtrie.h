@@ -83,6 +83,7 @@ p64_mbtrie_lookup(p64_mbtrie_t *mbt,
 //Key starts from most significant bit in uint64_t values
 //Return bitmask with successful lookups (result[i] != NULL)
 //Must only be used with QSBR!
+//Caller must call QSBR acquire/release/quiescent as appropriate
 unsigned long
 p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
                       uint32_t num,

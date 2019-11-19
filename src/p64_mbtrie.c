@@ -392,14 +392,14 @@ free_vec(p64_mbtrie_t *mbt,
 	{
 	    while (!p64_hazptr_retire(vec, p64_mfree))
 	    {
-		p64_hazptr_reclaim();
+		doze();
 	    }
 	}
 	else
 	{
 	    while (!p64_qsbr_retire(vec, p64_mfree))
 	    {
-		p64_qsbr_reclaim();
+		doze();
 	    }
 	}
     }

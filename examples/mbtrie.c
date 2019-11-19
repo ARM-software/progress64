@@ -129,17 +129,11 @@ elem_free(void *arg, p64_mbtrie_elem_t *ptr)
 	   pfx2str(buf, elem->pfx, elem->pfxlen), elem);
     if (use_hp)
     {
-	while (!p64_hazptr_retire(elem, p64_mfree))
-	{
-	    p64_hazptr_reclaim();
-	}
+	while (!p64_hazptr_retire(elem, p64_mfree)) (void)0;
     }
     else
     {
-	while (!p64_qsbr_retire(elem, p64_mfree))
-	{
-	    p64_qsbr_reclaim();
-	}
+	while (!p64_qsbr_retire(elem, p64_mfree)) (void)0;
     }
 }
 

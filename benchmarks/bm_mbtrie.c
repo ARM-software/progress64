@@ -5,35 +5,82 @@
 #define _POSIX_C_SOURCE 199506L
 #define _ISOC11_SOURCE
 #include <assert.h>
+#include <errno.h>
 #include <inttypes.h>
+#include <sys/stat.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <time.h>
 #include <unistd.h>
 
 #include "p64_mbtrie.h"
+#include "p64_hashtable.h"
 #include "p64_qsbr.h"
 
-#if defined __GNUC__
-#define LIKELY(x)    __builtin_expect(!!(x), 1)
-#define UNLIKELY(x)  __builtin_expect(!!(x), 0)
-#else
-#define LIKELY(x)    (x)
-#define UNLIKELY(x)  (x)
-#endif
-
+#define MAX_ROUTES 1000000
+#define NLOOKUPS 2000000
+#define ALIGNMENT 64
 #define BREAKUP(x) (x) >> 24, ((x) >> 16) & 0xff, ((x) >> 8) & 0xff, (x) & 0xff
 
-struct prefix
+#define LIKELY(x)    __builtin_expect(!!(x), 1)
+#define UNLIKELY(x)  __builtin_expect(!!(x), 0)
+#define MAX(a,b) ((a) > (b) ? (a) : (b))
+
+#define ROUNDUP(a, b) \
+    ({                                          \
+        __typeof__ (a) tmp_a = (a);             \
+        __typeof__ (b) tmp_b = (b);             \
+        ((tmp_a + tmp_b - 1) / tmp_b) * tmp_b;  \
+    })
+
+#define container_of(pointer, type, member) \
+    ((type *)(void *)(((char *)pointer) - offsetof(type, member)))
+
+static void
+verification_failed(const char *file, unsigned line, const char *exp)
 {
-    //Used by multibit trie
-    p64_mbtrie_elem_t mbe;
+    fprintf(stderr, "Verification failed at %s:%u '%s'\n", file, line, exp);
+    fflush(NULL);
+    abort();
+}
+#define verify(exp) \
+{ \
+    if (!(exp)) verification_failed(__FILE__, __LINE__, #exp); \
+}
+
+static bool verbose = false;
+static bool use_hp = false;
+static bool option_f = false;
+static uint32_t num_rotations;
+static uint32_t rebalance_ops;
+static uint32_t nodes_moved;
+static uint32_t histo[256];
+
+static float
+avg_depth(void)
+{
+    uint32_t histo_size = sizeof histo / sizeof histo[0];
+    uint32_t n = histo[0];
+    uint32_t sum = histo[0] * histo_size;
+    for (uint32_t i = 1; i < histo_size; i++)
+    {
+	n += histo[i];
+	sum += histo[i] * i;
+    }
+    return n != 0 ? (float)sum / n : 0;
+}
+
+struct asnode;
+
+struct avl_route
+{
     //Used by AVL tree
-    struct prefix *before;
-    struct prefix *after;
-    struct prefix *within;
+    struct avl_route *before;
+    struct avl_route *after;
+    struct avl_route *within;
     //pfx and mask used by find_lpm()
     uint32_t pfx;
     uint32_t mask;
@@ -41,29 +88,57 @@ struct prefix
     uint16_t depth;
     uint8_t pfxlen;
     //Next hop information
-    union
-    {
-	void *ptr;
-	uintptr_t uip;
-    } nexthop;
+    struct asnode *nexthop;
 };
 
-#define MAX(a,b) ((a) > (b) ? (a) : (b))
-
-#define STARTS(n) ((n)->pfx)
-#define ENDS(n) ((n)->pfx + ~(n)->mask)
-
-static bool option_f;
-
-static void insert_prefix(struct prefix **parent_ptr, struct prefix *newn);
-
-#ifndef NDEBUG
-static inline uint32_t
-len_from_mask(uint32_t mask)
+static void
+update_histo(const struct avl_route *this, uint32_t depth)
 {
-    return mask != 0U ? 32U - __builtin_ctz(mask) : 0U;
+    if (this == NULL)
+    {
+	return;
+    }
+
+    if (this->before != NULL)
+    {
+	update_histo(this->before, depth + 1);
+    }
+    if (this->after != NULL)
+    {
+	update_histo(this->after, depth + 1);
+    }
+    if (this->within != NULL)
+    {
+	update_histo(this->within, depth + 1);
+    }
+    if (this->before == NULL && this->after == NULL && this->within == NULL)
+    {
+	//Found leaf node
+	if (depth < sizeof histo / sizeof histo[0])
+	{
+	    histo[depth]++;
+	}
+	else
+	{
+	    histo[0]++;//Overflow counter
+	}
+    }
 }
-#endif
+
+static inline uint32_t
+STARTS(const struct avl_route *rt)
+{
+    return rt->pfx;
+}
+
+static inline uint32_t
+ENDS(const struct avl_route *rt)
+{
+    return rt->pfx + ~rt->mask;
+}
+
+static bool
+insert_prefix(struct avl_route **parent_ptr, struct avl_route *newn);
 
 static inline uint32_t
 mask_from_len(uint32_t len)
@@ -72,7 +147,7 @@ mask_from_len(uint32_t len)
 }
 
 static inline uint32_t
-depth(const struct prefix *node, uint32_t pfxlen)
+depth(const struct avl_route *node, uint32_t pfxlen)
 {
     if (UNLIKELY(node == NULL))
     {
@@ -89,7 +164,7 @@ depth(const struct prefix *node, uint32_t pfxlen)
 }
 
 static inline uint32_t
-max_depth(const struct prefix *node)
+max_depth(const struct avl_route *node)
 {
     uint32_t d_b = depth(node->before, node->pfxlen);
     uint32_t d_a = depth(node->after, node->pfxlen);
@@ -101,99 +176,97 @@ enum l_type
     l_before, l_within, l_after
 };
 
-#ifndef NDEBUG
 static void
-assert_limits(const struct prefix *this, enum l_type type, const struct prefix *root)
+verify_limits(const struct avl_route *this,
+	      enum l_type type,
+	      const struct avl_route *root)
 {
-    assert(this->pfxlen >= root->pfxlen);
+    verify(this->pfxlen >= root->pfxlen);
     switch (type)
     {
-        case l_before :
-            assert(ENDS(this) < STARTS(root));
-            break;
-        case l_within :
-            assert(STARTS(this) >= STARTS(root) && ENDS(this) <= ENDS(root));
-            break;
-        case l_after :
-            assert(STARTS(this) > ENDS(root));
-            break;
+	case l_before :
+	    verify(ENDS(this) < STARTS(root));
+	    break;
+	case l_within :
+	    verify(STARTS(this) >= STARTS(root) && ENDS(this) <= ENDS(root));
+	    break;
+	case l_after :
+	    verify(STARTS(this) > ENDS(root));
+	    break;
     }
     if (this->before != NULL)
-        assert_limits(this->before, type, root);
+    {
+	verify_limits(this->before, type, root);
+    }
     if (this->after != NULL)
-        assert_limits(this->after, type, root);
+    {
+	verify_limits(this->after, type, root);
+    }
     if (this->within != NULL)
-        assert_limits(this->within, type, root);
+    {
+	verify_limits(this->within, type, root);
+    }
 }
 
 static void
-assert_prefix(const struct prefix *this)
+verify_prefix(const struct avl_route *this)
 {
     if (this == NULL)
     {
-        return;
+	return;
     }
 
-    assert(len_from_mask(this->mask) == this->pfxlen);
-    assert(mask_from_len(this->pfxlen) == this->mask);
+    verify(mask_from_len(this->pfxlen) == this->mask);
 
-    assert(STARTS(this) <= ENDS(this));
+    verify(STARTS(this) <= ENDS(this));
     //Verify that all children conform to our start/end limits
     if (this->before != NULL)
     {
-        assert(this->before->pfxlen >= this->pfxlen);
-        assert_limits(this->before, l_before, this);
-        assert_prefix(this->before);
+	verify(this->before->pfxlen >= this->pfxlen);
+	verify_limits(this->before, l_before, this);
+	verify_prefix(this->before);
     }
     if (this->after != NULL)
     {
-        assert(this->after->pfxlen >= this->pfxlen);
-        assert_limits(this->after, l_after, this);
-        assert_prefix(this->after);
+	verify(this->after->pfxlen >= this->pfxlen);
+	verify_limits(this->after, l_after, this);
+	verify_prefix(this->after);
     }
     if (this->within != NULL)
     {
-        assert(this->within->pfxlen > this->pfxlen);
-        assert_limits(this->within, l_within, this);
-        assert_prefix(this->within);
+	verify(this->within->pfxlen > this->pfxlen);
+	verify_limits(this->within, l_within, this);
+	verify_prefix(this->within);
     }
 }
+
+#ifndef NDEBUG
+#define assert_prefix(x) verify_prefix((x))
 #else
 #define assert_prefix(x) (void)(x)
 #endif
 
-#define ROUNDUP(a, b) \
-    ({                                          \
-        __typeof__ (a) tmp_a = (a);             \
-        __typeof__ (b) tmp_b = (b);             \
-        ((tmp_a + tmp_b - 1) / tmp_b) * tmp_b;  \
-    })
-
-static struct prefix *
-alloc_prefix(uint32_t d, uint32_t l, uint32_t gw, unsigned rand)
+static void
+init_avl_route(struct avl_route *this,
+	       uint32_t pfx,
+	       uint32_t pfxlen,
+	       unsigned rand,
+	       struct asnode *nh)
 {
-    struct prefix *this;
-    this = aligned_alloc(64, ROUNDUP(sizeof(struct prefix), 64));
-    if (this == NULL)
-    {
-        perror("malloc"), abort();
-    }
-    this->mbe.refcnt = 0;
     this->before = NULL;
     this->within = NULL;
     this->after = NULL;
-    this->pfx = d;
-    this->mask = mask_from_len(l);
+    this->pfx = pfx;
+    this->mask = mask_from_len(pfxlen);
     this->random = rand;
-    this->pfxlen = l;
+    this->pfxlen = pfxlen;
     this->depth = 1;
-    this->nexthop.uip = gw;
+    this->nexthop = nh;
     assert_prefix(this);
-    return this;
 }
 
 static void
-route_free(void *arg, p64_mbtrie_elem_t *ptr)
+free_prefix(void *arg, p64_mbtrie_elem_t *ptr)
 {
     (void)arg;
     (void)ptr;
@@ -202,7 +275,7 @@ route_free(void *arg, p64_mbtrie_elem_t *ptr)
 
 //Return true if node may need to be rebalanced
 static inline bool
-recompute_depth(struct prefix *node)
+recompute_depth(struct avl_route *node)
 {
     uint32_t old_depth = node->depth;
     node->depth = 1 + max_depth(node);
@@ -210,7 +283,7 @@ recompute_depth(struct prefix *node)
 }
 
 static inline bool
-ok_to_rotate_right(const struct prefix *A)
+ok_to_rotate_right(const struct avl_route *A)
 {
     if (A->before != NULL)
     {
@@ -220,7 +293,7 @@ ok_to_rotate_right(const struct prefix *A)
 }
 
 static inline bool
-ok_to_rotate_left(const struct prefix *A)
+ok_to_rotate_left(const struct avl_route *A)
 {
     if (A->after != NULL)
     {
@@ -229,44 +302,44 @@ ok_to_rotate_left(const struct prefix *A)
     return false;
 }
 
-static struct prefix *
-rotate_right(struct prefix *A) //A->before becomes new root
+static struct avl_route *
+rotate_right(struct avl_route *A) //A->before becomes new root
 {
     assert(ok_to_rotate_right(A));
-    struct prefix *B = A->before;
+    struct avl_route *B = A->before;
     assert(B->pfxlen <= A->pfxlen);
     A->before = B->after;
     (void)recompute_depth(A);
     B->after = A;
     (void)recompute_depth(B);
     assert_prefix(B);
+    num_rotations++;
     return B;
 }
 
-static struct prefix *
-rotate_left(struct prefix *A) //A->after becomes new root
+static struct avl_route *
+rotate_left(struct avl_route *A) //A->after becomes new root
 {
     assert(ok_to_rotate_left(A));
-    struct prefix *C = A->after;
+    struct avl_route *C = A->after;
     assert(C->pfxlen <= A->pfxlen);
     A->after = C->before;
     (void)recompute_depth(A);
     C->before = A;
     (void)recompute_depth(C);
     assert_prefix(C);
+    num_rotations++;
     return C;
 }
 
-static uint32_t nrebalance;
-
 static void
-rebalance(struct prefix **parent_ptr)
+rebalance(struct avl_route **parent_ptr)
 {
-    struct prefix *A = *parent_ptr;
+    struct avl_route *A = *parent_ptr;
     int bal = depth(A->before, A->pfxlen) - depth(A->after, A->pfxlen);
     if (bal < -1) //DEPTH(before) << DEPTH(AFTER), new node inserted on right side
     {
-	struct prefix *C = A->after;
+	struct avl_route *C = A->after;
 	if (depth(C->before, C->pfxlen) > depth(C->after, C->pfxlen))
 	{
 	    if (option_f && !ok_to_rotate_right(C)) return;
@@ -274,11 +347,12 @@ rebalance(struct prefix **parent_ptr)
 	}
 	if (option_f && !ok_to_rotate_left(A)) return;
 	*parent_ptr = rotate_left(A);
-	nrebalance++;
+	rebalance_ops++;
     }
-    else if (bal > 1) //DEPTH(before) >> DEPTH(after), new node inserted on left side
+    else
+    if (bal > 1) //DEPTH(before) >> DEPTH(after), new node inserted on left side
     {
-	struct prefix *B = A->before;
+	struct avl_route *B = A->before;
 	if (depth(B->after, B->pfxlen) > depth(B->before, B->pfxlen))
 	{
 	    if (option_f && !ok_to_rotate_left(B)) return;
@@ -286,52 +360,50 @@ rebalance(struct prefix **parent_ptr)
 	}
 	if (option_f && !ok_to_rotate_right(A)) return;
 	*parent_ptr = rotate_right(A);
-	nrebalance++;
+	rebalance_ops++;
     }
 }
 
-static uint32_t nmoved;
-
 static void
-insert_subtree(struct prefix **root_ptr, struct prefix *node)
+insert_subtree(struct avl_route **root_ptr, struct avl_route *node)
 {
     //Read pointers to outside children before the fields are cleared
     //Inside children are already in the right place
     assert_prefix(node);
-    struct prefix *before = node->before;
-    struct prefix *after = node->after;
+    struct avl_route *before = node->before;
+    struct avl_route *after = node->after;
     node->before = node->after = NULL;
     node->depth = max_depth(node);
     assert_prefix(node);
-nmoved++;
+    nodes_moved++;
     insert_prefix(root_ptr, node);
     assert_prefix(node);
     assert_prefix(*root_ptr);
     //Now re-insert the outside children
     if (before != NULL)
     {
-    assert_prefix(before);
-        insert_subtree(root_ptr, before);
+	assert_prefix(before);
+	insert_subtree(root_ptr, before);
     }
     if (after != NULL)
     {
-    assert_prefix(after);
-        insert_subtree(root_ptr, after);
+	assert_prefix(after);
+	insert_subtree(root_ptr, after);
     }
 }
 
-static void
-insert_prefix(struct prefix **parent_ptr, struct prefix *newn)
+static bool
+insert_prefix(struct avl_route **parent_ptr, struct avl_route *newn)
 {
-    struct prefix *curn = *parent_ptr;
+    struct avl_route *curn = *parent_ptr;
     if (UNLIKELY(curn == NULL))
     {
-        newn->before = NULL;
-        newn->after = NULL;
+	newn->before = NULL;
+	newn->after = NULL;
 	newn->depth = 1;
-        //Leave inside pointer as is
-        *parent_ptr = newn;
-        assert_prefix(newn);
+	//Leave inside pointer as is
+	*parent_ptr = newn;
+	assert_prefix(newn);
     }
     else if (LIKELY(newn->pfxlen >= curn->pfxlen))
     {
@@ -339,12 +411,12 @@ insert_prefix(struct prefix **parent_ptr, struct prefix *newn)
 	if (STARTS(newn) < STARTS(curn))
 	{
 	    assert(ENDS(newn) < STARTS(curn));
-	    insert_prefix(&curn->before, newn);
+	    return insert_prefix(&curn->before, newn);
 	}
 	else if (STARTS(newn) > ENDS(curn))
 	{
 	    assert(STARTS(newn) > ENDS(curn));
-	    insert_prefix(&curn->after, newn);
+	    return insert_prefix(&curn->after, newn);
 	}
 	else
 	{
@@ -352,7 +424,7 @@ insert_prefix(struct prefix **parent_ptr, struct prefix *newn)
 	    assert(ENDS(newn) <= ENDS(curn));
 	    if (newn->pfxlen > curn->pfxlen)
 	    {
-		insert_prefix(&curn->within, newn);
+		return insert_prefix(&curn->within, newn);
 	    }
 	    else
 	    {
@@ -362,7 +434,7 @@ insert_prefix(struct prefix **parent_ptr, struct prefix *newn)
 		fprintf(stderr, "Ignoring duplicate route %u.%u.%u.%u/%u\n",
 			BREAKUP(newn->pfx), newn->pfxlen);
 	    }
-	    return;
+	    return false;
 	}
 	if (recompute_depth(curn))
 	{
@@ -372,17 +444,17 @@ insert_prefix(struct prefix **parent_ptr, struct prefix *newn)
     else//if (newn->pfxlen < curn->pfxlen)
     {
 	assert(newn->pfxlen < curn->pfxlen);
-        //Insert new node above current node to preserve pfxlen ordering
-        struct prefix *to_move;
-        if (STARTS(curn) < STARTS(newn))
-        {
-            assert(ENDS(curn) < STARTS(newn));
+	//Insert new node above current node to preserve pfxlen ordering
+	struct avl_route *to_moveA = NULL, *to_moveB = NULL;
+	if (STARTS(curn) < STARTS(newn))
+	{
+	    assert(ENDS(curn) < STARTS(newn));
 	    *parent_ptr = newn;
-            newn->before = curn;
-            newn->after = NULL;
-            //Routes after curn might have to be moved
-            to_move = curn->after;
-            curn->after = NULL;
+	    newn->before = curn;
+	    newn->after = NULL;
+	    //Routes after curn might have to be moved
+	    to_moveA = curn->after;
+	    curn->after = NULL;
 	    if (recompute_depth(curn))
 	    {
 		rebalance(&newn->before);
@@ -391,15 +463,15 @@ insert_prefix(struct prefix **parent_ptr, struct prefix *newn)
 	    {
 		rebalance(parent_ptr);
 	    }
-        }
-        else if (STARTS(curn) > ENDS(newn))
-        {
+	}
+	else if (STARTS(curn) > ENDS(newn))
+	{
 	    *parent_ptr = newn;
-            newn->before = NULL;
-            newn->after = curn;
-            //Routes before curn might need to be moved
-            to_move = curn->before;
-            curn->before = NULL;
+	    newn->before = NULL;
+	    newn->after = curn;
+	    //Routes before curn might need to be moved
+	    to_moveB = curn->before;
+	    curn->before = NULL;
 	    if (recompute_depth(curn))
 	    {
 		rebalance(&newn->after);
@@ -408,37 +480,50 @@ insert_prefix(struct prefix **parent_ptr, struct prefix *newn)
 	    {
 		rebalance(parent_ptr);
 	    }
-        }
-        else//Within
-        {
-	    abort();
-        }
-        assert_prefix(newn);
-        if (to_move != NULL)
-        {
-            insert_subtree(parent_ptr, to_move);
-        }
-        assert_prefix(newn);
+	}
+	else//curn within newn, insert (replace) new node above current node
+	{
+	    *parent_ptr = newn;
+	    newn->before = NULL;
+	    newn->after = NULL;
+	    newn->within = curn;
+	    //Routes before curn might need to be moved
+	    to_moveB = curn->before;
+	    curn->before = NULL;
+	    //Routes after curn might have to be moved
+	    to_moveA = curn->after;
+	    curn->after = NULL;
+	}
+	assert_prefix(newn);
+        if (to_moveB != NULL)
+	{
+	    insert_subtree(parent_ptr, to_moveB);
+	}
+	if (to_moveA != NULL)
+	{
+	    insert_subtree(parent_ptr, to_moveA);
+	}
+	assert_prefix(newn);
     }
     if (!option_f)
     {
-	struct prefix *root = *parent_ptr;
+	struct avl_route *root = *parent_ptr;
 	int balance = depth(root->before, root->pfxlen) -
 		      depth(root->after, root->pfxlen);
 	assert(balance >= -1 && balance <= 1);
 	(void)balance;
     }
+    return true;
 }
 
-#if 0
 __attribute_noinline__
-static struct prefix *
-find_lpm(const struct prefix *node, uint32_t key, struct prefix *lpm)
+static struct avl_route *
+find_lpm(const struct avl_route *node, uint32_t key, struct avl_route *lpm)
 {
     while (LIKELY(node != NULL))
     {
-	struct prefix *before = node->before;
-	struct prefix *after = node->after;
+	struct avl_route *before = node->before;
+	struct avl_route *after = node->after;
 	if (LIKELY(key - node->pfx > ~node->mask))
 	{
 	    assert(key < STARTS(node) || key > ENDS(node));
@@ -449,46 +534,54 @@ find_lpm(const struct prefix *node, uint32_t key, struct prefix *lpm)
 	{
 	    assert(key >= STARTS(node) && key <= ENDS(node));
 	    assert(((key ^ node->pfx) & node->mask) == 0);
-	    lpm = (struct prefix *)node;
+	    lpm = (struct avl_route *)node;
 	    node = node->within;
 	}
     }
     return lpm;
 }
-#endif
 
 static int
 compare_random(const void *a, const void *b)
 {
-    const struct prefix *pa = *(const struct prefix **)a;
-    const struct prefix *pb = *(const struct prefix **)b;
+    const struct avl_route *pa = a;
+    const struct avl_route *pb = b;
     return pa->random - pb->random;
 }
 
 static int
-compare_prefixes(const void *a, const void *b)
+compare_increasing(const void *a, const void *b)
 {
-    const struct prefix *pa = *(const struct prefix **)a;
-    const struct prefix *pb = *(const struct prefix **)b;
+    const struct avl_route *pa = a;
+    const struct avl_route *pb = b;
     if (pa->pfxlen != pb->pfxlen)
     {
-        return (int)pa->pfxlen - (int)pb->pfxlen;
+	return pa->pfxlen - pb->pfxlen;
     }
-    return (int64_t)pa->pfx - (int64_t)pb->pfx;
+    return pa->pfx - pb->pfx;
 }
 
 static void
-traverse_cb(void *arg,
-            uint64_t pfx,
-            uint32_t pfxlen,
-            p64_mbtrie_elem_t *elem,
-            uint32_t actlen)
+mbt_count_cb(void *arg,
+	     uint64_t pfx,
+	     uint32_t pfxlen,
+	     p64_mbtrie_elem_t *elem,
+	     uint32_t actlen)
 {
     (void)pfx;
     (void)pfxlen;
     (void)elem;
     (void)actlen;
+    assert(elem != NULL);
     (*(size_t *)arg)++;
+}
+
+static size_t
+mbt_count_elems(p64_mbtrie_t *mbt)
+{
+    size_t nelems = 0;
+    p64_mbtrie_traverse(mbt, mbt_count_cb, &nelems, false);
+    return nelems;
 }
 
 static uint64_t
@@ -513,22 +606,271 @@ time_stop(const char *msg, uint64_t start, uint32_t n)
     }
 }
 
+struct asnode
+{
+    //Used by multibit trie
+    p64_mbtrie_elem_t mbe;
+    //Used by hash table
+    p64_hashelem_t he;
+    p64_hashvalue_t hash;//Hash of the key
+    uint32_t asn;//The key
+    uint32_t gw;//IP address of gateway
+    uint16_t ifx;//Interface index
+    uint8_t macaddr[6];//MAC address
+    char name[];
+};
+
+//Compare two keys for less/equal/greater, returning -1/0/1
+static int
+compf(const p64_hashelem_t *he,
+      const void *key)
+{
+    struct asnode *as = container_of(he, struct asnode, he);
+    uint32_t k = *(const uint32_t*)key;
+    return as->asn < k ? -1 : as->asn > k ? 1 : 0;
+}
+
+//Some magic to define __crc32d() intrinsic
+#ifdef __aarch64__
+#ifndef __ARM_FEATURE_CRC32
+#error requires __ARM_FEATURE_CRC32 for __crc32d
+#endif
+#include <arm_acle.h>
+#endif
+#if defined __x86_64__
+#ifndef __SSE4_2__
+#pragma GCC target("sse4.2")
+#endif
+#include <x86intrin.h>
+#endif
+
+static p64_hashtable_t *
+read_as_table(const char *filename, uint32_t nelems, uint32_t *nasnodes)
+{
+    printf("Read AS data from file \"%s\"\n", filename);
+    uint64_t start = time_start();
+    FILE *fp = fopen(filename, "r");
+    if (fp == NULL)
+    {
+	fprintf(stderr, "Failed to open file %s, error %d\n", filename, errno);
+	exit(EXIT_FAILURE);
+    }
+    p64_hashtable_t *ht;
+    ht = p64_hashtable_alloc(nelems, compf, use_hp ? P64_HASHTAB_F_HP : 0);
+    if (ht == NULL)
+    {
+	perror("malloc"), exit(EXIT_FAILURE);
+    }
+    *nasnodes = 0;
+    unsigned asn;
+    while (fscanf(fp, " %u\n", &asn) == 1)
+    {
+	int c;
+	while ((c = fgetc(fp)) == ' ')
+	{
+	}
+	char name[80];
+	unsigned l = 0;
+	while (c != '\n' && c != EOF)
+	{
+	    if (l < sizeof name - 1)
+	    {
+		name[l++] = c;
+	    }
+	    c = fgetc(fp);
+	}
+	assert(l < sizeof name);
+	name[l++] = '\0';
+	if (verbose)
+	{
+	    printf("%u %s\n", asn, name);
+	}
+	size_t sz = sizeof(struct asnode) + l;
+	struct asnode *as = aligned_alloc(ALIGNMENT, ROUNDUP(sz, ALIGNMENT));
+	if (as == NULL)
+	{
+	    perror("malloc"), exit(EXIT_FAILURE);
+	}
+	as->asn = asn;
+	as->hash = __crc32d(0, asn);
+	strcpy(as->name, name);
+	p64_hashtable_insert(ht, &as->he, as->hash);
+	(*nasnodes)++;
+    }
+    fclose(fp);
+    time_stop("Read AS data, insert into hash table", start, *nasnodes);
+    printf("Read %u AS entries\n", *nasnodes);
+    return ht;
+}
+
+static struct avl_route *
+read_rt_table(const char *filename,
+	      uint32_t nelems,
+	      p64_hashtable_t *ht,
+	      uint32_t *nroutes)
+{
+    printf("Read routes from file \"%s\"\n", filename);
+    uint64_t start = time_start();
+    struct avl_route *routes = malloc(nelems * sizeof(struct avl_route));
+    if (routes == NULL)
+    {
+	perror("malloc"), exit(EXIT_FAILURE);
+    }
+    FILE *file = fopen(filename, "r");
+    if (file == NULL)
+    {
+	fprintf(stderr, "Failed to open file %s, error %d\n", filename, errno);
+	exit(EXIT_FAILURE);
+    }
+    uint32_t n = 0, skipped = 0;
+    uint32_t prev_dest = 0, prev_l = 0;
+    unsigned seed = 242;
+    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+    while (!feof(file))
+    {
+	uint32_t a, b, c, d, l, pfx, asn;
+	if (fscanf(file, "%u.%u.%u.%u", &a, &b, &c, &d) != 4)
+	{
+syntax_error:
+	    fprintf(stderr, "Syntax error on line %u\n", n + 1);
+	    exit(EXIT_FAILURE);
+	}
+	pfx = a << 24 | b << 16 | c << 8 | d;
+	if (fscanf(file, "/%u", &l) == 0)
+	{
+	    fprintf(stderr, "Invalid prefix %u.%u.%u.%u\n", a, b, c, d);
+	    exit(EXIT_FAILURE);
+	}
+	if (fscanf(file, "%u\n", &asn) != 1)
+	{
+	    goto syntax_error;
+	}
+	if ((pfx & ~mask_from_len(l)) != 0)
+	{
+	    fprintf(stderr, "Prefix %u.%u.%u.%u/%u has unused bits set\n",
+		    a, b, c, d, l);
+	    exit(EXIT_FAILURE);
+	}
+	//Assume all routes refer to remote networks
+	if (pfx != prev_dest || l != prev_l)
+	{
+	    if (n == nelems)
+	    {
+		fprintf(stderr, "Too many routes\n");
+		exit(EXIT_FAILURE);
+	    }
+	    p64_hashvalue_t hash = __crc32d(0, asn);
+	    p64_hashelem_t *he = p64_hashtable_lookup(ht,
+						      &asn,
+						      hash,
+						      &hp);
+	    if (he == NULL)
+	    {
+		fprintf(stderr, "Failed to lookup ASN %u\n", asn);
+		skipped++;
+	    }
+	    else
+	    {
+		struct asnode *as = container_of(he, struct asnode, he);
+		assert(as->asn == asn);
+		init_avl_route(&routes[n], pfx, l, rand_r(&seed), as);
+		n++;
+		prev_dest = pfx;
+		prev_l = l;
+	    }
+	}
+	else
+	{
+	    skipped++;
+	}
+    }
+    if (use_hp)
+    {
+	p64_hazptr_release(&hp);
+    }
+    fclose(file);
+    time_stop("Read routes from file", start, n + skipped);
+    printf("Read %u routes (skipped %u)\n", n + skipped, skipped);
+    *nroutes = n;
+    return routes;
+}
+
+static void
+free_as(void *ptr)
+{
+    //Convert hashelem pointer to asnode pointer that was malloc'ed
+    struct asnode *as = container_of(ptr, struct asnode, he);
+    free(as);
+}
+
+static void
+ht_free_cb(void *arg,
+	   p64_hashelem_t *he,
+	   size_t idx)
+{
+    (void)idx;
+    p64_hashtable_t *ht = arg;
+    struct asnode *as = container_of(he, struct asnode, he);
+    if (!p64_hashtable_remove(ht, he, as->hash))
+    {
+	fprintf(stderr, "Failed to remove element (ASN %u) from hash table\n",
+		as->asn);
+	return;
+    }
+    //We must retire 'he', the pointer as seen by the hash table
+    bool retire_ok;
+    if (use_hp)
+    {
+	retire_ok = p64_hazptr_retire(he, free_as);
+    }
+    else
+    {
+	retire_ok = p64_qsbr_retire(he, free_as);
+    }
+    if (!retire_ok)
+    {
+	fprintf(stderr, "Failed to retire element\n");
+	exit(EXIT_FAILURE);
+    }
+}
+
+static void
+ht_count_cb(void *arg,
+	    p64_hashelem_t *he,
+	    size_t idx)
+{
+    (void)he;
+    (void)idx;
+    assert(he != NULL);
+    (*(size_t *)arg)++;
+}
+
+static inline size_t
+ht_count_elems(p64_hashtable_t *ht)
+{
+    size_t nelems = 0;
+    p64_hashtable_traverse(ht, ht_count_cb, &nelems);
+    return nelems;
+}
+
 int main(int argc, char *argv[])
 {
+    bool do_avl = false;
     bool do_random = false;
-    bool use_hp = false;
     uint32_t hp_refs = 2;
-#if 0
-    struct prefix *root = NULL;
-#endif
-    const char *ribfile = NULL;
-    uint32_t maxroutes = 512 * 1024;
+    uint32_t maxroutes = MAX_ROUTES;
+    uint64_t start;
+    struct avl_route *root = NULL;
+    p64_mbtrie_t *mbt = NULL;
 
-    assert(len_from_mask(0xffffffff) == 32);
-    assert(len_from_mask(0xffffff00) == 24);
-    assert(len_from_mask(0xffff0000) == 16);
-    assert(len_from_mask(0xff000000) == 8);
-    assert(len_from_mask(0x00000000) == 0);
+    struct stat sb;
+    if (stat("data-raw-table", &sb) != 0 ||
+	stat("data-used-autnums", &sb) != 0)
+    {
+	fprintf(stderr, "Download BGP data from e.g. http://thyme.apnic.net/current/data-raw-table and http://thyme.apnic.net/current/data-used-autnums\n");
+	exit(EXIT_FAILURE);
+    }
+
     assert(mask_from_len( 0) == 0x00000000);
     assert(mask_from_len( 8) == 0xff000000);
     assert(mask_from_len(16) == 0xffff0000);
@@ -536,169 +878,128 @@ int main(int argc, char *argv[])
     assert(mask_from_len(32) == 0xffffffff);
 
     int c;
-    while ((c = getopt(argc, argv, "fhm:r:R")) != -1)
+    while ((c = getopt(argc, argv, "AFhm:r:Rv")) != -1)
     {
-        switch (c)
-        {
-            case 'f' :
-                option_f = true;
-                break;
-            case 'h' :
-                use_hp = true;
-                break;
-            case 'm' :
-                maxroutes = atoi(optarg);
-                break;
-            case 'r' :
-                hp_refs = atoi(optarg);
-                break;
-            case 'R' :
-                do_random = true;
-                break;
-            default :
+	switch (c)
+	{
+	    case 'A' :
+		do_avl = true;
+		break;
+	    case 'F' :
+		option_f = true;
+		break;
+	    case 'h' :
+		use_hp = true;
+		break;
+	    case 'm' :
+		maxroutes = atoi(optarg);
+		break;
+	    case 'r' :
+		hp_refs = atoi(optarg);
+		break;
+	    case 'R' :
+		do_random = true;
+		break;
+	    case 'v' :
+		verbose = true;
+		break;
+	    default :
 usage :
-            fprintf(stderr, "Usage: route <options> <rib>\n"
-                            "-f               Flatten tree\n"
-                            "-h               Use hazard pointers\n"
-                            "-m <maxprefixes> Maximum number of prefixes\n"
-                            "-r <maxrefs>     Number of HP references\n"
-                            "-R               Randomize insertion order\n");
-            exit(EXIT_FAILURE);
-        }
+	    fprintf(stderr, "Usage: route <options>\n"
+			    "-A               Use AVL tree\n"
+			    "-F               Flatten AVL tree\n"
+			    "-h               Use hazard pointers\n"
+			    "-m <maxprefixes> Maximum number of prefixes\n"
+			    "-r <maxrefs>     Number of HP references\n"
+			    "-R               Randomize AVL tree insertion order\n"
+			    "-v               Verbose\n");
+	    exit(EXIT_FAILURE);
+	}
     }
-    if (optind + 1 > argc)
+    if (optind > argc)
     {
-        goto usage;
+	goto usage;
     }
-    ribfile = argv[optind];
 
+    p64_hpdomain_t *hpd = NULL;
+    p64_qsbrdomain_t *qsbrd = NULL;
     if (use_hp)
     {
 	printf("Using hazard pointers (nrefs=%u) for safe memory reclamation\n",
 		hp_refs);
-    }
-    else
-    {
-	printf("Using qsbr for safe memory reclamation\n");
-    }
-
-    struct prefix **prefixes = malloc(maxroutes * sizeof(struct prefix *));
-    if (prefixes == NULL)
-    {
-        perror("malloc"), exit(EXIT_FAILURE);
-    }
-    FILE *file = fopen(ribfile, "r");
-    if (file == NULL)
-    {
-        perror("fopen"), exit(EXIT_FAILURE);
-    }
-    uint32_t n = 0, skipped = 0;
-    uint32_t prev_dest = 0, prev_l = 0;
-    uint32_t seed = 242;
-    while (!feof(file))
-    {
-        uint32_t a, b, c, d, l, e, f, g, h;
-        uint32_t pfx, gway;
-        if (fscanf(file, "%u.%u.%u.%u", &a, &b, &c, &d) != 4)
-        {
-syntax_error:
-            fprintf(stderr, "Syntax error on line %u\n", n + 1);
-            exit(EXIT_FAILURE);
-        }
-        pfx = a << 24 | b << 16 | c << 8 | d;
-        if (fscanf(file, "/%u", &l) == 0)
-        {
-	    fprintf(stderr, "Invalid prefix %u.%u.%u.%u\n", a, b, c, d);
-	    exit(EXIT_FAILURE);
-        }
-        if (fscanf(file, "%u.%u.%u.%u\n", &e, &f, &g, &h) != 4)
-        {
-            goto syntax_error;
-        }
-        gway = e << 24 | f << 16 | g << 8 | h;
-	if ((pfx & ~mask_from_len(l)) != 0)
-	{
-	    fprintf(stderr, "Prefix %u.%u.%u.%u/%u has unused bits set\n",
-		    a, b, c, d, l);
-	    exit(EXIT_FAILURE);
-	}
-        //Assume all routes refer to remote networks
-        if (pfx != prev_dest || l != prev_l)
-        {
-            if (n == maxroutes)
-            {
-                fprintf(stderr, "Too many routes\n");
-                exit(EXIT_FAILURE);
-            }
-	    struct prefix *r = alloc_prefix(pfx, l, gway, rand_r(&seed));
-	    assert(r->pfx == pfx && r->pfxlen == l);
-	    prefixes[n++] = r;
-            prev_dest = pfx;
-            prev_l = l;
-        }
-        else
-	{
-            skipped++;
-	}
-    }
-    fclose(file);
-    printf("Read %u routes (skipped %u)\n", n, skipped);
-
-    //Sort routes based on 1) pfxlen and 2) address
-    qsort(prefixes,
-	  n,
-	  sizeof(struct prefix *),
-	  do_random ? compare_random : compare_prefixes);
-
-    uint64_t start;
-#if 0 //Disabled due to crash when inserting prefixes in random order
-    nmoved = 0;
-    nrebalance = 0;
-    start = time_start();
-    for (uint32_t i = 0; i < n; i++)
-    {
-        insert_prefix(&root, prefixes[i]);
-    }
-    time_stop("Inserting tree", start, n);
-    printf("Inserted %u routes in %s order\n", n, "increasing");
-    printf("%u rebalance ops, %u routes moved\n", nrebalance, nmoved);
-    assert_prefix(root);
-#endif
-
-    p64_hpdomain_t *hpd;
-    p64_qsbrdomain_t *qsbrd;
-    if (use_hp)
-    {
 	hpd = p64_hazptr_alloc(100, hp_refs);
 	p64_hazptr_register(hpd);
+	assert(p64_hazptr_dump(stdout) == hp_refs);
     }
     else
     {
-	qsbrd = p64_qsbr_alloc(300);
+	printf("Using QSBR for safe memory reclamation\n");
+	qsbrd = p64_qsbr_alloc(1000);
 	p64_qsbr_register(qsbrd);
     }
-    p64_mbtrie_t *mbt = p64_mbtrie_alloc((uint8_t []){ 24, 8, 0 },
-                                         route_free,
-                                         NULL,
-					 use_hp ? P64_MBTRIE_F_HP : 0);
-    if (mbt == NULL)
-    {
-	perror("malloc"), exit(EXIT_FAILURE);
-    }
-    start = time_start();
-    for (uint32_t i = 0; i < n; i++)
-    {
-	struct prefix *rt = prefixes[i];
-	uint64_t pfx = (uint64_t)rt->pfx << 32;
-	p64_mbtrie_insert(mbt, pfx, rt->pfxlen, &rt->mbe);
-    }
-    time_stop("Inserting mbtrie", start, n);
-    size_t npfxs = 0;
-    p64_mbtrie_traverse(mbt, traverse_cb, &npfxs, false);
-    printf("%zu prefixes found in mbtrie\n", npfxs);
 
-    seed = 242;
-#define NLOOKUPS 2000000
+    p64_hashtable_t *ht;
+    uint32_t nasnodes;
+    ht = read_as_table("data-used-autnums", maxroutes, &nasnodes);
+    assert(ht_count_elems(ht) == nasnodes);
+
+    struct avl_route *routes;
+    uint32_t nroutes;
+    routes = read_rt_table("data-raw-table", maxroutes, ht, &nroutes);
+
+    //Sort routes on random tag or based on pfxlen+address
+    qsort(routes,
+	  nroutes,
+	  sizeof(struct avl_route),
+	  do_random ? compare_random : compare_increasing);
+
+    if (do_avl)
+    {
+	uint32_t nfailed = 0;
+	nodes_moved = 0;
+	rebalance_ops = 0;
+	num_rotations = 0;
+	start = time_start();
+	for (uint32_t i = 0; i < nroutes; i++)
+	{
+	    if (!insert_prefix(&root, &routes[i]))
+	    {
+		nfailed++;
+	    }
+	}
+	time_stop("Insert routes into AVL tree", start, nroutes);
+	printf("Inserted %u routes (%u failed) in %s order\n",
+		nroutes, nfailed,
+		do_random ? "random" : "increasing");
+	printf("%u rebalance ops, %u rotations, %u nodes moved\n",
+		rebalance_ops, num_rotations, nodes_moved);
+	printf("Verify AVL tree\n");
+	verify_prefix(root);
+	update_histo(root, 1);
+	printf("Average depth %.1f\n", avg_depth());
+    }
+    else
+    {
+	mbt = p64_mbtrie_alloc((uint8_t []){ 24, 8, 0 },
+			       free_prefix,
+			       NULL,
+			       use_hp ? P64_MBTRIE_F_HP : 0);
+	if (mbt == NULL)
+	{
+	    perror("malloc"), exit(EXIT_FAILURE);
+	}
+	start = time_start();
+	for (uint32_t i = 0; i < nroutes; i++)
+	{
+	    struct avl_route *rt = &routes[i];
+	    uint64_t pfx = (uint64_t)rt->pfx << 32;
+	    p64_mbtrie_insert(mbt, pfx, rt->pfxlen, &rt->nexthop->mbe);
+	}
+	time_stop("Insert prefixes into multi-bit trie", start, nroutes);
+	printf("%zu prefixes found in multi-bit trie\n", mbt_count_elems(mbt));
+    }
+
+    unsigned seed = 242;
     uint32_t *addrs = malloc(NLOOKUPS * sizeof(uint32_t));
     if (addrs == NULL)
     {
@@ -706,110 +1007,119 @@ syntax_error:
     }
     for (uint32_t i = 0; i < NLOOKUPS; i++)
     {
-	struct prefix *rt = prefixes[rand_r(&seed) % n];
+	struct avl_route *rt = &routes[rand_r(&seed) % nroutes];
 	//Random address might actually match another route
 	addrs[i] = rt->pfx + (rand_r(&seed) & ~rt->mask);
     }
 
-#if 0
-    uint32_t found0 = 0;
-    start = time_start();
-    for (uint32_t i = 0; i < NLOOKUPS; i++)
+    if (do_avl)
     {
-	struct prefix *rt = find_lpm(root, addrs[i], NULL);
-	if (rt != NULL)
-	    found0++;
-    }
-    time_stop("Lookup tree", start, NLOOKUPS);
-    printf("%u hits (%.1f%%)\n", found0, 100 * (float)found0 / NLOOKUPS);
-#endif
-
-    uint32_t found1 = 0;
-    start = time_start();
-    if (use_hp)
-    {
-	//Use single-key lookup which uses hazard pointers
-	p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+	uint32_t found = 0;
+	start = time_start();
 	for (uint32_t i = 0; i < NLOOKUPS; i++)
 	{
-	    uint64_t key = (uint64_t)addrs[i] << 32;
-	    p64_mbtrie_elem_t *elem = p64_mbtrie_lookup(mbt, key, &hp);
-	    if (elem != NULL)
-	    {
-		found1++;
-		//Force a memory access from returned element
-		*(volatile size_t *)&elem->refcnt;
-	    }
+	    struct avl_route *rt = find_lpm(root, addrs[i], NULL);
+	    if (rt != NULL)
+		found++;
 	}
-	p64_hazptr_release(&hp);
-	assert(p64_hazptr_dump(stdout) == 0);
+	time_stop("Lookup routes in AVL tree", start, NLOOKUPS);
+	printf("%u hits (%.1f%%)\n", found, 100 * (float)found / NLOOKUPS);
     }
     else
     {
-	//Use multi-key lookup which requires application to use QSBR
-	for (uint32_t i = 0; i < NLOOKUPS; )
+	uint32_t found = 0;
+	start = time_start();
+	if (use_hp)
 	{
-	    p64_mbtrie_elem_t *results[10];
-	    uint64_t keys[10];
-	    uint32_t ii = i;
-	    //Keys start from most significant bit in uint64_t
-	    keys[0] = (uint64_t)addrs[i++] << 32;
-	    keys[1] = (uint64_t)addrs[i++] << 32;
-	    keys[2] = (uint64_t)addrs[i++] << 32;
-	    keys[3] = (uint64_t)addrs[i++] << 32;
-	    keys[4] = (uint64_t)addrs[i++] << 32;
-	    keys[5] = (uint64_t)addrs[i++] << 32;
-	    keys[6] = (uint64_t)addrs[i++] << 32;
-	    keys[7] = (uint64_t)addrs[i++] << 32;
-	    keys[8] = (uint64_t)addrs[i++] << 32;
-	    keys[9] = (uint64_t)addrs[i++] << 32;
-	    unsigned long res = p64_mbtrie_lookup_vec(mbt, i - ii, keys, results);
-	    found1 += __builtin_popcountl(res);
-	    while (res != 0)
+	    assert(p64_hazptr_dump(stdout) == hp_refs);
+	    //Use single-key lookup which uses hazard pointers
+	    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+	    for (uint32_t i = 0; i < NLOOKUPS; i++)
 	    {
-		uint32_t j = __builtin_ctzl(res);
-		res &= ~(1UL << j);
-		//Force a memory access from returned element
-		*(volatile size_t *)&results[j]->refcnt;
+		uint64_t key = (uint64_t)addrs[i] << 32;
+		p64_mbtrie_elem_t *elem = p64_mbtrie_lookup(mbt, key, &hp);
+		if (elem != NULL)
+		{
+		    found++;
+		    //Force a memory access from returned element
+		    *(volatile size_t *)&elem->refcnt;
+		}
 	    }
+	    p64_hazptr_release(&hp);
+	    assert(p64_hazptr_dump(stdout) == hp_refs);
 	}
-	p64_qsbr_quiescent();
+	else
+	{
+	    //Use multi-key lookup which requires application to use QSBR
+	    assert(NLOOKUPS % 10 == 0);
+	    p64_qsbr_acquire();
+	    for (uint32_t i = 0; i < NLOOKUPS; )
+	    {
+		p64_mbtrie_elem_t *results[10];
+		uint64_t keys[10];
+		uint32_t ii = i;
+		//Keys start from most significant bit in uint64_t
+		keys[0] = (uint64_t)addrs[i++] << 32;
+		keys[1] = (uint64_t)addrs[i++] << 32;
+		keys[2] = (uint64_t)addrs[i++] << 32;
+		keys[3] = (uint64_t)addrs[i++] << 32;
+		keys[4] = (uint64_t)addrs[i++] << 32;
+		keys[5] = (uint64_t)addrs[i++] << 32;
+		keys[6] = (uint64_t)addrs[i++] << 32;
+		keys[7] = (uint64_t)addrs[i++] << 32;
+		keys[8] = (uint64_t)addrs[i++] << 32;
+		keys[9] = (uint64_t)addrs[i++] << 32;
+		unsigned long res;
+		res = p64_mbtrie_lookup_vec(mbt, i - ii, keys, results);
+		found += __builtin_popcountl(res);
+		while (res != 0)
+		{
+		    uint32_t j = __builtin_ctzl(res);
+		    res &= ~(1UL << j);
+		    //Force a memory access from returned element
+		    *(volatile size_t *)&results[j]->refcnt;
+		}
+	    }
+	    p64_qsbr_release();//No references kept beyond this point
+	}
+	time_stop("Lookup prefixes in multi-bit trie", start, NLOOKUPS);
+	printf("%u hits (%.1f%%)\n", found, 100 * (float)found / NLOOKUPS);
     }
-    time_stop("Lookup mbtrie", start, NLOOKUPS);
-    printf("%u hits (%.1f%%)\n", found1, 100 * (float)found1 / NLOOKUPS);
+
+    if (!do_avl)
+    {
+	start = time_start();
+	for (uint32_t i = 0; i < nroutes; i++)
+	{
+	    struct avl_route *rt = &routes[i];
+	    uint64_t pfx = (uint64_t)rt->pfx << 32;
+	    p64_mbtrie_remove(mbt, pfx, rt->pfxlen, &rt->nexthop->mbe, NULL);
+	}
+	time_stop("Remove prefixes from multi-bit trie", start, nroutes);
+	assert(mbt_count_elems(mbt) == 0);
+	p64_mbtrie_free(mbt);
+    }
 
     start = time_start();
-    for (uint32_t i = 0; i < n; i++)
-    {
-	struct prefix *rt = prefixes[i];
-	uint64_t pfx = (uint64_t)rt->pfx << 32;
-	p64_mbtrie_remove(mbt, pfx, rt->pfxlen, &rt->mbe, NULL);
-    }
-    time_stop("Removing mbtrie", start, n);
-    npfxs = 0;
-    p64_mbtrie_traverse(mbt, traverse_cb, &npfxs, false);
-    printf("%zu prefixes found in mbtrie\n", npfxs);
-    p64_mbtrie_free(mbt);
+    p64_hashtable_traverse(ht, ht_free_cb, ht);
+    time_stop("Remove AS nodes from hash table", start, nroutes);
+    assert(ht_count_elems(ht) == 0);
+    p64_hashtable_free(ht);
 
     if (use_hp)
     {
 	p64_hazptr_dump(stdout);
-	p64_hazptr_reclaim();
+	p64_hazptr_reclaim();//Reclaim (free) any pending removed objects
 	p64_hazptr_unregister();
 	p64_hazptr_free(hpd);
     }
     else
     {
-	p64_qsbr_quiescent();//No references to shared objects
 	p64_qsbr_reclaim();//Reclaim (free) any pending removed objects
 	p64_qsbr_unregister();
 	p64_qsbr_free(qsbrd);
     }
     free(addrs);
-    for(uint32_t i = 0; i < n; i++)
-    {
-	free(prefixes[i]);
-    }
-    free(prefixes);
+    free(routes);
     return 0;
 }
