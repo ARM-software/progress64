@@ -3,6 +3,8 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 #include <assert.h>
+#include <inttypes.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -12,10 +14,6 @@
 
 //Hashtable requires 2 hazard pointers per thread
 #define NUM_HAZARD_POINTERS 2
-
-uint32_t p64_hashtable_check(p64_hashtable_t *ht,
-			     uint64_t (*f)(p64_hashelem_t *));
-
 
 static p64_hashvalue_t
 hash(uint32_t k)
@@ -43,11 +41,40 @@ he_alloc(uint32_t k)
     return he;
 }
 
-static uint64_t
-keyf(p64_hashelem_t *he)
+struct state
 {
+    size_t nelems;
+    size_t prev_idx;
+};
+
+static void
+print_cb(void *arg,
+	 p64_hashelem_t *he,
+	 size_t idx)
+{
+    struct state *st = arg;
+    st->nelems++;
     struct my_elem *me = (struct my_elem *)he;
-    return me->key;
+    if (idx != st->prev_idx)
+    {
+	if (st->prev_idx != ~(size_t)0)
+	{
+	    printf("\n");
+	}
+	st->prev_idx = idx;
+	//Assume 4 elements per bucket
+	printf("%zu.%zu:", idx / 4, idx % 4);
+    }
+    printf(" <h=%"PRIxPTR",k=%"PRIu32">", me->hash, me->key);
+}
+
+static size_t
+traverse(p64_hashtable_t *ht)
+{
+    struct state st = { 0, ~(size_t)0 };
+    p64_hashtable_traverse(ht, print_cb, &st);
+    printf("\n");
+    return st.nelems;
 }
 
 static int
@@ -65,31 +92,31 @@ int main(void)
     EXPECT(hpd != NULL);
     p64_hazptr_register(hpd);
 
-    p64_hashtable_t *ht = p64_hashtable_alloc(1);
+    p64_hashtable_t *ht = p64_hashtable_alloc(1, compf, P64_HASHTAB_F_HP);
     EXPECT(ht != NULL);
-    p64_hashtable_check(ht, keyf);
+    traverse(ht);
 
     struct my_elem *h1 = he_alloc(1);
     p64_hashtable_insert(ht, &h1->next, h1->hash);
-    EXPECT(p64_hashtable_check(ht, keyf) == 1);
+    EXPECT(traverse(ht) == 1);
     struct my_elem *h2 = he_alloc(2);
     p64_hashtable_insert(ht, &h2->next, h2->hash);
-    EXPECT(p64_hashtable_check(ht, keyf) == 2);
+    EXPECT(traverse(ht) == 2);
     struct my_elem *h3 = he_alloc(3);
     p64_hashtable_insert(ht, &h3->next, h3->hash);
-    EXPECT(p64_hashtable_check(ht, keyf) == 3);
+    EXPECT(traverse(ht) == 3);
     struct my_elem *h4 = he_alloc(4);
     p64_hashtable_insert(ht, &h4->next, h4->hash);
-    EXPECT(p64_hashtable_check(ht, keyf) == 4);
+    EXPECT(traverse(ht) == 4);
     struct my_elem *h5 = he_alloc(5);
     p64_hashtable_insert(ht, &h5->next, h5->hash);
-    EXPECT(p64_hashtable_check(ht, keyf) == 5);
+    EXPECT(traverse(ht) == 5);
     struct my_elem *h9 = he_alloc(9);
     p64_hashtable_insert(ht, &h9->next, h9->hash);
-    EXPECT(p64_hashtable_check(ht, keyf) == 6);
+    EXPECT(traverse(ht) == 6);
 
     p64_hazardptr_t hp;
-    struct my_elem *me = (struct my_elem *)p64_hashtable_lookup(ht, compf, &(uint32_t){2}, hash(2), &hp);
+    struct my_elem *me = (struct my_elem *)p64_hashtable_lookup(ht, &(uint32_t){2}, hash(2), &hp);
     EXPECT(me != NULL);
     if (me != NULL)
     {
@@ -104,7 +131,7 @@ int main(void)
     }
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
-    me = (struct my_elem *)p64_hashtable_lookup(ht, compf, &(uint32_t){8}, hash(8), &hp);
+    me = (struct my_elem *)p64_hashtable_lookup(ht, &(uint32_t){8}, hash(8), &hp);
     EXPECT(me == NULL);
     if (me != NULL)
     {
@@ -119,7 +146,7 @@ int main(void)
     }
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
-    me = (struct my_elem *)p64_hashtable_lookup(ht, compf, &(uint32_t){9}, hash(9), &hp);
+    me = (struct my_elem *)p64_hashtable_lookup(ht, &(uint32_t){9}, hash(9), &hp);
     EXPECT(me != NULL);
     if (me != NULL)
     {
@@ -137,18 +164,18 @@ int main(void)
 
     printf("Remove 2\n");
     EXPECT(p64_hashtable_remove(ht, &h2->next, hash(2)));
-    EXPECT(p64_hashtable_check(ht, keyf) == 5);
+    EXPECT(traverse(ht) == 5);
     printf("Remove 1\n");
     EXPECT(p64_hashtable_remove(ht, &h1->next, hash(1)));
-    EXPECT(p64_hashtable_check(ht, keyf) == 4);
+    EXPECT(traverse(ht) == 4);
     printf("Remove 3\n");
     EXPECT(p64_hashtable_remove(ht, &h3->next, hash(3)));
-    EXPECT(p64_hashtable_check(ht, keyf) == 3);
+    EXPECT(traverse(ht) == 3);
     printf("Remove 9\n");
     EXPECT(p64_hashtable_remove(ht, &h9->next, hash(9)));
-    EXPECT(p64_hashtable_check(ht, keyf) == 2);
-    EXPECT(p64_hashtable_remove_by_key(ht, compf, &(uint32_t){4}, hash(4), &hp) == (p64_hashelem_t *)h4);
-    EXPECT(p64_hashtable_remove_by_key(ht, compf, &(uint32_t){5}, hash(5), &hp) == (p64_hashelem_t *)h5);
+    EXPECT(traverse(ht) == 2);
+    EXPECT(p64_hashtable_remove_by_key(ht, &(uint32_t){4}, hash(4), &hp) == (p64_hashelem_t *)h4);
+    EXPECT(p64_hashtable_remove_by_key(ht, &(uint32_t){5}, hash(5), &hp) == (p64_hashelem_t *)h5);
     p64_hazptr_release_ro(&hp);
     p64_hashtable_free(ht);
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
