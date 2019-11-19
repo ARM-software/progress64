@@ -115,7 +115,7 @@ int main(void)
     p64_hashtable_insert(ht, &h9->next, h9->hash);
     EXPECT(traverse(ht) == 6);
 
-    p64_hazardptr_t hp;
+    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
     struct my_elem *me = (struct my_elem *)p64_hashtable_lookup(ht, &(uint32_t){2}, hash(2), &hp);
     EXPECT(me != NULL);
     if (me != NULL)
