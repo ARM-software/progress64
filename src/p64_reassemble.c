@@ -877,7 +877,10 @@ p64_reassemble_extend(p64_reassemble_t *re)
 	    //Retire old fragtable, memory will be reclaimed when all threads
 	    //have stopped referencing it
 	    assert(prv.base != NULL);
-	    p64_hazptr_retire(prv.base, p64_mfree);
+	    while (!p64_hazptr_retire(prv.base, p64_mfree))
+	    {
+		doze();
+	    }
 	    success = true;
 	}
 	//Else out of memory
