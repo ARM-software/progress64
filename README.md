@@ -11,8 +11,9 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | ---- | ---- | :----: |
 | antireplay | replay protection | lock-free/wait-free
 | counter | shared counters | reader obstruction-free, writer wait-free
-| hashtable | hash table | lock-free
+| hashtable | hash table - separate chaining with linked lists | lock-free
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
+| hopscotch | hash table - hopscotch with cellar | non-blocking (1)
 | msqueue | Michael & Scott queue with configurable ABA workaround (lock/tag/smr) | blocking/lock-free
 | laxrob | 'lax' reorder buffer | non-blocking (1)
 | lfring | ring buffer | lock-free
@@ -77,6 +78,7 @@ Use library through the provided C header files. Or copy source files into your 
 * The hazard pointer API will actually use the QSBR implementation when 'nrefs' (number of hazard pointers per thread) is set to 0 when the hazard pointer domain is allocated.
 * The resizeable reassembly function is experimental and has not yet endured stress testing.
 * The mbtrie is experimental and has not yet endured stress testing.
+* The hopscotch hash table is experimental and has not yet endured stress testing.
 * When using Safe Memory Reclamation as ABA workaround with the Treiber stack, LIFO order is not guaranteed (so not really a LIFO stack...)
 
 ## TODO

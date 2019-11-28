@@ -18,9 +18,14 @@
 
 #include "p64_mbtrie.h"
 #include "p64_hashtable.h"
+#include "p64_hopscotch.h"
 #include "p64_qsbr.h"
 
+void p64_hopscotch_check(p64_hopscotch_t *);
+
 #define MAX_ROUTES 1000000
+#define MAX_ASNODES 500000
+#define HS_NUM_CELLS 100
 #define NLOOKUPS 2000000
 #define ALIGNMENT 64
 #define BREAKUP(x) (x) >> 24, ((x) >> 16) & 0xff, ((x) >> 8) & 0xff, (x) & 0xff
@@ -53,6 +58,8 @@ verification_failed(const char *file, unsigned line, const char *exp)
 
 static bool verbose = false;
 static bool use_hp = false;
+static bool use_hs = false;
+static bool use_vl = false;
 static bool option_f = false;
 static uint32_t num_rotations;
 static uint32_t rebalance_ops;
@@ -585,20 +592,21 @@ mbt_count_elems(p64_mbtrie_t *mbt)
 }
 
 static uint64_t
-time_start(void)
+time_start(const char *msg)
 {
     struct timespec ts;
+    printf("%s: ", msg); fflush(stdout);
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return ts.tv_sec * 1000000000ULL + ts.tv_nsec;
 }
 
 static void
-time_stop(const char *msg, uint64_t start, uint32_t n)
+time_stop(uint64_t start, uint32_t n)
 {
     struct timespec ts;
     clock_gettime(CLOCK_MONOTONIC, &ts);
     uint64_t elapsed = ts.tv_sec * 1000000000ULL + ts.tv_nsec - start;
-    printf("%s: %"PRIu64".%09"PRIu64" seconds (%u items)\n", msg, elapsed / 1000000000 , elapsed % 1000000000, n);
+    printf("%"PRIu64".%09"PRIu64" seconds (%u items)\n", elapsed / 1000000000 , elapsed % 1000000000, n);
     if (n != 0)
     {
 	elapsed /= n;
@@ -625,7 +633,17 @@ static int
 compf(const p64_hashelem_t *he,
       const void *key)
 {
-    struct asnode *as = container_of(he, struct asnode, he);
+    const struct asnode *as = container_of(he, struct asnode, he);
+    uint32_t k = *(const uint32_t*)key;
+    return as->asn < k ? -1 : as->asn > k ? 1 : 0;
+}
+
+//Compare two keys for less/equal/greater, returning -1/0/1
+static int
+comph(const void *he,
+      const void *key)
+{
+    const struct asnode *as = he;
     uint32_t k = *(const uint32_t*)key;
     return as->asn < k ? -1 : as->asn > k ? 1 : 0;
 }
@@ -644,24 +662,19 @@ compf(const p64_hashelem_t *he,
 #include <x86intrin.h>
 #endif
 
-static p64_hashtable_t *
-read_as_table(const char *filename, uint32_t nelems, uint32_t *nasnodes)
+static uint32_t
+read_as_table(const char *filename,
+	      void *ht)
 {
     printf("Read AS data from file \"%s\"\n", filename);
-    uint64_t start = time_start();
+    uint64_t start = time_start("Read AS data, insert into hash table");
     FILE *fp = fopen(filename, "r");
     if (fp == NULL)
     {
 	fprintf(stderr, "Failed to open file %s, error %d\n", filename, errno);
 	exit(EXIT_FAILURE);
     }
-    p64_hashtable_t *ht;
-    ht = p64_hashtable_alloc(nelems, compf, use_hp ? P64_HASHTAB_F_HP : 0);
-    if (ht == NULL)
-    {
-	perror("malloc"), exit(EXIT_FAILURE);
-    }
-    *nasnodes = 0;
+    uint32_t nasnodes = 0;
     unsigned asn;
     while (fscanf(fp, " %u\n", &asn) == 1)
     {
@@ -694,23 +707,35 @@ read_as_table(const char *filename, uint32_t nelems, uint32_t *nasnodes)
 	as->asn = asn;
 	as->hash = __crc32d(0, asn);
 	strcpy(as->name, name);
-	p64_hashtable_insert(ht, &as->he, as->hash);
-	(*nasnodes)++;
+	if (use_hs)
+	{
+	    if (!p64_hopscotch_insert(ht, as, as->hash))
+	    {
+		fprintf(stderr, "Failed to insert ASN %u\n", as->asn);
+		free(as);
+		nasnodes--;//Neutralize increment below
+	    }
+	}
+	else
+	{
+	    p64_hashtable_insert(ht, &as->he, as->hash);
+	}
+	nasnodes++;
     }
     fclose(fp);
-    time_stop("Read AS data, insert into hash table", start, *nasnodes);
-    printf("Read %u AS entries\n", *nasnodes);
-    return ht;
+    time_stop(start, nasnodes);
+    printf("Read %u AS entries\n", nasnodes);
+    return nasnodes;
 }
 
 static struct avl_route *
 read_rt_table(const char *filename,
 	      uint32_t nelems,
-	      p64_hashtable_t *ht,
+	      void *ht,
 	      uint32_t *nroutes)
 {
     printf("Read routes from file \"%s\"\n", filename);
-    uint64_t start = time_start();
+    uint64_t start = time_start("Read routes from file");
     struct avl_route *routes = malloc(nelems * sizeof(struct avl_route));
     if (routes == NULL)
     {
@@ -760,18 +785,40 @@ syntax_error:
 		exit(EXIT_FAILURE);
 	    }
 	    p64_hashvalue_t hash = __crc32d(0, asn);
-	    p64_hashelem_t *he = p64_hashtable_lookup(ht,
-						      &asn,
-						      hash,
-						      &hp);
-	    if (he == NULL)
+	    struct asnode *as = NULL;
+	    if (use_hs)
+	    {
+		if (use_vl)
+		{
+		    const void *keys[1] = { &asn };
+		    p64_hopschash_t hashes[1] = { hash };
+		    void *res[1];
+		    unsigned long m;
+		    m = p64_hopscotch_lookup_vec(ht, 1, keys, hashes, res);
+		    (void)m;
+		    as = res[0];
+		    assert((m == 0 && as == NULL) || (m == 1 && as != NULL));
+		}
+		else
+		{
+		    as = p64_hopscotch_lookup(ht, &asn, hash, &hp);
+		}
+	    }
+	    else
+	    {
+		p64_hashelem_t *he = p64_hashtable_lookup(ht, &asn, hash, &hp);
+		if (he != NULL)
+		{
+		    as = container_of(he, struct asnode, he);
+		}
+	    }
+	    if (as == NULL)
 	    {
 		fprintf(stderr, "Failed to lookup ASN %u\n", asn);
 		skipped++;
 	    }
 	    else
 	    {
-		struct asnode *as = container_of(he, struct asnode, he);
 		assert(as->asn == asn);
 		init_avl_route(&routes[n], pfx, l, rand_r(&seed), as);
 		n++;
@@ -789,10 +836,42 @@ syntax_error:
 	p64_hazptr_release(&hp);
     }
     fclose(file);
-    time_stop("Read routes from file", start, n + skipped);
+    time_stop(start, n + skipped);
     printf("Read %u routes (skipped %u)\n", n + skipped, skipped);
     *nroutes = n;
     return routes;
+}
+
+static void
+hs_free_cb(void *arg,
+	   void *elem,
+	   size_t idx)
+{
+    (void)idx;
+    p64_hopscotch_t *ht = arg;
+    struct asnode *as = elem;
+    if (!p64_hopscotch_remove(ht, as, as->hash))
+    {
+	fprintf(stderr,
+		"Failed to remove element (ASN %u, hash %"PRIu64") "
+		"from hash table\n",
+		as->asn, as->hash);
+	return;
+    }
+    bool retire_ok;
+    if (use_hp)
+    {
+	retire_ok = p64_hazptr_retire(elem, free);
+    }
+    else
+    {
+	retire_ok = p64_qsbr_retire(elem, free);
+    }
+    if (!retire_ok)
+    {
+	fprintf(stderr, "Failed to retire element\n");
+	exit(EXIT_FAILURE);
+    }
 }
 
 static void
@@ -835,6 +914,25 @@ ht_free_cb(void *arg,
 }
 
 static void
+hs_count_cb(void *arg,
+	    void *he,
+	    size_t idx)
+{
+    (void)he;
+    (void)idx;
+    assert(he != NULL);
+    (*(size_t *)arg)++;
+}
+
+static inline size_t
+hs_count_elems(void *ht)
+{
+    size_t nelems = 0;
+    p64_hopscotch_traverse(ht, hs_count_cb, &nelems);
+    return nelems;
+}
+
+static void
 ht_count_cb(void *arg,
 	    p64_hashelem_t *he,
 	    size_t idx)
@@ -859,6 +957,8 @@ int main(int argc, char *argv[])
     bool do_random = false;
     uint32_t hp_refs = 2;
     uint32_t maxroutes = MAX_ROUTES;
+    uint32_t numbkts = MAX_ASNODES;
+    uint32_t numcells = HS_NUM_CELLS;
     uint64_t start;
     struct avl_route *root = NULL;
     p64_mbtrie_t *mbt = NULL;
@@ -878,12 +978,18 @@ int main(int argc, char *argv[])
     assert(mask_from_len(32) == 0xffffffff);
 
     int c;
-    while ((c = getopt(argc, argv, "AFhm:r:Rv")) != -1)
+    while ((c = getopt(argc, argv, "Ab:c:Fhm:r:sRvV")) != -1)
     {
 	switch (c)
 	{
 	    case 'A' :
 		do_avl = true;
+		break;
+	    case 'b' :
+		numbkts = atoi(optarg);
+		break;
+	    case 'c' :
+		numcells = atoi(optarg);
 		break;
 	    case 'F' :
 		option_f = true;
@@ -900,19 +1006,30 @@ int main(int argc, char *argv[])
 	    case 'R' :
 		do_random = true;
 		break;
+	    case 's' :
+		use_hs = true;
+		break;
 	    case 'v' :
+		use_vl = true;
+		break;
+	    case 'V' :
 		verbose = true;
 		break;
 	    default :
 usage :
-	    fprintf(stderr, "Usage: route <options>\n"
-			    "-A               Use AVL tree\n"
-			    "-F               Flatten AVL tree\n"
-			    "-h               Use hazard pointers\n"
-			    "-m <maxprefixes> Maximum number of prefixes\n"
-			    "-r <maxrefs>     Number of HP references\n"
-			    "-R               Randomize AVL tree insertion order\n"
-			    "-v               Verbose\n");
+	    fprintf(stderr,
+		    "Usage: route <options>\n"
+		    "-A               Use AVL tree\n"
+		    "-b <numbkts>     Number of hash table buckets\n"
+		    "-c <numcells>    Size of hopscotch cellar\n"
+		    "-F               Flatten AVL tree\n"
+		    "-h               Use hazard pointers\n"
+		    "-m <maxprefixes> Maximum number of prefixes\n"
+		    "-r <maxrefs>     Number of HP references\n"
+		    "-R               Randomize AVL tree insertion order\n"
+		    "-s               Use hopscotch hash table\n"
+		    "-v               Use vector lookup\n"
+		    "-V               Verbose\n");
 	    exit(EXIT_FAILURE);
 	}
     }
@@ -938,14 +1055,39 @@ usage :
 	p64_qsbr_register(qsbrd);
     }
 
-    p64_hashtable_t *ht;
-    uint32_t nasnodes;
-    ht = read_as_table("data-used-autnums", maxroutes, &nasnodes);
-    assert(ht_count_elems(ht) == nasnodes);
+    void *ht;
+    if (use_hs)
+    {
+	ht = p64_hopscotch_alloc(numbkts, numcells, comph, use_hp ? P64_HOPSCOTCH_F_HP : 0);
+    }
+    else
+    {
+	ht = p64_hashtable_alloc(numbkts, compf, use_hp ? P64_HASHTAB_F_HP : 0);
+    }
+    if (ht == NULL)
+    {
+	perror("malloc"), exit(EXIT_FAILURE);
+    }
+    uint32_t nasnodes = read_as_table("data-used-autnums", ht);
+    (void)nasnodes;
+    if (use_hs)
+    {
+	p64_hopscotch_check(ht);
+	assert(hs_count_elems(ht) == nasnodes);
+    }
+    else
+    {
+	assert(ht_count_elems(ht) == nasnodes);
+    }
 
     struct avl_route *routes;
     uint32_t nroutes;
     routes = read_rt_table("data-raw-table", maxroutes, ht, &nroutes);
+    if (nroutes == 0)
+    {
+	fprintf(stderr, "No routes found\n");
+	exit(EXIT_FAILURE);
+    }
 
     //Sort routes on random tag or based on pfxlen+address
     qsort(routes,
@@ -959,7 +1101,7 @@ usage :
 	nodes_moved = 0;
 	rebalance_ops = 0;
 	num_rotations = 0;
-	start = time_start();
+	start = time_start("Insert routes into AVL tree");
 	for (uint32_t i = 0; i < nroutes; i++)
 	{
 	    if (!insert_prefix(&root, &routes[i]))
@@ -967,7 +1109,7 @@ usage :
 		nfailed++;
 	    }
 	}
-	time_stop("Insert routes into AVL tree", start, nroutes);
+	time_stop(start, nroutes);
 	printf("Inserted %u routes (%u failed) in %s order\n",
 		nroutes, nfailed,
 		do_random ? "random" : "increasing");
@@ -988,14 +1130,14 @@ usage :
 	{
 	    perror("malloc"), exit(EXIT_FAILURE);
 	}
-	start = time_start();
+	start = time_start("Insert prefixes into multi-bit trie");
 	for (uint32_t i = 0; i < nroutes; i++)
 	{
 	    struct avl_route *rt = &routes[i];
 	    uint64_t pfx = (uint64_t)rt->pfx << 32;
 	    p64_mbtrie_insert(mbt, pfx, rt->pfxlen, &rt->nexthop->mbe);
 	}
-	time_stop("Insert prefixes into multi-bit trie", start, nroutes);
+	time_stop(start, nroutes);
 	printf("%zu prefixes found in multi-bit trie\n", mbt_count_elems(mbt));
     }
 
@@ -1015,20 +1157,20 @@ usage :
     if (do_avl)
     {
 	uint32_t found = 0;
-	start = time_start();
+	start = time_start("Lookup routes in AVL tree");
 	for (uint32_t i = 0; i < NLOOKUPS; i++)
 	{
 	    struct avl_route *rt = find_lpm(root, addrs[i], NULL);
 	    if (rt != NULL)
 		found++;
 	}
-	time_stop("Lookup routes in AVL tree", start, NLOOKUPS);
+	time_stop(start, NLOOKUPS);
 	printf("%u hits (%.1f%%)\n", found, 100 * (float)found / NLOOKUPS);
     }
     else
     {
 	uint32_t found = 0;
-	start = time_start();
+	start = time_start("Lookup prefixes in multi-bit trie");
 	if (use_hp)
 	{
 	    assert(p64_hazptr_dump(stdout) == hp_refs);
@@ -1082,29 +1224,44 @@ usage :
 	    }
 	    p64_qsbr_release();//No references kept beyond this point
 	}
-	time_stop("Lookup prefixes in multi-bit trie", start, NLOOKUPS);
+	time_stop(start, NLOOKUPS);
 	printf("%u hits (%.1f%%)\n", found, 100 * (float)found / NLOOKUPS);
     }
 
     if (!do_avl)
     {
-	start = time_start();
+	start = time_start("Remove prefixes from multi-bit trie");
 	for (uint32_t i = 0; i < nroutes; i++)
 	{
 	    struct avl_route *rt = &routes[i];
 	    uint64_t pfx = (uint64_t)rt->pfx << 32;
 	    p64_mbtrie_remove(mbt, pfx, rt->pfxlen, &rt->nexthop->mbe, NULL);
 	}
-	time_stop("Remove prefixes from multi-bit trie", start, nroutes);
+	time_stop(start, nroutes);
 	assert(mbt_count_elems(mbt) == 0);
 	p64_mbtrie_free(mbt);
     }
 
-    start = time_start();
-    p64_hashtable_traverse(ht, ht_free_cb, ht);
-    time_stop("Remove AS nodes from hash table", start, nroutes);
-    assert(ht_count_elems(ht) == 0);
-    p64_hashtable_free(ht);
+    start = time_start("Remove AS nodes from hash table");
+    if (use_hs)
+    {
+	p64_hopscotch_traverse(ht, hs_free_cb, ht);
+    }
+    else
+    {
+	p64_hashtable_traverse(ht, ht_free_cb, ht);
+    }
+    time_stop(start, nroutes);
+    if (use_hs)
+    {
+	assert(hs_count_elems(ht) == 0);
+	p64_hopscotch_free(ht);
+    }
+    else
+    {
+	assert(ht_count_elems(ht) == 0);
+	p64_hashtable_free(ht);
+    }
 
     if (use_hp)
     {

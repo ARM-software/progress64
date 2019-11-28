@@ -19,7 +19,7 @@ ifeq ($(UNAME),Linux)
 TARGETS += bm_ringbuf bm_smr bm_lock bm_mbtrie
 endif
 #List object files for each target
-OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tfrwlock_r.o p64_tktlock.o p64_pfrwlock.o p64_semaphore.o p64_rwclhlock.o p64_stack.o p64_msqueue.o p64_counter.o p64_errhnd.o p64_mbtrie.o
+OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tfrwlock_r.o p64_tktlock.o p64_pfrwlock.o p64_semaphore.o p64_rwclhlock.o p64_stack.o p64_msqueue.o p64_counter.o p64_errhnd.o p64_mbtrie.o p64_hopscotch.o
 OBJECTS_hashtable = hashtable.o
 OBJECTS_timer = timer.o
 OBJECTS_rwlock = rwlock.o

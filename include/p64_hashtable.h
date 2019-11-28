@@ -2,6 +2,9 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
+//Lock-free hash table using closed addressing and linked lists
+//A special twist is the set associative buckets
+
 #ifndef _P64_HASHTABLE_H
 #define _P64_HASHTABLE_H
 
