@@ -183,7 +183,7 @@ traverse(p64_mbtrie_t *mbt,
 	    p64_hazardptr_t hp2 = P64_HAZARDPTR_NULL;
 	    void *def_pfx = atomic_load_acquire((void **)&mbt->default_pfx,
 						&hp2,
-						~UINT64_C(0),
+						~0UL,
 						mbt->use_hp);
 	    if (def_pfx != NULL)
 	    {
@@ -210,7 +210,7 @@ p64_mbtrie_traverse(p64_mbtrie_t *mbt,
 	p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 	void *def_pfx = atomic_load_acquire((void **)&mbt->default_pfx,
 					    &hp,
-					    ~UINT64_C(0),
+					    ~0UL,
 					    mbt->use_hp);
 	if (def_pfx != NULL)
 	{
@@ -936,7 +936,7 @@ load_ptrs(unsigned long mask,
     do
     {
 	size_t i = __builtin_ctzl(mask);
-	mask &= ~(UINT64_C(1) << i);
+	mask &= ~(1UL << i);
 	size_t idx = prefix_to_index(keys[i], stride);
 	void **vec = ptrs[i];
 	//Follow pointer in trie table
@@ -960,13 +960,13 @@ parse_data(unsigned long mask,
     do
     {
 	size_t i = __builtin_ctzl(mask);
-	mask &= ~(UINT64_C(1) << i);
+	mask &= ~(1UL << i);
 	void *ptr = ptrs[i];
 	ptrs[i] = CLR_ALL(ptr);
 	if (IS_VECTOR(ptr))
 	{
 	    //Follow pointer to subvector in next lap
-	    next_mask |= UINT64_C(1) << i;
+	    next_mask |= 1UL << i;
 	    //Adjust key for next level
 	    keys[i] <<= stride;
 	}
@@ -977,12 +977,12 @@ parse_data(unsigned long mask,
 	    if (LIKELY(def_pfx != NULL))
 	    {
 		ptrs[i] = def_pfx;
-		*success |= UINT64_C(1) << i;
+		*success |= 1UL << i;
 	    }
 	}
 	else//Non-null leaf
 	{
-	    *success |= UINT64_C(1) << i;
+	    *success |= 1UL << i;
 	    //Assume user will dereference next-hop data soon
 	    PREFETCH_FOR_READ(ptrs[i]);
 	}
