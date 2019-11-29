@@ -1,0 +1,53 @@
+//Copyright (c) 2018, ARM Limited. All rights reserved.
+//
+//SPDX-License-Identifier:        BSD-3-Clause
+
+#include <stdio.h>
+#include "p64_buckrob.h"
+#include "expect.h"
+
+static uint32_t next_elem = 100;
+
+static void callback(void *arg, void *elem, uint32_t sn)
+{
+    (void)arg;
+    EXPECT(elem != P64_BUCKROB_RESERVED_ELEM);
+    if (elem != NULL)
+    {
+	printf("Element %p retired\n", elem);
+	EXPECT((uintptr_t)elem == next_elem);
+	EXPECT(sn + 100 == next_elem);
+	next_elem++;
+    }
+    else
+    {
+	EXPECT(sn + 100 == next_elem);
+    }
+}
+
+int main(void)
+{
+    uint32_t sn;
+    p64_buckrob_t *rob = p64_buckrob_alloc(4, false, callback, NULL);
+    EXPECT(rob != NULL);
+    EXPECT(p64_buckrob_acquire(rob, 1, &sn) == 1);
+    EXPECT(sn == 0);
+    EXPECT(p64_buckrob_acquire(rob, 2, &sn) == 2);
+    EXPECT(sn == 1);
+    EXPECT(p64_buckrob_acquire(rob, 1, &sn) == 1);
+    EXPECT(sn == 3);
+    EXPECT(p64_buckrob_acquire(rob, 1, &sn) == 0);
+    p64_buckrob_release(rob, 3, &(void *){(void*)103}, 1);
+    EXPECT(p64_buckrob_acquire(rob, 1, &sn) == 0);
+    p64_buckrob_release(rob, 0, &(void *){(void*)100}, 1);
+    EXPECT(p64_buckrob_acquire(rob, 1, &sn) == 1);
+    EXPECT(sn == 4);
+    EXPECT(p64_buckrob_acquire(rob, 1, &sn) == 0);
+    p64_buckrob_release(rob, 2, &(void *){(void*)102}, 1);
+    p64_buckrob_release(rob, 1, &(void *){(void*)101}, 1);
+    p64_buckrob_release(rob, 4, &(void *){(void*)104}, 1);
+    p64_buckrob_free(rob);
+
+    printf("buckrob tests complete\n");
+    return 0;
+}

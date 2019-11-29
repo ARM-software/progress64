@@ -4,6 +4,8 @@
 antireplay
 bm_ringbuf
 bm_smr
+buckring
+buckrob
 clhlock
 core
 counter
@@ -15,6 +17,7 @@ lfring
 libprogress64.a
 bm_lock
 bm_mbtrie
+bm_rob
 perf.data*
 pfrwlock
 qsbr

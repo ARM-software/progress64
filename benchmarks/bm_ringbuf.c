@@ -24,6 +24,7 @@
 
 #include "p64_ringbuf.h"
 #include "p64_lfring.h"
+#include "p64_buckring.h"
 #include "p64_stack.h"
 #include "p64_hazardptr.h"
 #include "p64_msqueue.h"
@@ -80,9 +81,7 @@ static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static sem_t ALL_DONE;
 static struct timespec END_TIME;
 static bool VERBOSE = false;
-static bool LFRING = false;
-static bool STACK = false;
-static bool MSQUEUE = false;
+enum { classic, lfring, buckring, stack, msqueue } RING_IMPL;
 
 static p64_stack_t *
 stack_alloc(uint32_t aba)
@@ -183,34 +182,34 @@ static THREAD_LOCAL p64_msqueue_elem_t *msq_freelist = NULL;
 static bool
 enqueue(void *rb, void *elem)
 {
-    if (LFRING)
+    switch (RING_IMPL)
     {
-	return p64_lfring_enqueue(rb, &elem, 1) == 1;
-    }
-    else if (STACK)
-    {
-	p64_stack_enqueue((p64_stack_t *)rb, elem);
-	return true;
-    }
-    else if (MSQUEUE)
-    {
-	p64_msqueue_elem_t *node = msq_freelist;
-	if (node == NULL)
+	case classic :
+	    return p64_ringbuf_enqueue(rb, &elem, 1) == 1;
+	case lfring :
+	    return p64_lfring_enqueue(rb, &elem, 1) == 1;
+	case buckring :
+	    return p64_buckring_enqueue(rb, &elem, 1) == 1;
+	case stack :
+	    p64_stack_enqueue((p64_stack_t *)rb, elem);
+	    return true;
+	case msqueue :
 	{
-	    fprintf(stderr, "msq_freelist is empty\n");
-	    fflush(stderr);
-	    abort();
+	    p64_msqueue_elem_t *node = msq_freelist;
+	    if (node == NULL)
+	    {
+		fprintf(stderr, "msq_freelist is empty\n");
+		fflush(stderr);
+		abort();
+	    }
+	    assert(node->next.tag == ~0UL);
+	    msq_freelist = node->next.ptr;
+	    struct msqueue *msq = (struct msqueue *)rb;
+	    p64_msqueue_enqueue(&msq->qhead, &msq->qtail, node, &elem, sizeof elem);
+	    return true;
 	}
-	assert(node->next.tag == ~0UL);
-	msq_freelist = node->next.ptr;
-	struct msqueue *msq = (struct msqueue *)rb;
-	p64_msqueue_enqueue(&msq->qhead, &msq->qtail, node, &elem, sizeof elem);
-	return true;
     }
-    else
-    {
-	return p64_ringbuf_enqueue(rb, &elem, 1) == 1;
-    }
+    abort();
 }
 
 static void
@@ -227,49 +226,54 @@ dequeue(void *rb)
 {
     void *elem;
     uint32_t idx;
-    if (LFRING)
+    switch (RING_IMPL)
     {
-	if (p64_lfring_dequeue(rb, &elem, 1, &idx) != 0)
-	{
-	    return elem;
-	}
-    }
-    else if (STACK)
-    {
-	elem = p64_stack_dequeue((p64_stack_t *)rb);
-	return elem;
-    }
-    else if (MSQUEUE)
-    {
-	struct msqueue *msq = (struct msqueue *)rb;
-	uint32_t sizeof_elem = sizeof elem;
-	p64_msqueue_elem_t *node = p64_msqueue_dequeue(&msq->qhead,
-						       &msq->qtail,
-						       &elem,
-						       &sizeof_elem);
-	if (node != NULL)
-	{
-	    assert(node->next.tag == ~0UL);
-	    assert(sizeof_elem == sizeof elem);
-	    if (HPD)
+	case classic :
+	    if (p64_ringbuf_dequeue(rb, &elem, 1, &idx) != 0)
 	    {
-		while(!p64_hazptr_retire(node, reclaim_node))
+		return elem;
+	    }
+	    break;
+	case lfring :
+	    if (p64_lfring_dequeue(rb, &elem, 1, &idx) != 0)
+	    {
+		return elem;
+	    }
+	    break;
+	case buckring :
+	    if (p64_buckring_dequeue(rb, &elem, 1, &idx) != 0)
+	    {
+		return elem;
+	    }
+	    break;
+	case stack :
+	    return p64_stack_dequeue((p64_stack_t *)rb);
+	case msqueue :
+	{
+	    struct msqueue *msq = (struct msqueue *)rb;
+	    uint32_t sizeof_elem = sizeof elem;
+	    p64_msqueue_elem_t *node = p64_msqueue_dequeue(&msq->qhead,
+							   &msq->qtail,
+							   &elem,
+							   &sizeof_elem);
+	    if (node != NULL)
+	    {
+		assert(node->next.tag == ~0UL);
+		assert(sizeof_elem == sizeof elem);
+		if (HPD)
 		{
-		    (void)p64_hazptr_reclaim();
+		    while(!p64_hazptr_retire(node, reclaim_node))
+		    {
+			(void)p64_hazptr_reclaim();
+		    }
 		}
+		else//Reclaim node immediately
+		{
+		    reclaim_node(node);
+		}
+		return elem;
 	    }
-	    else//Reclaim node immediately
-	    {
-		reclaim_node(node);
-	    }
-	    return elem;
-	}
-    }
-    else
-    {
-	if (p64_ringbuf_dequeue(rb, &elem, 1, &idx) != 0)
-	{
-	    return elem;
+	    break;
 	}
     }
     return NULL;
@@ -373,7 +377,7 @@ static void *entrypoint(void *arg)
 
     for (;;)
     {
-	if (MSQUEUE)
+	if (RING_IMPL == msqueue)
 	{
 	    assert(sizeof(p64_msqueue_elem_t) + sizeof(void *) <= CACHE_LINE);
 	    uint32_t nnodes = tidx == 0 ? NUMELEMS + 10 : 10;
@@ -402,7 +406,7 @@ static void *entrypoint(void *arg)
 	//Signal I am done
 	barrier_thr_done(tidx);
 
-	if (MSQUEUE)
+	if (RING_IMPL == msqueue)
 	{
 	    p64_msqueue_elem_t *node = msq_freelist;
 	    while (node != NULL)
@@ -679,7 +683,7 @@ int main(int argc, char *argv[])
 	    case 'm' :
 		{
 		    rbmode = atoi(optarg);
-		    if (rbmode < 0 || rbmode > 12)
+		    if (rbmode < 0 || rbmode > 13)
 		    {
 			fprintf(stderr, "Invalid ring buffer mode %d\n", rbmode);
 			exit(EXIT_FAILURE);
@@ -743,8 +747,9 @@ usage :
 		fprintf(stderr, "mode 3: non-blocking enqueue/non-blocking dequeue\n");
 		fprintf(stderr, "mode 4: blocking enqueue/lock-free dequeue\n");
 		fprintf(stderr, "mode 5: lfring\n");
-		fprintf(stderr, "modes 6-9: Treiber stack with different ABA workarounds\n");
-		fprintf(stderr, "modes 10-12: M&S queue with different ABA workarounds\n");
+		fprintf(stderr, "mode 6: buckring\n");
+		fprintf(stderr, "modes 7-10: Treiber stack\n");
+		fprintf(stderr, "modes 11-13: M&S queue\n");
 		exit(EXIT_FAILURE);
 	}
     }
@@ -753,27 +758,57 @@ usage :
 	goto usage;
     }
 
-    LFRING = rbmode == 5;
-    STACK = rbmode >= 6 && rbmode <= 9;
-    MSQUEUE = rbmode >= 10 && rbmode <= 12;
+    switch (rbmode)
+    {
+	case 0 :
+	case 1 :
+	case 2 :
+	case 3 :
+	case 4 :
+	    RING_IMPL = classic;
+	    break;
+	case 5 :
+	    RING_IMPL = lfring;
+	    break;
+	case 6 :
+	    RING_IMPL = buckring;
+	    break;
+	case 7 :
+	case 8 :
+	case 9 :
+	case 10:
+	    RING_IMPL = stack;
+	    break;
+	case 11:
+	case 12:
+	case 13:
+	    RING_IMPL = msqueue;
+	    break;
+	default :
+	    abort();
+    }
     printf("%u elems, %u ringbuf%s, ",
 	    NUMELEMS,
 	    NUMRINGBUFS,
 	    NUMRINGBUFS != 1 ? "s" : "");
     int aba_mode = 0;
-    if (MSQUEUE)
+    if (RING_IMPL == msqueue)
     {
 	const char *const aba[] = { "lock", "tag", "smr" };
-	printf("M&S queue (aba %s), ", aba[rbmode - 10]);
-	aba_mode = rbmode - 10;
+	printf("M&S queue (aba %s), ", aba[rbmode - 11]);
+	aba_mode = rbmode - 11;
     }
-    else if (STACK)
+    else if (RING_IMPL == stack)
     {
 	const char *const aba[] = { "lock", "tag", "smr", "llsc" };
-	printf("Treiber stack (aba %s), ", aba[rbmode - 6]);
-	aba_mode = rbmode - 6;
+	printf("Treiber stack (aba %s), ", aba[rbmode - 7]);
+	aba_mode = rbmode - 7;
     }
-    else if (rbmode == 5)
+    else if (RING_IMPL == buckring)
+    {
+	printf("buckring, ");
+    }
+    else if (RING_IMPL == lfring)
     {
 	printf("lfring, ");
     }
@@ -807,10 +842,27 @@ usage :
 	flags |= (rbmode & 1) ? P64_RINGBUF_F_NBDEQ : 0;
 	flags |= (rbmode & 2) ? P64_RINGBUF_F_NBENQ : 0;
 	flags |= (rbmode & 4) ? P64_RINGBUF_F_LFDEQ : 0;
-	void *q = LFRING ?  (void *)p64_lfring_alloc(RINGSIZE, 0) :
-		  STACK ? (void *)stack_alloc(aba_mode) :
-		  MSQUEUE ? (void *)msqueue_alloc(aba_mode) :
-		  (void *)p64_ringbuf_alloc(RINGSIZE, flags, sizeof(void *));
+	void *q = NULL;
+	switch (RING_IMPL)
+	{
+	    case classic :
+		q = p64_ringbuf_alloc(RINGSIZE, flags, sizeof(void *));
+		break;
+	    case lfring :
+		q = p64_lfring_alloc(RINGSIZE, 0);
+		break;
+	    case buckring :
+		q = p64_buckring_alloc(RINGSIZE, 0);
+		break;
+	    case stack :
+		q = stack_alloc(aba_mode);
+		break;
+	    case msqueue :
+		q = msqueue_alloc(aba_mode);
+		break;
+	    default :
+		abort();
+	}
 	if (q == NULL)
 	{
 	    fprintf(stderr, "Failed to create ring buffer\n");
@@ -882,21 +934,23 @@ usage :
     }
     for (unsigned i = 0; i < NUMRINGBUFS; i++)
     {
-	if (LFRING)
+	switch (RING_IMPL)
 	{
-	    p64_lfring_free(RINGBUFS[i]);
-	}
-	else if (STACK)
-	{
-	    stack_free(RINGBUFS[i]);
-	}
-	else if (MSQUEUE)
-	{
-	    msqueue_free(RINGBUFS[i]);
-	}
-	else
-	{
-	    p64_ringbuf_free(RINGBUFS[i]);
+	    case classic :
+		p64_ringbuf_free(RINGBUFS[i]);
+		break;
+	    case lfring :
+		p64_lfring_free(RINGBUFS[i]);
+		break;
+	    case buckring :
+		p64_buckring_free(RINGBUFS[i]);
+		break;
+	    case stack :
+		stack_free(RINGBUFS[i]);
+		break;
+	    case msqueue :
+		msqueue_free(RINGBUFS[i]);
+		break;
 	}
     }
     if (HPD)
