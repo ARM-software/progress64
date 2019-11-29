@@ -648,18 +648,21 @@ comph(const void *he,
     return as->asn < k ? -1 : as->asn > k ? 1 : 0;
 }
 
-//Some magic to define __crc32d() intrinsic
+//Some magic to define CRC32C intrinsics
 #ifdef __aarch64__
 #ifndef __ARM_FEATURE_CRC32
-#error requires __ARM_FEATURE_CRC32 for __crc32d
+#pragma GCC target("+crc")
 #endif
 #include <arm_acle.h>
+#define CRC32C(x, y) __crc32cw((x), (y))
 #endif
 #if defined __x86_64__
 #ifndef __SSE4_2__
 #pragma GCC target("sse4.2")
 #endif
 #include <x86intrin.h>
+//x86 crc32 intrinsics seem to compute CRC32C (not CRC32)
+#define CRC32C(x, y) __crc32d((x), (y))
 #endif
 
 static uint32_t
@@ -705,7 +708,7 @@ read_as_table(const char *filename,
 	    perror("malloc"), exit(EXIT_FAILURE);
 	}
 	as->asn = asn;
-	as->hash = __crc32d(0, asn);
+	as->hash = CRC32C(0, asn);
 	strcpy(as->name, name);
 	if (use_hs)
 	{
@@ -784,7 +787,7 @@ syntax_error:
 		fprintf(stderr, "Too many routes\n");
 		exit(EXIT_FAILURE);
 	    }
-	    p64_hashvalue_t hash = __crc32d(0, asn);
+	    p64_hashvalue_t hash = CRC32C(0, asn);
 	    struct asnode *as = NULL;
 	    if (use_hs)
 	    {
