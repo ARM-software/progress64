@@ -76,7 +76,10 @@ LDFLAGS += -std=c11
 ifeq ($(ARMV7VE),yes)
 CCFLAGS += -march=armv7ve
 endif
-#CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
+#Enable when compiling for Armv8.1a (make ARMV81A=yes)
+ifeq ($(ARMV81A),yes)
+CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
+endif
 CCFLAGS += -g -ggdb -Wall -Wextra
 CCFLAGS += -fomit-frame-pointer
 CCFLAGS += -fstrict-aliasing -fno-stack-check -fno-stack-protector

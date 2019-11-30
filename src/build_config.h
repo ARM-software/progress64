@@ -10,7 +10,10 @@
 
 //Use load/store exclusive directly
 #ifdef __aarch64__
+#ifndef __ARM_FEATURE_ATOMICS
+//ARMv8.0 only has exclusives, use them directly for custom atomic operations
 #define USE_LDXSTX
+#endif
 #endif
 
 //Use ARMv8 Wait For Event mechanism which generally improves performance
@@ -48,7 +51,6 @@
 #define CACHE_LINE 64
 #define MAXTHREADS 128
 #endif
-#define MAXHPREFS 3
 #define MAXTIMERS 8192
 
 #endif
