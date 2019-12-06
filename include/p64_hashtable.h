@@ -4,6 +4,8 @@
 
 //Lock-free hash table using closed addressing and linked lists
 //A special twist is the set associative buckets
+//This is essentially a variation of the hash table described in Michael:
+//"High Performance Dynamic Lock-Free Hash Tables and List-Based Sets"
 
 #ifndef _P64_HASHTABLE_H
 #define _P64_HASHTABLE_H

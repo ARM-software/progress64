@@ -2,7 +2,9 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-//Safe memory reclamation using hazard pointers
+//Safe memory reclamation using hazard pointers as described in Michael:
+//"Safe Memory Reclamation for Dynamic Lock-Free Objects Using Atomic Reads
+//and Writes".
 
 #ifndef _P64_HAZARDPTR_H
 #define _P64_HAZARDPTR_H

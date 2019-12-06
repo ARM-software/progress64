@@ -2,7 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-//Non-blocking hopscotch hash table with backup cellar
+//Non-blocking hopscotch hash table with overflow cellar using linear probing
+//Original hopscotch design from Herlihy, Shavit, Tzafrir: "Hopscotch Hashing"
 
 #ifndef _P64_HOPSCOTCH_H
 #define _P64_HOPSCOTCH_H
