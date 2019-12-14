@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <errno.h>
 #include <inttypes.h>
+#include <limits.h>
 #include <sys/stat.h>
 #include <stdbool.h>
 #include <stdint.h>
@@ -962,6 +963,7 @@ int main(int argc, char *argv[])
     uint32_t maxroutes = MAX_ROUTES;
     uint32_t numbkts = MAX_ASNODES;
     uint32_t numcells = HS_NUM_CELLS;
+    uint32_t vecsize = 16;
     uint64_t start;
     struct avl_route *root = NULL;
     p64_mbtrie_t *mbt = NULL;
@@ -981,7 +983,7 @@ int main(int argc, char *argv[])
     assert(mask_from_len(32) == 0xffffffff);
 
     int c;
-    while ((c = getopt(argc, argv, "Ab:c:Fhm:r:sRvV")) != -1)
+    while ((c = getopt(argc, argv, "Ab:c:Fhm:r:sRv:V")) != -1)
     {
 	switch (c)
 	{
@@ -1013,8 +1015,17 @@ int main(int argc, char *argv[])
 		use_hs = true;
 		break;
 	    case 'v' :
+	    {
+		int32_t vz = atoi(optarg);
+		if (vz < 0 || (uint32_t)vz > sizeof(long) * CHAR_BIT)
+		{
+		    fprintf(stderr, "Invalid vector size %s\n", optarg);
+		    exit(EXIT_FAILURE);
+		}
+		vecsize = vz;
 		use_vl = true;
 		break;
+	    }
 	    case 'V' :
 		verbose = true;
 		break;
@@ -1031,7 +1042,7 @@ usage :
 		    "-r <maxrefs>     Number of HP references\n"
 		    "-R               Randomize AVL tree insertion order\n"
 		    "-s               Use hopscotch hash table\n"
-		    "-v               Use vector lookup\n"
+		    "-v <vecsize>     Use vector lookup\n"
 		    "-V               Verbose\n");
 	    exit(EXIT_FAILURE);
 	}
@@ -1173,9 +1184,9 @@ usage :
     else
     {
 	uint32_t found = 0;
-	start = time_start("Lookup prefixes in multi-bit trie");
 	if (use_hp)
 	{
+	    start = time_start("Lookup prefixes (scalar+HP) in multi-bit trie");
 	    assert(p64_hazptr_dump(stdout) == hp_refs);
 	    //Use single-key lookup which uses hazard pointers
 	    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
@@ -1193,36 +1204,50 @@ usage :
 	    p64_hazptr_release(&hp);
 	    assert(p64_hazptr_dump(stdout) == hp_refs);
 	}
+	else if (vecsize == 0)
+	{
+	    start = time_start("Lookup prefixes (scalar+QSBR) in multi-bit trie");
+	    p64_qsbr_acquire();
+	    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+	    for (uint32_t i = 0; i < NLOOKUPS; i++)
+	    {
+		uint64_t key = (uint64_t)addrs[i] << 32;
+		p64_mbtrie_elem_t *elem = p64_mbtrie_lookup(mbt, key, &hp);
+		if (elem != NULL)
+		{
+		    found++;
+		    //Force a memory access from returned element
+		    *(volatile size_t *)&elem->refcnt;
+		}
+	    }
+	    assert(hp == P64_HAZARDPTR_NULL);
+	    p64_qsbr_release();
+	}
 	else
 	{
+	    char msg[100];
+	    sprintf(msg, "Lookup prefixes (vector(%u)+QSBR) in multi-bit trie",
+		    vecsize);
+	    start = time_start(msg);
 	    //Use multi-key lookup which requires application to use QSBR
-	    assert(NLOOKUPS % 10 == 0);
 	    p64_qsbr_acquire();
-	    for (uint32_t i = 0; i < NLOOKUPS; )
+	    for (uint32_t i = 0; i + vecsize < NLOOKUPS; )
 	    {
-		p64_mbtrie_elem_t *results[10];
-		uint64_t keys[10];
-		uint32_t ii = i;
+		p64_mbtrie_elem_t *results[vecsize];
+		uint64_t keys[vecsize];
 		//Keys start from most significant bit in uint64_t
-		keys[0] = (uint64_t)addrs[i++] << 32;
-		keys[1] = (uint64_t)addrs[i++] << 32;
-		keys[2] = (uint64_t)addrs[i++] << 32;
-		keys[3] = (uint64_t)addrs[i++] << 32;
-		keys[4] = (uint64_t)addrs[i++] << 32;
-		keys[5] = (uint64_t)addrs[i++] << 32;
-		keys[6] = (uint64_t)addrs[i++] << 32;
-		keys[7] = (uint64_t)addrs[i++] << 32;
-		keys[8] = (uint64_t)addrs[i++] << 32;
-		keys[9] = (uint64_t)addrs[i++] << 32;
-		unsigned long res;
-		res = p64_mbtrie_lookup_vec(mbt, i - ii, keys, results);
-		found += __builtin_popcountl(res);
-		while (res != 0)
+		for (uint32_t j = 0; j < vecsize; j++)
 		{
-		    uint32_t j = __builtin_ctzl(res);
-		    res &= ~(1UL << j);
-		    //Force a memory access from returned element
-		    *(volatile size_t *)&results[j]->refcnt;
+		    keys[j] = (uint64_t)addrs[i++] << 32;
+		}
+		(void)p64_mbtrie_lookup_vec(mbt, vecsize, keys, results);
+		for (uint32_t j = 0; j < vecsize; j++)
+		{
+		    if (LIKELY(results[j] != NULL))
+		    {
+			//Force a memory access from returned element
+			*(volatile size_t *)&results[j]->refcnt;
+		    }
 		}
 	    }
 	    p64_qsbr_release();//No references kept beyond this point

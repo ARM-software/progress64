@@ -124,7 +124,7 @@ atomic_load_acquire(void **pptr,
 		    uintptr_t mask,
 		    bool use_hp)
 {
-    if (use_hp)
+    if (UNLIKELY(use_hp))
     {
 	return p64_hazptr_acquire_mask(pptr, hp, mask);
     }
@@ -137,7 +137,7 @@ atomic_load_acquire(void **pptr,
 static inline void
 atomic_ptr_release(p64_hazardptr_t *hp, bool use_hp)
 {
-    if (use_hp)
+    if (UNLIKELY(use_hp))
     {
 	p64_hazptr_release(hp);
     }
@@ -884,16 +884,12 @@ p64_mbtrie_remove(p64_mbtrie_t *mbt,
     }
 }
 
-p64_mbtrie_elem_t *
-p64_mbtrie_lookup(p64_mbtrie_t *mbt,
-                  uint64_t key,
-                  p64_hazardptr_t *hp)
+static inline p64_mbtrie_elem_t *
+lookup(p64_mbtrie_t *mbt,
+       uint64_t key,
+       p64_hazardptr_t *hp,
+       bool use_hp)
 {
-    if (UNLIKELY(!mbt->use_hp))
-    {
-	report_error("mbtrie", "QSBR not supported", 0);
-	return 0;
-    }
     const uint64_t org_key = key;
     p64_hazardptr_t hpprev = P64_HAZARDPTR_NULL;
     const uint8_t *strides = mbt->strides;
@@ -902,23 +898,32 @@ p64_mbtrie_lookup(p64_mbtrie_t *mbt,
     do
     {
 	size_t idx = prefix_to_index(key, *strides);
-	void *ptr = p64_hazptr_acquire_mask(&vec[idx], hp, ~ALL_BITS);
+	void *ptr = atomic_load_acquire(&vec[idx], hp, ~ALL_BITS, use_hp);
 	if (!IS_VECTOR(ptr))
 	{
 	    ptr = CLR_ALL(ptr);
 	    if (ptr == NULL)
 	    {
 		//NULL means default prefix
-		ptr = p64_hazptr_acquire(&mbt->default_pfx, hp);
+		ptr = atomic_load_acquire((void **)&mbt->default_pfx,
+					  hp,
+					  ~ALL_BITS,
+					  use_hp);
 	    }
-	    p64_hazptr_release_ro(&hpprev);
+	    if (UNLIKELY(use_hp))
+	    {
+		p64_hazptr_release_ro(&hpprev);
+	    }
 	    //Caller must release hp
 	    return ptr;
 	}
 	vec = CLR_ALL(ptr);
 	assert(vec != NULL);
 	//Prepare for next iteration
-	SWAP(hpprev, *hp);
+	if (use_hp)
+	{
+	    SWAP(hpprev, *hp);
+	}
 	key <<= *strides++;
     }
     while (*strides != 0);
@@ -927,64 +932,68 @@ p64_mbtrie_lookup(p64_mbtrie_t *mbt,
     return NULL;
 }
 
-static void
-load_ptrs(unsigned long mask,
-	  void **ptrs[],
-	  uint64_t keys[],
-	  uint32_t stride)
+p64_mbtrie_elem_t *
+p64_mbtrie_lookup(p64_mbtrie_t *mbt,
+                  uint64_t key,
+                  p64_hazardptr_t *hp)
 {
-    do
+    p64_mbtrie_elem_t *ptr;
+    if (!mbt->use_hp)
     {
-	size_t i = __builtin_ctzl(mask);
-	mask &= ~(1UL << i);
-	size_t idx = prefix_to_index(keys[i], stride);
-	void **vec = ptrs[i];
-	//Follow pointer in trie table
-	ptrs[i] = (void **)__atomic_load_n(&vec[idx], __ATOMIC_RELAXED);
-	//No immediate use of read data to avoid stalling
-	//Stores can complete in the background
+	ptr = lookup(mbt, key, NULL, false);
     }
-    while (LIKELY(mask != 0));
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    else
+    {
+	ptr = lookup(mbt, key, hp, true);
+    }
+    return ptr;
 }
 
 static unsigned long
 parse_data(unsigned long mask,
+	   p64_mbtrie_t *mbt,
+	   uint32_t depth,
 	   void **ptrs[],
 	   uint64_t keys[],
-	   uint32_t stride,
-	   void *def_pfx,
 	   unsigned long *success)
 {
     unsigned long next_mask = 0;
     do
     {
 	size_t i = __builtin_ctzl(mask);
-	mask &= ~(1UL << i);
+	unsigned long bit = 1UL << i;
+	mask &= ~bit;
 	void *ptr = ptrs[i];
-	ptrs[i] = CLR_ALL(ptr);
 	if (IS_VECTOR(ptr))
 	{
-	    //Follow pointer to subvector in next lap
-	    next_mask |= 1UL << i;
+	    //Follow pointer to subvector
+	    next_mask |= bit;
 	    //Adjust key for next level
-	    keys[i] <<= stride;
+	    keys[i] <<= mbt->strides[depth];
+	    size_t idx = prefix_to_index(keys[i], mbt->strides[depth + 1]);
+	    void **vec = CLR_ALL(ptr);
+	    //Follow pointer in trie table
+	    ptrs[i] = (void **)__atomic_load_n(&vec[idx], __ATOMIC_ACQUIRE);
 	}
 	//Else leaf found, stop here (don't update next_mask)
-	else if (ptr == NULL)
+	else if (LIKELY(ptr != NULL))
+	{
+	    //Non-null leaf
+success:
+	    ptr = CLR_ALL(ptr);
+	    ptrs[i] = ptr;
+	    //Assume user will dereference next-hop data soon
+	    PREFETCH_FOR_READ(ptr);
+	    *success |= bit;
+	}
+	else//ptr == NULL
 	{
 	    //NULL means default prefix (if any)
-	    if (LIKELY(def_pfx != NULL))
+	    ptr = __atomic_load_n(&mbt->default_pfx, __ATOMIC_ACQUIRE);
+	    if (LIKELY(ptr != NULL))
 	    {
-		ptrs[i] = def_pfx;
-		*success |= 1UL << i;
+		goto success;
 	    }
-	}
-	else//Non-null leaf
-	{
-	    *success |= 1UL << i;
-	    //Assume user will dereference next-hop data soon
-	    PREFETCH_FOR_READ(ptrs[i]);
 	}
     }
     while (LIKELY(mask != 0));
@@ -1008,25 +1017,31 @@ p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
 	report_error("mbtrie", "hazard pointers not supported", 0);
 	return 0;
     }
-    //Initialise all pointers to base of trie
+    if (UNLIKELY(num == 0))
+    {
+	return 0;
+    }
+    //First read all pointers to first level in order to utilise
+    //memory level parallelism and overlap cache misses
+    uint32_t depth = 0;
     for (uint32_t i = 0; i < num; i++)
     {
-	results[i] = (void *)mbt->base;
+	size_t idx = prefix_to_index(keys[i], mbt->strides[depth]);
+	void **vec = (void *)mbt->base;
+	results[i] = (void *)__atomic_load_n(&vec[idx], __ATOMIC_ACQUIRE);
     }
-    //Load the default prefix using load-relaxed, loads_ptrs() contains an
-    //acquire fence
-    void *def_pfx = __atomic_load_n(&mbt->default_pfx, __ATOMIC_RELAXED);
-    uint32_t depth = 0;
     unsigned long mask = num == long_bits ? ~0UL : (1UL << num) - 1;
     unsigned long bm = 0;//Success bitmap
-    while (mask != 0)
+    do
     {
-	uint32_t stride = mbt->strides[depth++];
-	//First read all pointers to next level in order to utilise
-	//memory level parallelism and overlap cache misses
-	load_ptrs(mask, (void ***)results, keys, stride);
 	//Then parse returned data, potentially stalling for cache misses
-	mask = parse_data(mask, (void ***)results, keys, stride, def_pfx, &bm);
+	mask = parse_data(mask,
+			  mbt,
+			  depth,
+			  (void ***)results,
+			  keys,
+			  &bm);
     }
+    while (mask != 0);
     return bm;
 }

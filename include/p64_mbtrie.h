@@ -60,9 +60,10 @@ p64_mbtrie_remove(p64_mbtrie_t *mbt,
 		  p64_mbtrie_elem_t *new);
 
 //Look up the specified key, returning the matching element (or NULL)
-//The hazard pointer must be freed even if NULL is returned
 //Key starts from most significant bit in uint64_t value
-//Must only be used with hazard pointers!
+//The hazard pointer must be freed even if NULL is returned
+//May also be used with QSBR, 'hp' parameter is not used
+//Caller must call QSBR acquire/release/quiescent as appropriate
 p64_mbtrie_elem_t *
 p64_mbtrie_lookup(p64_mbtrie_t *mbt,
 		  uint64_t key,
