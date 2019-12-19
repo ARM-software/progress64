@@ -1245,6 +1245,7 @@ usage :
 		{
 		    if (LIKELY(results[j] != NULL))
 		    {
+			found++;
 			//Force a memory access from returned element
 			*(volatile size_t *)&results[j]->refcnt;
 		    }

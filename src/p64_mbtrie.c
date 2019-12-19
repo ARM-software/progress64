@@ -1000,6 +1000,13 @@ success:
     return next_mask;
 }
 
+#ifdef __aarch64__
+#ifndef __ARM_NEON
+#pragma GCC target("+simd")
+#endif
+#include <arm_neon.h>
+#endif
+
 unsigned long
 p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
 		      uint32_t num,
@@ -1023,15 +1030,36 @@ p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
     }
     //First read all pointers to first level in order to utilise
     //memory level parallelism and overlap cache misses
-    uint32_t depth = 0;
-    for (uint32_t i = 0; i < num; i++)
+    uint32_t stride = mbt->strides[0];
+    void **base = mbt->base;
+    uint32_t i = 0;
+#ifdef __aarch64__
+    //Only use NEON version when beneficial
+    if (LIKELY(num > 8))
     {
-	size_t idx = prefix_to_index(keys[i], mbt->strides[depth]);
-	void **vec = (void *)mbt->base;
-	results[i] = (void *)__atomic_load_n(&vec[idx], __ATOMIC_ACQUIRE);
+	uint64x2_t vbase = vdupq_n_u64((uintptr_t)base);
+	uint64x2_t vmask = vdupq_n_u64(stride_to_nslots(stride) - 1);
+	for (; i + 1 < num; i += 2)
+	{
+	    uint64x2_t vkey = vld1q_u64(&keys[i]);
+	    uint64x2_t vidx = vandq_u64(vshrq_n_u64(vkey, 64 - stride), vmask);
+	    uint64x2_t vptr = vaddq_u64(vqshlq_n_u64(vidx, 3), vbase);
+	    uint64_t ptr0 = vgetq_lane_u64(vptr, 0);
+	    results[i + 0] = __atomic_load_n((void **)ptr0, __ATOMIC_RELAXED);
+	    uint64_t ptr1 = vgetq_lane_u64(vptr, 1);
+	    results[i + 1] = __atomic_load_n((void **)ptr1, __ATOMIC_ACQUIRE);
+	}
+    }
+    //Do small vectors and any trailing odd element the scalar way
+#endif
+    for (; i < num; i++)
+    {
+	size_t idx = prefix_to_index(keys[i], stride);
+	results[i] = (void *)__atomic_load_n(&base[idx], __ATOMIC_ACQUIRE);
     }
     unsigned long mask = num == long_bits ? ~0UL : (1UL << num) - 1;
     unsigned long bm = 0;//Success bitmap
+    uint32_t depth = 0;
     do
     {
 	//Then parse returned data, potentially stalling for cache misses
