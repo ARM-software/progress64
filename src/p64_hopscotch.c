@@ -290,6 +290,8 @@ p64_hopscotch_alloc(size_t nbkts,
     return ht;
 }
 
+#undef VALID_FLAGS
+
 void
 p64_hopscotch_free(p64_hopscotch_t *ht)
 {

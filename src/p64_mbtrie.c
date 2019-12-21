@@ -286,6 +286,8 @@ invalid_stride:
     return NULL;
 }
 
+#undef VALID_FLAGS
+
 //Increment reference counter of element
 static inline void
 increment_refcnt(p64_mbtrie_elem_t *elem, size_t val)

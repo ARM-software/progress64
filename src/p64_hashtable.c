@@ -183,6 +183,8 @@ p64_hashtable_alloc(size_t nelems,
     return ht;
 }
 
+#undef VALID_FLAGS
+
 void
 p64_hashtable_free(p64_hashtable_t *ht)
 {

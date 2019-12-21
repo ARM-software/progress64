@@ -374,6 +374,8 @@ p64_reassemble_alloc(uint32_t size,
     return NULL;
 }
 
+#undef VALID_FLAGS
+
 void
 p64_reassemble_free(p64_reassemble_t *re)
 {
