@@ -8,6 +8,9 @@
 #define USE_SPLIT_PRODCONS
 //#define USE_SPLIT_HEADTAIL
 
+//Enable hazard pointers with zero references to invoke QSBR
+//#define HP_ZEROREF_QSBR
+
 //Use load/store exclusive directly
 #ifdef __aarch64__
 #ifndef __ARM_FEATURE_ATOMICS

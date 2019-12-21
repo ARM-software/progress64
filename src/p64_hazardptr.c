@@ -16,18 +16,21 @@
 #undef p64_hazptr_acquire_mask
 #include "build_config.h"
 #include "os_abstraction.h"
-
-#define HAS_QSBR(ptr)          ((uintptr_t)(ptr) & 1)
-#define SET_QSBR(ptr) ((void *)((uintptr_t)(ptr) | 1))
-#define CLR_QSBR(ptr) ((void *)((uintptr_t)(ptr) & ~(uintptr_t)1))
-
+#include "err_hnd.h"
 #include "arch.h"
 #include "lockfree.h"
 #include "common.h"
-
 #include "thr_idx.h"
+
+#ifdef HP_ZEROREF_QSBR
+#define HAS_QSBR(ptr)          ((uintptr_t)(ptr) & 1)
+#define SET_QSBR(ptr) ((void *)((uintptr_t)(ptr) | 1))
+#define CLR_QSBR(ptr) ((void *)((uintptr_t)(ptr) & ~(uintptr_t)1))
 #define PRIVATE
 #include "p64_qsbr.c"
+#endif
+
+#define report_thread_not_registered hp_report_thread_not_registered
 #define object hp_object
 #define thread_state hp_thread_state
 #define TS hp_TS
@@ -71,6 +74,7 @@ struct p64_hpdomain
 p64_hpdomain_t *
 p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 {
+#ifdef HP_ZEROREF_QSBR
     if (nrefs == 0)
     {
 	void *qsbr = p64_qsbr_alloc(maxobjs);
@@ -80,6 +84,7 @@ p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 	}
 	return NULL;
     }
+#endif
     if (nrefs < 1 || nrefs > 32)
     {
 	report_error("hazardptr", "invalid number of references", nrefs);
@@ -106,11 +111,13 @@ p64_hazptr_alloc(uint32_t maxobjs, uint32_t nrefs)
 void
 p64_hazptr_free(p64_hpdomain_t *hpd)
 {
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(hpd))
     {
 	p64_qsbr_free(CLR_QSBR(hpd));
 	return;
     }
+#endif
     uint32_t nrefs_rounded = roundup(hpd->nrefs);
     uint32_t nthreads = __atomic_load_n(&hpd->high_wm, __ATOMIC_ACQUIRE);
     for (uint32_t t = 0; t < nthreads; t++)
@@ -206,11 +213,13 @@ p64_hazptr_reactivate(void)
 	report_thread_not_registered();
 	return;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	p64_qsbr_reactivate();
 	return;
     }
+#endif
     //Nothing to do
 }
 
@@ -219,12 +228,14 @@ p64_hazptr_register(p64_hpdomain_t *hpd)
 {
     if (UNLIKELY(TS == NULL))
     {
+#ifdef HP_ZEROREF_QSBR
 	if (HAS_QSBR(hpd))
 	{
 	    p64_qsbr_register(CLR_QSBR(hpd));
 	    TS = SET_QSBR(NULL);
 	    return;
 	}
+#endif
 	TS = alloc_ts(hpd);
 	if (TS == NULL)
 	{
@@ -242,11 +253,13 @@ p64_hazptr_deactivate(void)
 	report_thread_not_registered();
 	return;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	p64_qsbr_deactivate();
 	return;
     }
+#endif
     //Nothing to do
     if (TS->free != bitmask(TS->nrefs))
     {
@@ -263,12 +276,14 @@ p64_hazptr_unregister(void)
 	report_thread_not_registered();
 	return;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	p64_qsbr_unregister();
 	TS = NULL;
 	return;
     }
+#endif
     if (TS->nobjs != 0)
     {
 	report_error("hazardptr", "thread has unreclaimed objects", TS->nobjs);
@@ -334,10 +349,12 @@ p64_hazptr_annotate(p64_hazardptr_t hp,
 	report_thread_not_registered();
 	return;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	return;
     }
+#endif
     if (hp != P64_HAZARDPTR_NULL)
     {
 	uint32_t idx = hp - &TS->hp[0].ref;
@@ -359,10 +376,12 @@ p64_hazptr_dump(FILE *fp)
 	report_thread_not_registered();
 	return 0;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	return 0;
     }
+#endif
     for (uint32_t i = 0; i < TS->nrefs; i++)
     {
 	if ((TS->free & (1U << i)) == 0)
@@ -378,6 +397,7 @@ p64_hazptr_dump(FILE *fp)
     return __builtin_popcount(TS->free);
 }
 
+#ifdef HP_ZEROREF_QSBR
 static THREAD_LOCAL uint32_t qsbr_free_hp = ~UINT32_C(0);
 static THREAD_LOCAL void *qsbr_hp[32];
 
@@ -410,6 +430,7 @@ hazptr_qsbr_free(p64_hazardptr_t *hp)
     }
     *hp = P64_HAZARDPTR_NULL;
 }
+#endif
 
 //Safely acquire a reference to the object whose pointer is stored at the
 //specified location
@@ -426,6 +447,7 @@ p64_hazptr_acquire_mask(void **pptr,
 	report_thread_not_registered();
 	return NULL;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	void *ptr = __atomic_load_n(pptr, __ATOMIC_ACQUIRE);
@@ -441,6 +463,7 @@ p64_hazptr_acquire_mask(void **pptr,
 	}
 	return ptr;
     }
+#endif
     //Reset any existing hazard pointer
     if (*hp != P64_HAZARDPTR_NULL)
     {
@@ -518,11 +541,13 @@ p64_hazptr_release(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
+#ifdef HP_ZEROREF_QSBR
 	if (HAS_QSBR(TS))
 	{
 	    hazptr_qsbr_free(hp);
 	    return;
 	}
+#endif
 	//Reset hazard pointer
 	if (**hp != NULL)
 	{
@@ -540,11 +565,13 @@ p64_hazptr_release_ro(p64_hazardptr_t *hp)
 {
     if (*hp != P64_HAZARDPTR_NULL)
     {
+#ifdef HP_ZEROREF_QSBR
 	if (HAS_QSBR(TS))
 	{
 	    hazptr_qsbr_free(hp);
 	    return;
 	}
+#endif
 	if (**hp != NULL)
 	{
 	    smp_fence(LoadStore);//Load-only barrier
@@ -698,10 +725,12 @@ p64_hazptr_retire(void *ptr,
 	report_thread_not_registered();
 	return false;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	return p64_qsbr_retire(ptr, cb);
     }
+#endif
     if (UNLIKELY(TS->nobjs == TS->maxobjs))
     {
 	if (garbage_collect() == TS->maxobjs)
@@ -725,6 +754,7 @@ p64_hazptr_reclaim(void)
 	report_thread_not_registered();
 	return 0;
     }
+#ifdef HP_ZEROREF_QSBR
     if (HAS_QSBR(TS))
     {
 	if (qsbr_free_hp == ~UINT32_C(0))
@@ -733,6 +763,7 @@ p64_hazptr_reclaim(void)
 	}
 	return p64_qsbr_reclaim();
     }
+#endif
     if (TS->nobjs == 0)
     {
 	//Nothing to reclaim
@@ -742,3 +773,11 @@ p64_hazptr_reclaim(void)
     uint32_t nremaining = garbage_collect();
     return nremaining;
 }
+
+#undef report_thread_not_registered
+#undef object
+#undef thread_state
+#undef TS
+#undef alloc_ts
+#undef garbage_collect
+#undef userptr_t
