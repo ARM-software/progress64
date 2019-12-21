@@ -24,7 +24,7 @@ int main(void)
     EXPECT(hpd != NULL);
     p64_hazptr_register(hpd);
 
-    cntd = p64_cntdomain_alloc(NUM_COUNTERS);
+    cntd = p64_cntdomain_alloc(NUM_COUNTERS, P64_COUNTER_F_HP);
     EXPECT(cntd != NULL);
 
     cntid = p64_counter_alloc(cntd);

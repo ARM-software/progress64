@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include "p64_counter.h"
+#include "p64_qsbr.h"
 #include "p64_hazardptr.h"
 #include "build_config.h"
 #include "os_abstraction.h"
@@ -32,6 +33,7 @@ report_thr_not_registered(void)
 struct p64_cntdomain
 {
     uint32_t ncounters;
+    uint8_t use_hp;
     uint64_t *shared;
     uint64_t *perthread[MAXTHREADS];
     uint64_t free[];//Bitmask of free counters
@@ -39,9 +41,16 @@ struct p64_cntdomain
 
 #define BITSPERWORD 64
 
+#define VALID_FLAGS P64_COUNTER_F_HP
+
 p64_cntdomain_t *
-p64_cntdomain_alloc(uint32_t ncounters)
+p64_cntdomain_alloc(uint32_t ncounters, uint32_t flags)
 {
+    if (UNLIKELY((flags & ~VALID_FLAGS) != 0))
+    {
+	report_error("counter", "invalid flags", flags);
+	return NULL;
+    }
     ncounters++;//Allow for null element (cntid=0)
     uint32_t nwords = (ncounters + BITSPERWORD - 1) / BITSPERWORD;
     size_t nbytes = sizeof(p64_cntdomain_t) +
@@ -51,6 +60,7 @@ p64_cntdomain_alloc(uint32_t ncounters)
     {
 	//Clear everything including shared counters
 	memset(cntd, 0, nbytes);
+	cntd->use_hp = (flags & P64_COUNTER_F_HP) != 0;
 	cntd->ncounters = ncounters;
 	cntd->shared = &cntd->free[nwords];
 	for (uint32_t t = 0; t < MAXTHREADS; t++)
@@ -77,6 +87,8 @@ p64_cntdomain_alloc(uint32_t ncounters)
     }
     return NULL;
 }
+
+#undef VALID_FLAGS
 
 void
 p64_cntdomain_free(p64_cntdomain_t *cntd)
@@ -152,9 +164,19 @@ p64_cntdomain_unregister(p64_cntdomain_t *cntd)
     //Unpublish private counters
     __atomic_store_n(&cntd->perthread[pth.tidx], NULL, __ATOMIC_RELEASE);
     //Retire counter array
-    while (!p64_hazptr_retire(counters, p64_mfree))
+    if (cntd->use_hp)
     {
-	doze();
+	while (!p64_hazptr_retire(counters, p64_mfree))
+	{
+	    doze();
+	}
+    }
+    else
+    {
+	while (!p64_qsbr_retire(counters, p64_mfree))
+	{
+	    doze();
+	}
     }
     //Decrement refcnt and conditionally release our thread index
     if (--pth.count == 0)
@@ -251,7 +273,16 @@ p64_counter_read(p64_cntdomain_t *cntd, p64_counter_t cntid)
 	//Add values from private (per thread) locations
 	for (uint32_t t = 0; t < MAXTHREADS; t++)
 	{
-	    uint64_t *counters = p64_hazptr_acquire(&cntd->perthread[t], &hp);
+	    uint64_t *counters;
+	    if (LIKELY(!cntd->use_hp))
+	    {
+		counters = __atomic_load_n(&cntd->perthread[t],
+					   __ATOMIC_ACQUIRE);
+	    }
+	    else
+	    {
+		counters = p64_hazptr_acquire(&cntd->perthread[t], &hp);
+	    }
 	    if (counters != NULL)
 	    {
 		sum += __atomic_load_n(&counters[cntid], __ATOMIC_RELAXED);
@@ -266,7 +297,10 @@ p64_counter_read(p64_cntdomain_t *cntd, p64_counter_t cntid)
 	//not updated atomically
     }
     while (sh0 != sh1);
-    p64_hazptr_release(&hp);
+    if (UNLIKELY(cntd->use_hp))
+    {
+	p64_hazptr_release(&hp);
+    }
     return sum;
 }
 

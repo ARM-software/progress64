@@ -14,10 +14,12 @@ extern "C"
 {
 #endif
 
+#define P64_COUNTER_F_HP      0x0001 //Use hazard pointers (default QSBR)
+
 typedef struct p64_cntdomain p64_cntdomain_t;
 
 //Allocate a counter domain with space for 'ncounters' 64-bit counters
-p64_cntdomain_t *p64_cntdomain_alloc(uint32_t ncounters);
+p64_cntdomain_t *p64_cntdomain_alloc(uint32_t ncounters, uint32_t flags);
 
 //Free a counter domain
 //No registered threads may remain
