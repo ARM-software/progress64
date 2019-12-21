@@ -15,6 +15,9 @@ extern "C"
 {
 #endif
 
+#define P64_REASSEMBLE_F_HP      0x0001 //Use hazard pointers (default QSBR)
+#define P64_REASSEMBLE_F_EXT     0x0002 //Support size extension
+
 typedef struct p64_fragment
 {
     struct p64_fragment *nextfrag;
@@ -35,7 +38,7 @@ p64_reassemble_t *p64_reassemble_alloc(uint32_t size,
 				       p64_reassemble_cb stale_cb,
 				       void *complete_arg,
 				       void *stale_arg,
-				       bool extendable);
+				       uint32_t flags);
 
 //Free a fragment table
 //Pass any remaining fragments to the stale callback
@@ -55,8 +58,9 @@ void p64_reassemble_expire(p64_reassemble_t *re,
 			   uint32_t time);
 
 //Extend the fragment table (double the size)
-//Return false if not extendable, out of memory or extension currently in
-//progress by other thread
+//Return false if out of memory or extension currently in progress by other
+//thread
+//Call-backs may be called when extending the fragment table
 bool p64_reassemble_extend(p64_reassemble_t *re);
 
 #ifdef __cplusplus

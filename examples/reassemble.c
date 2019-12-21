@@ -11,6 +11,7 @@
 
 #include "p64_reassemble.h"
 #include "p64_hazardptr.h"
+#include "p64_qsbr.h"
 #include "expect.h"
 
 #define IP_FRAG_RESV 0x8000  //Reserved fragment flag
@@ -102,43 +103,77 @@ stale(void *arg, p64_fragment_t *frag)
 
 int main(int argc, char *argv[])
 {
-    p64_hpdomain_t *hpd = NULL;
+    void *smr = NULL;
+    uint32_t flags = 0;
     bool extend = false;
-    if (argc == 2 && strcmp(argv[1], "-e") == 0)
+    bool use_hp = false;
+
+    if (argc == 2 && argv[1][0] == '-')
     {
-	printf("Will do reassembly table extension\n");
-	extend = true;
+	if (strchr(argv[1], 'e') != NULL)
+	{
+	    flags |= P64_REASSEMBLE_F_EXT;
+	    extend = true;
+	}
+	if (strchr(argv[1], 'h') != NULL)
+	{
+	    flags |= P64_REASSEMBLE_F_HP;
+	    use_hp = true;
+	}
     }
 
     if (extend)
     {
-	hpd = p64_hazptr_alloc(10, NUM_HAZARD_POINTERS);
-	EXPECT(hpd != NULL);
-	p64_hazptr_register(hpd);
+	printf("Perform fragment table extension\n");
+	printf("Use %s for safe memory reclamation\n", use_hp ? "HP" : "QSBR");
+	if (use_hp)
+	{
+	    smr = p64_hazptr_alloc(10, NUM_HAZARD_POINTERS);
+	    EXPECT(smr != NULL);
+	    p64_hazptr_register(smr);
+	}
+	else
+	{
+	    smr = p64_qsbr_alloc(10);
+	    EXPECT(smr != NULL);
+	    p64_qsbr_register(smr);
+	}
     }
 
     p64_reassemble_t *re = p64_reassemble_alloc(16, complete, stale,
-						NULL, NULL, extend);
+						NULL, NULL, flags);
     EXPECT(re != NULL);
 
     p64_fragment_t *f1 = alloc_frag(0x01010101, 100, 0, 1504, true);
     EXPECT(f1 != NULL);
     p64_reassemble_insert(re, f1);
-    EXPECT(p64_reassemble_extend(re) == extend);
+    if (extend)
+    {
+	EXPECT(p64_reassemble_extend(re) == true);
+    }
     p64_fragment_t *f2 = alloc_frag(0x73737373, 101, 1504, 100, false);
     EXPECT(f2 != NULL);
     p64_reassemble_insert(re, f2);
-    EXPECT(p64_reassemble_extend(re) == extend);
+    if (extend)
+    {
+	EXPECT(p64_reassemble_extend(re) == true);
+    }
     p64_fragment_t *f3 = alloc_frag(0x01010101, 102, 1504, 100, false);
     EXPECT(f3 != NULL);
     EXPECT(lastfree == NULL);
     p64_reassemble_insert(re, f3);
-    EXPECT(p64_reassemble_extend(re) == extend);
+    if (extend)
+    {
+	EXPECT(p64_reassemble_extend(re) == true);
+    }
     EXPECT(lastfree == NULL);
     p64_fragment_t *f4 = alloc_frag(0x01010101, 102, 0, 1504, true);
     EXPECT(f4 != NULL);
     p64_reassemble_insert(re, f4);
-    EXPECT(p64_reassemble_extend(re) == extend);
+    if (extend)
+    {
+	EXPECT(p64_reassemble_extend(re) == true);
+    }
     p64_reassemble_expire(re, 102);
     EXPECT(lastfree == f2);
     done = true;
@@ -147,10 +182,19 @@ int main(int argc, char *argv[])
 
     if (extend)
     {
-	p64_hazptr_dump(stdout);
-	EXPECT(p64_hazptr_reclaim() == 0);
-	p64_hazptr_unregister();
-	p64_hazptr_free(hpd);
+	if (use_hp)
+	{
+	    p64_hazptr_dump(stdout);
+	    EXPECT(p64_hazptr_reclaim() == 0);
+	    p64_hazptr_unregister();
+	    p64_hazptr_free(smr);
+	}
+	else
+	{
+	    EXPECT(p64_qsbr_reclaim() == 0);
+	    p64_qsbr_unregister();
+	    p64_qsbr_free(smr);
+	}
     }
 
     printf("reassemble test complete\n");

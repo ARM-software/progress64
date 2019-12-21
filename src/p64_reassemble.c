@@ -8,6 +8,7 @@
 #include <stdlib.h>
 
 #include "p64_hazardptr.h"
+#include "p64_qsbr.h"
 #include "p64_spinlock.h"
 #include "p64_reassemble.h"
 #include "build_config.h"
@@ -230,24 +231,37 @@ struct fragtbl
     struct fraglist *base;
 };
 
+struct p64_reassemble
+{
+    struct fragtbl ft[2];//Current and next (if any) fragment tables
+    uint32_t cur;//Index of current fragment table
+    uint8_t extendable;
+    uint8_t use_hp;
+    p64_reassemble_cb complete_cb;
+    void *complete_arg;
+    p64_reassemble_cb stale_cb;
+    void *stale_arg;
+    p64_spinlock_t lock;//Mutex for p64_reassemble_extend()
+};
+
 #define SHIFT_TO_SIZE(sht) (1U << (32 - (sht)))
 #define SIZE_TO_SHIFT(sz) (32 - __builtin_ctz((sz)))
 
 //Perform atomic read of specified fragtable
 static inline struct fragtbl
-read_fragtbl(struct fragtbl *vec, uint32_t idx, p64_hazardptr_t *hpp)
+read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
 {
-    if (!hpp)
+    if (LIKELY(!re->extendable))
     {
 	assert(idx == 0);
 	(void)idx;
 	//Not extendable, just do relaxed non-atomic read of first element
-	return vec[0];
+	return re->ft[0];
     }
 #ifdef __arm__
     struct fragtbl ft;
     //64-bit load is atomic
-    __atomic_load(&vec[idx % 2], &ft, __ATOMIC_ACQUIRE);
+    __atomic_load(&re->ft[idx % 2], &ft, __ATOMIC_ACQUIRE);
     return ft;
 #else
     struct idx_size i_s;
@@ -255,8 +269,15 @@ read_fragtbl(struct fragtbl *vec, uint32_t idx, p64_hazardptr_t *hpp)
     uint32_t i = idx % 2;
     do
     {
-	fl = p64_hazptr_acquire(&vec[i].base, hpp);
-	__atomic_load(&vec[i].i_s, &i_s, __ATOMIC_RELAXED);
+	if (UNLIKELY(!re->use_hp))
+	{
+	    fl = __atomic_load_n(&re->ft[i].base, __ATOMIC_ACQUIRE);
+	}
+	else
+	{
+	    fl = p64_hazptr_acquire(&re->ft[i].base, hpp);
+	}
+	__atomic_load(&re->ft[i].i_s, &i_s, __ATOMIC_RELAXED);
 	if (fl == NULL || i_s.idx != idx)
 	{
 	    //Slot cleared or overwritten with new fragment table
@@ -268,7 +289,7 @@ read_fragtbl(struct fragtbl *vec, uint32_t idx, p64_hazardptr_t *hpp)
 	//it using a hazard pointer
 	smp_fence(LoadLoad);
     }
-    while (fl != __atomic_load_n(&vec[i].base, __ATOMIC_RELAXED));
+    while (fl != __atomic_load_n(&re->ft[i].base, __ATOMIC_RELAXED));
     return (struct fragtbl) { i_s, fl };
 #endif
 }
@@ -298,17 +319,7 @@ write_fragtbl(struct fragtbl *vec, uint32_t idx, struct fragtbl ft)
 #endif
 }
 
-struct p64_reassemble
-{
-    struct fragtbl ft[2];//Current and next (if any) fragment tables
-    uint32_t cur;//Index of current fragment table
-    bool extendable;
-    p64_reassemble_cb complete_cb;
-    void *complete_arg;
-    p64_reassemble_cb stale_cb;
-    void *stale_arg;
-    p64_spinlock_t lock;//Mutex for p64_reassemble_extend()
-};
+#define VALID_FLAGS (P64_REASSEMBLE_F_HP | P64_REASSEMBLE_F_EXT)
 
 p64_reassemble_t *
 p64_reassemble_alloc(uint32_t size,
@@ -316,11 +327,16 @@ p64_reassemble_alloc(uint32_t size,
 		     p64_reassemble_cb stale_cb,
 		     void *complete_arg,
 		     void *stale_arg,
-		     bool extendable)
+		     uint32_t flags)
 {
     if (size < 1 || !IS_POWER_OF_TWO(size))
     {
 	report_error("reassemble", "invalid fragment table size", size);
+	return NULL;
+    }
+    if (UNLIKELY((flags & ~VALID_FLAGS) != 0))
+    {
+	report_error("reassemble", "invalid flags", flags);
 	return NULL;
     }
     p64_reassemble_t *re = p64_malloc(sizeof(p64_reassemble_t), CACHE_LINE);
@@ -337,7 +353,8 @@ p64_reassemble_alloc(uint32_t size,
 	    re->ft[1].i_s.shift = 0;
 	    re->ft[1].base = NULL;
 	    re->cur = 0;
-	    re->extendable = extendable;
+	    re->extendable = (flags & P64_REASSEMBLE_F_EXT) != 0;
+	    re->use_hp = (flags & P64_REASSEMBLE_F_HP) != 0;
 	    re->complete_cb = complete_cb;
 	    re->stale_cb = stale_cb;
 	    re->complete_arg = complete_arg;
@@ -580,7 +597,7 @@ split_and_insert_frags(p64_reassemble_t *re,
 	    //Ensure we have a valid fragment table
 	    while (ft->base == NULL)
 	    {
-		*ft = read_fragtbl(re->ft, cur, hpp);
+		*ft = read_fragtbl(re, cur, hpp);
 		if (ft->base != NULL)
 		{
 		    assert((uintptr_t)ft->base % sizeof(struct fraglist) == 0);
@@ -613,17 +630,27 @@ p64_reassemble_insert(p64_reassemble_t *re,
 		      p64_fragment_t *frag)
 {
     p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
-    p64_hazardptr_t *hpp = re->extendable ? &hp : NULL;
+    if (LIKELY(re->extendable && !re->use_hp))
+    {
+	p64_qsbr_acquire();
+    }
     //Ensure single fragment is a proper list
     frag->nextfrag = NULL;
     //Get current fragment table
     uint32_t cur = __atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
     //Insert fragment into current (or later) table
     struct fragtbl ft = { .base = NULL };
-    split_and_insert_frags(re, cur, &ft, hpp, frag);
+    split_and_insert_frags(re, cur, &ft, &hp, frag);
     if (re->extendable)
     {
-	p64_hazptr_release(&hp);
+	if (LIKELY(!re->use_hp))
+	{
+	    p64_qsbr_release();
+	}
+	else
+	{
+	    p64_hazptr_release(&hp);
+	}
     }
 }
 
@@ -732,27 +759,30 @@ p64_reassemble_expire(p64_reassemble_t *re,
 		      uint32_t time)
 {
     p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
-    p64_hazardptr_t *hpp = re->extendable ? &hp : NULL;
     uint32_t cur;
     struct fragtbl ft;
+    if (LIKELY(re->extendable && !re->use_hp))
+    {
+	p64_qsbr_acquire();
+    }
     //Read the current fragment table
     do
     {
 	cur = __atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
-	ft = read_fragtbl(re->ft, cur, hpp);
+	ft = read_fragtbl(re, cur, &hp);
     }
     while (ft.base == NULL);
     //Scan all slots and process any fraglist with expired fragment(s)
     //Scan from end, extend works from beginning
     for (uint32_t i = SHIFT_TO_SIZE(ft.i_s.shift) - 1; i != (uint32_t)-1; i--)
     {
-	if (expire_slot(re, ft.i_s.idx, &ft, hpp, &ft.base[i], time))
+	if (expire_slot(re, ft.i_s.idx, &ft, &hp, &ft.base[i], time))
 	{
 	    //Found closed slot
 	    //Continue expiration in next fragment table
 	    do
 	    {
-		ft = read_fragtbl(re->ft, ++cur, hpp);
+		ft = read_fragtbl(re, ++cur, &hp);
 		//Next table is double the size so adjust array index
 		i = 2 * i + 1;
 	    }
@@ -761,7 +791,14 @@ p64_reassemble_expire(p64_reassemble_t *re,
     }
     if (re->extendable)
     {
-	p64_hazptr_release(&hp);
+	if (LIKELY(!re->use_hp))
+	{
+	    p64_qsbr_release();
+	}
+	else
+	{
+	    p64_hazptr_release(&hp);
+	}
     }
 }
 
@@ -829,8 +866,9 @@ migrate_slot(p64_reassemble_t *re,
 bool
 p64_reassemble_extend(p64_reassemble_t *re)
 {
-    if (!re->extendable)
+    if (UNLIKELY(!re->extendable))
     {
+	report_error("reassemble", "Extend not supported", re);
 	return false;
     }
     //Ensure mutual exclusion
@@ -851,7 +889,6 @@ p64_reassemble_extend(p64_reassemble_t *re)
 					   CACHE_LINE);
 	if (LIKELY(base != NULL))
 	{
-	    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 	    //Write new fragtable to next position so that threads can start to
 	    //use it when their slot in the old fragtable has been closed
 	    //The slots in the new fragtable are initially uninitialised
@@ -863,12 +900,16 @@ p64_reassemble_extend(p64_reassemble_t *re)
 	    //Migrate all fraglists from old to new table
 	    //This will close slots in the old table and thus force threads to
 	    //use the corresponding slots in the new table
+	    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 	    for (uint32_t i = 0; i < old_size; i++)
 	    {
 		migrate_slot(re, old, &neu, &hp, i);
 		assert(old.base[i].a.closed == 1);
 	    }
-	    p64_hazptr_release(&hp);
+	    if (UNLIKELY(re->use_hp))
+	    {
+		p64_hazptr_release(&hp);
+	    }
 	    //Make new table current
 	    __atomic_store_n(&re->cur, cur + 1, __ATOMIC_RELEASE);
 	    //Remove old fragment table
@@ -877,9 +918,19 @@ p64_reassemble_extend(p64_reassemble_t *re)
 	    //Retire old fragtable, memory will be reclaimed when all threads
 	    //have stopped referencing it
 	    assert(prv.base != NULL);
-	    while (!p64_hazptr_retire(prv.base, p64_mfree))
+	    if (UNLIKELY(re->use_hp))
 	    {
-		doze();
+		while (!p64_hazptr_retire(prv.base, p64_mfree))
+		{
+		    doze();
+		}
+	    }
+	    else
+	    {
+		while (!p64_qsbr_retire(prv.base, p64_mfree))
+		{
+		    doze();
+		}
 	    }
 	    success = true;
 	}
