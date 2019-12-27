@@ -121,14 +121,13 @@ int main(void)
     if (me != NULL)
     {
 	printf("Found key %u node %p hazp %p (%p)\n", me->key, me, hp, *hp);
-	p64_hazptr_release_ro(&hp);
-	assert(hp == P64_HAZARDPTR_NULL);
     }
     else
     {
 	printf("Key %u not found\n", 2);
-	assert(hp == P64_HAZARDPTR_NULL);
     }
+    p64_hazptr_release_ro(&hp);
+    assert(hp == P64_HAZARDPTR_NULL);
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
     me = (struct my_elem *)p64_hashtable_lookup(ht, &(uint32_t){8}, hash(8), &hp);
@@ -136,14 +135,13 @@ int main(void)
     if (me != NULL)
     {
 	printf("Found key %u node %p hazp %p (%p)\n", me->key, me, hp, *hp);
-	p64_hazptr_release_ro(&hp);
-	assert(hp == P64_HAZARDPTR_NULL);
     }
     else
     {
 	printf("Key %u not found\n", 8);
-	assert(hp == P64_HAZARDPTR_NULL);
     }
+    p64_hazptr_release_ro(&hp);
+    assert(hp == P64_HAZARDPTR_NULL);
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
     me = (struct my_elem *)p64_hashtable_lookup(ht, &(uint32_t){9}, hash(9), &hp);
@@ -152,14 +150,13 @@ int main(void)
     {
 	printf("Found key %u node %p hazp %p (%p)\n", me->key, me, hp, *hp);
 	p64_hazptr_dump(stdout);
-	p64_hazptr_release_ro(&hp);
-	assert(hp == P64_HAZARDPTR_NULL);
     }
     else
     {
 	printf("Key %u not found\n", 9);
-	assert(hp == P64_HAZARDPTR_NULL);
     }
+    p64_hazptr_release_ro(&hp);
+    assert(hp == P64_HAZARDPTR_NULL);
     printf("p64_hazptr_num_free()=%u\n", p64_hazptr_dump(stdout));
 
     printf("Remove 2\n");

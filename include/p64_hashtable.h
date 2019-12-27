@@ -51,9 +51,10 @@ p64_hashtable_t *p64_hashtable_alloc(size_t nelems,
 void p64_hashtable_free(p64_hashtable_t *);
 
 //Lookup an element in the hash table, given the key and a hash value of the key
-//If the element is found, the hazard pointer will contain a reference which
-//must eventually be released
-//Caller must call QSBR acquire/release/quiescent as appropriate
+//If using hazard pointers, the hazard pointer must always be released, even
+//when no matching element was found
+//If using QSBR, the caller must call QSBR acquire/release/quiescent as
+//appropriate
 p64_hashelem_t *p64_hashtable_lookup(p64_hashtable_t *ht,
 				     const void *key,
 				     p64_hashvalue_t hash,

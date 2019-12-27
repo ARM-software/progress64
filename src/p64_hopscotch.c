@@ -56,16 +56,7 @@ ring_sub(index_t a, index_t b, index_t modulo)
 static inline index_t
 ring_mod(p64_hopschash_t hash, index_t modulo)
 {
-    index_t rem;
-    if (LIKELY((uint32_t)modulo == modulo))
-    {
-	//Divide by 32-bit value, may be faster
-	rem = hash % (uint32_t)modulo;
-    }
-    else//64-bit division
-    {
-	rem = hash % modulo;
-    }
+    index_t rem = hash % modulo;
     assert(rem < modulo);
     return rem;
 }
@@ -115,7 +106,7 @@ atomic_load_acquire(void **pptr,
 		    p64_hazardptr_t *hp,
 		    bool use_hp)
 {
-    if (use_hp)
+    if (UNLIKELY(use_hp))
     {
 	return p64_hazptr_acquire_mask(pptr, hp, ~0U);
     }
@@ -128,7 +119,7 @@ atomic_load_acquire(void **pptr,
 static inline void
 atomic_ptr_release(p64_hazardptr_t *hp, bool use_hp)
 {
-    if (use_hp)
+    if (UNLIKELY(use_hp))
     {
 	p64_hazptr_release(hp);
     }
@@ -246,9 +237,10 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
     printf("Neighbourhood distance histogram:\n");
     for (uint32_t i = 0; i < BITMAP_BITS / 2; i++)
     {
-	printf("%2u: %6zu\t\t%2u: %6zu\n",
-		i, histo[i],
-		i + BITMAP_BITS / 2, histo[i + BITMAP_BITS / 2]);
+	printf("%2u: %6zu (%.3f)\t\t%2u: %6zu (%.3f)\n",
+		i, histo[i], histo[i] / (float)nelems,
+		i + BITMAP_BITS / 2, histo[i + BITMAP_BITS / 2],
+		histo[i + BITMAP_BITS / 2] / (float)nelems);
     }
     printf("Cellar: %zu\n", ncellar);
     printf("%zu neighbourhoods are completely full\n", nfull);
@@ -360,24 +352,31 @@ p64_hopscotch_lookup(p64_hopscotch_t *ht,
 {
     //Caller must call QSBR acquire/release/quiescent as appropriate
     index_t bix = ring_mod(hash, ht->nbkts);
+    PREFETCH_FOR_READ((char *)&ht->buckets[bix]);
+    PREFETCH_FOR_READ((char *)&ht->buckets[bix] + CACHE_LINE);
     struct bmc cur;
     __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
     while (cur.bitmap != 0)
     {
 	//Bitmap indicates which buckets in neighbourhood that contain
-	//elements which hash this bucket
+	//elements which hash to this bucket
 	uint32_t bit = __builtin_ctz(cur.bitmap);
-	cur.bitmap &= ~(1U << bit);
 	index_t idx = ring_add(bix, bit, ht->nbkts);
 	void *elem = atomic_load_acquire(&ht->buckets[idx].elem,
 					 hazpp,
 					 ht->use_hp);
-	if (elem != NULL && ht->cf(elem, key) == 0)
+	if (LIKELY(elem != NULL))
 	{
-	    //Found our element
-	    //Keep hazard pointer set
-	    return elem;
+	    if (LIKELY(ht->cf(elem, key) == 0))
+	    {
+		//Found our element
+		//Keep hazard pointer set
+		return elem;
+	    }
+	    //Else false positive
 	}
+	//Else element just re/moved
+	cur.bitmap &= ~(1U << bit);
 	//Else false positive or element has been moved or replaced
 	if (cur.bitmap == 0)
 	{
@@ -404,7 +403,6 @@ p64_hopscotch_lookup(p64_hopscotch_t *ht,
 	    return elem;
 	}
     }
-    atomic_ptr_release(hazpp, ht->use_hp);
     return NULL;
 }
 
@@ -585,8 +583,6 @@ bitmap_update_cellar(p64_hopscotch_t *ht,
 		     index_t bix)
 {
     struct bmc old, new;
-    //Ensure our cellar updates are visible before we update the cellar bit
-    smp_fence(StoreLoad);
     do
     {
 	__atomic_load(&ht->buckets[bix].bmc, &old, __ATOMIC_ACQUIRE);
@@ -596,7 +592,9 @@ bitmap_update_cellar(p64_hopscotch_t *ht,
 	{
 	    p64_hopschash_t hash =
 		__atomic_load_n(&ht->cellar[i].hash, __ATOMIC_RELAXED);
-	    if (ring_mod(hash, ht->nbkts) == bix)
+	    void *elem =
+		__atomic_load_n(&ht->cellar[i].elem, __ATOMIC_RELAXED);
+	    if (elem != NULL && ring_mod(hash, ht->nbkts) == bix)
 	    {
 		//Found another element which hashes to same bix
 		new.cellar = 1;
@@ -615,7 +613,7 @@ bitmap_update_cellar(p64_hopscotch_t *ht,
 				      &old,
 				      &new,
 				      /*weak=*/false,
-				      __ATOMIC_RELAXED,
+				      __ATOMIC_RELEASE,
 				      __ATOMIC_RELAXED));
 }
 
@@ -690,7 +688,7 @@ move_elem(p64_hopscotch_t *ht,
 	if (!find_move_candidate(ht, dst_idx, &src_bix, &src_idx, &src_bmc))
 	{
 	    //Found no candidate which can be moved to empty bucket
-	    return ht_full;//Can this really happen?
+	    return ht_full;
 	}
 	//Copy element from source to empty bucket
 	void *move_elem = __atomic_load_n(&ht->buckets[src_idx].elem,
@@ -841,7 +839,7 @@ p64_hopscotch_insert(p64_hopscotch_t *ht,
 		     void *elem,
 		     p64_hopschash_t hash)
 {
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_acquire();
     }
@@ -850,7 +848,7 @@ p64_hopscotch_insert(p64_hopscotch_t *ht,
     {
 	success = insert_cell(ht, elem, hash);
     }
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_release();
     }
@@ -885,6 +883,7 @@ remove_bkt_by_ptr(p64_hopscotch_t *ht,
 		//Clear bit in bix bitmap
 		struct bmc new;
 		new.bitmap = old.bitmap & ~(1U << bit);
+		new.cellar = old.cellar;
 		new.count = old.count + 1;
 		if (__atomic_compare_exchange(&ht->buckets[bix].bmc,
 					      &old,//Updated on failure
@@ -953,7 +952,7 @@ p64_hopscotch_remove(p64_hopscotch_t *ht,
 		     void *elem,
 		     p64_hopschash_t hash)
 {
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_acquire();
     }
@@ -962,7 +961,7 @@ p64_hopscotch_remove(p64_hopscotch_t *ht,
     {
 	success = remove_cell_by_ptr(ht, elem, hash);
     }
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_release();
     }
@@ -1083,7 +1082,7 @@ p64_hopscotch_remove_by_key(p64_hopscotch_t *ht,
 			    p64_hazardptr_t *hazpp)
 {
     //Caller must call QSBR acquire/release/quiescent as appropriate
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_acquire();
     }
@@ -1092,7 +1091,7 @@ p64_hopscotch_remove_by_key(p64_hopscotch_t *ht,
     {
 	elem = remove_cell_by_key(ht, key, hash, hazpp);
     }
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_release();
     }

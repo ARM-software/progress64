@@ -37,7 +37,7 @@ atomic_load_acquire(struct p64_hashelem **pptr,
                     uintptr_t mask,
                     bool use_hp)
 {
-    if (use_hp)
+    if (UNLIKELY(use_hp))
     {
 	return p64_hazptr_acquire_mask(pptr, hp, mask);
     }
@@ -50,7 +50,7 @@ atomic_load_acquire(struct p64_hashelem **pptr,
 static inline void
 atomic_ptr_release(p64_hazardptr_t *hp, bool use_hp)
 {
-    if (use_hp)
+    if (UNLIKELY(use_hp))
     {
 	p64_hazptr_release(hp);
     }
@@ -78,17 +78,7 @@ struct p64_hashtable
 static inline size_t
 hash_to_bix(p64_hashtable_t *ht, p64_hashvalue_t hash)
 {
-    size_t bix;
-    if (LIKELY((uint32_t)ht->nbkts == ht->nbkts))
-    {
-	//Divide by 32-bit value, may be faster
-	bix = (hash / BKT_SIZE) % (uint32_t)ht->nbkts;
-    }
-    else
-    {
-	bix = (hash / BKT_SIZE) % ht->nbkts;
-    }
-    return bix;
+    return (hash / BKT_SIZE) % ht->nbkts;
 }
 
 static void
@@ -298,7 +288,6 @@ p64_hashtable_lookup(p64_hashtable_t *ht,
     {
 	return he;
     }
-    atomic_ptr_release(hazpp, ht->use_hp);
     return NULL;
 }
 

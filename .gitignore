@@ -2,6 +2,7 @@
 *.o
 *.swp
 antireplay
+bm_hashtab
 bm_ringbuf
 bm_smr
 buckring
