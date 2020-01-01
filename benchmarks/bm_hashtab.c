@@ -25,6 +25,7 @@
 #include "p64_qsbr.h"
 #include "p64_hashtable.h"
 #include "p64_hopscotch.h"
+#include "p64_cuckooht.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -40,7 +41,11 @@ enum operation { Insert, Remove, Lookup };
 
 struct object
 {
-    p64_hashelem_t he;
+    union
+    {
+	p64_hashelem_t he;
+	p64_cuckooelem_t ce;
+    };
     uint32_t key;
 } ALIGNED(CACHE_LINE);
 
@@ -51,11 +56,12 @@ static pthread_t tid[MAXTHREADS];
 static uint32_t NUMTHREADS = 2;
 static int cpus[MAXTHREADS];
 static unsigned long CPUFREQ;
-static uint64_t AFFINITY = ~0U;
+static unsigned long AFFINITY = ~0UL;
 static uint32_t NUMKEYS = 10000000;
 static struct object *OBJS;//Array of all objects
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static bool HOPSCOTCH = false;
+static bool CUCKOOHT = false;
 static bool VERBOSE = false;
 static sem_t ALL_DONE ALIGNED(CACHE_LINE);
 static struct timespec END_TIME;
@@ -126,6 +132,21 @@ barrier_all_wait(uint32_t numthreads)
 //x86 crc32 intrinsics seem to compute CRC32C (not CRC32)
 #define CRC32C(x, y) __crc32d((x), (y))
 #endif
+#ifdef __arm__
+//ARMv7 does not have a CRC instruction
+//Use a pseudo RNG instead
+static inline uint32_t
+xorshift32(uint32_t x)
+{
+    /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
+    //x == 0 will return 0
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return x;
+}
+#define CRC32C(x, y) xorshift32((y))
+#endif
 
 static void
 thr_execute(uint32_t tidx)
@@ -141,6 +162,14 @@ thr_execute(uint32_t tidx)
 	    if (HOPSCOTCH)
 	    {
 		if (!p64_hopscotch_insert(HT, obj, hash))
+		{
+		    fprintf(stderr, "Failed to insert key %u\n", key);
+		    exit(EXIT_FAILURE);
+		}
+	    }
+	    else if (CUCKOOHT)
+	    {
+		if (!p64_cuckooht_insert(HT, &obj->ce, hash))
 		{
 		    fprintf(stderr, "Failed to insert key %u\n", key);
 		    exit(EXIT_FAILURE);
@@ -162,6 +191,8 @@ thr_execute(uint32_t tidx)
 	    uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
 	    if (HOPSCOTCH)
 		p64_hopscotch_remove(HT, obj, hash);
+	    else if (CUCKOOHT)
+		p64_cuckooht_remove(HT, &obj->ce, hash);
 	    else
 		p64_hashtable_remove(HT, &obj->he, hash);
 	}
@@ -180,6 +211,15 @@ thr_execute(uint32_t tidx)
 		{
 		    obj = p64_hopscotch_lookup(HT, &key, hash, &hp);
 		}
+		else if (CUCKOOHT)
+		{
+		    p64_cuckooelem_t *ce =
+			p64_cuckooht_lookup(HT, &key, hash, &hp);
+		    if (ce != NULL)
+		    {
+			obj = container_of(ce, struct object, ce);
+		    }
+		}
 		else
 		{
 		    p64_hashelem_t *he =
@@ -191,7 +231,14 @@ thr_execute(uint32_t tidx)
 		}
 		if (obj == NULL)
 		{
-		    fprintf(stderr, "Failed to lookup key %u\n", key);
+		    fprintf(stderr, "Lookup failed to find key %u\n", key);
+		    exit(EXIT_FAILURE);
+		}
+		else if (obj->key != key)
+		{
+		    fprintf(stderr, "Lookup returned wrong key: "
+				    "wanted %u, actual %u\n",
+				    key, obj->key);
 		    exit(EXIT_FAILURE);
 		}
 	    }
@@ -374,6 +421,13 @@ compare_hs_key(const void *he, const void *key)
     return obj->key - *(const uint32_t *)key;
 }
 
+static int
+compare_cc_key(const p64_cuckooelem_t *ce, const void *key)
+{
+    const struct object *obj = container_of(ce, struct object, ce);
+    return obj->key - *(const uint32_t *)key;
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -381,7 +435,7 @@ main(int argc, char *argv[])
     uint32_t numelems = NUMKEYS;
     uint32_t numcells = 0;
 
-    while ((c = getopt(argc, argv, "a:c:f:Hk:m:s:t:v")) != -1)
+    while ((c = getopt(argc, argv, "a:c:Cf:Hk:m:s:t:v")) != -1)
     {
 	switch (c)
 	{
@@ -417,6 +471,9 @@ main(int argc, char *argv[])
 		    numcells = (unsigned)nc;
 		    break;
 		}
+	    case 'C' :
+		CUCKOOHT = true;
+		break;
 	    case 'f' :
 		{
 		    CPUFREQ = atol(optarg);
@@ -455,8 +512,9 @@ usage :
 		fprintf(stderr, "Usage: bm_hashtab <options>\n"
 			"-a <binmask>     CPU affinity mask (default base 2)\n"
 			"-c <size>        Size of cellar\n"
+			"-C               Use cuckoo hash table\n"
 			"-f <cpufreq>     CPU frequency in kHz\n"
-			"-H               Use hopscotch\n"
+			"-H               Use hopscotch hash table\n"
 			"-k <numkeys>     Number of keys\n"
 			"-m <size>        Size of main hash table\n"
 			"-t <numthr>      Number of threads\n"
@@ -472,7 +530,7 @@ usage :
 
     printf("%s: main size %u, cellar size %u, %u keys, "
 	   "%u thread%s, affinity mask=0x%lx\n",
-	    HOPSCOTCH ? "hopscotch" : "michaelht",
+	    HOPSCOTCH ? "hopscotch" : CUCKOOHT ? "cuckooht" : "michaelht",
 	    numelems,
 	    numcells,
 	    NUMKEYS,
@@ -502,6 +560,12 @@ usage :
 	if (HT == NULL)
 	    perror("p64_hopscotch_alloc"), abort();
     }
+    else if (CUCKOOHT)
+    {
+	HT = p64_cuckooht_alloc(numelems, numcells, compare_cc_key, 0);
+	if (HT == NULL)
+	    perror("p64_cuckooht_alloc"), abort();
+    }
     else
     {
 	HT = p64_hashtable_alloc(numelems, compare_ht_key, 0);
@@ -513,10 +577,18 @@ usage :
     {
 	create_threads(NUMTHREADS, AFFINITY);
 	benchmark(NUMTHREADS, Insert);
-	if (VERBOSE && HOPSCOTCH)
+	if (VERBOSE)
 	{
-	    void p64_hopscotch_check(p64_hopscotch_t *ht);
-	    p64_hopscotch_check(HT);
+	    if (HOPSCOTCH)
+	    {
+		void p64_hopscotch_check(p64_hopscotch_t *ht);
+		p64_hopscotch_check(HT);
+	    }
+	    else if (CUCKOOHT)
+	    {
+		void p64_cuckooht_check(p64_cuckooht_t *ht);
+		p64_cuckooht_check(HT);
+	    }
 	}
 	benchmark(NUMTHREADS, Lookup);
 	benchmark(NUMTHREADS, Remove);
@@ -531,6 +603,10 @@ usage :
     if (HOPSCOTCH)
     {
 	p64_hopscotch_free(HT);
+    }
+    else if (CUCKOOHT)
+    {
+	p64_cuckooht_free(HT);
     }
     else
     {

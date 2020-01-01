@@ -7,6 +7,7 @@
 
 //Compiler hints
 #define ALWAYS_INLINE __attribute__((always_inline))
+#define NO_INLINE __attribute__((noinline))
 #ifdef __clang__
 #define UNROLL_LOOPS __attribute__((opencl_unroll_hint(8)))
 #else

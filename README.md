@@ -13,6 +13,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | buckring | ring buffer using pass-the-buck algorithm | non-blocking (1)
 | buckrob | reorder buffer using pass-the-buck algorithm | non-blocking (1)
 | counter | shared counters | reader obstruction-free, writer wait-free
+| cuckooht | hash table - cuckoo with cellar, one-level move | non-blocking (1)
 | hashtable | hash table - separate chaining with linked lists | lock-free
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
 | hopscotch | hash table - hopscotch with cellar | non-blocking (1)
@@ -80,11 +81,12 @@ Use library through the provided C header files. Or copy source files into your 
 * The resizeable reassembly function is experimental and has not yet endured stress testing.
 * The mbtrie is experimental and has not yet endured stress testing.
 * The hopscotch hash table is experimental and has not yet endured stress testing.
+* The cuckooht hash table is experimental and has not yet endured stress testing.
 * When using Safe Memory Reclamation as ABA workaround with the Treiber stack, LIFO order is not guaranteed (so not really a LIFO stack...)
 
 ## TODO
 * Some missing examples
-* Multithreaded stress test programs for e.g. hash table, reassembly, reorder, mbtrie
+* Multithreaded stress test programs for e.g. hash tables, reassembly, mbtrie
 * Use C11 features instead of GNU extensions and other non-standard features
 * Remove "_" from P64 defines
 
