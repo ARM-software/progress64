@@ -86,6 +86,7 @@ CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
 endif
 CCFLAGS += -g -ggdb -Wall -Wextra
 CCFLAGS += -fomit-frame-pointer
+CCFLAGS += -falign-loops=32 -falign-jumps=32 -falign-functions=32
 CCFLAGS += -fstrict-aliasing -fno-stack-check -fno-stack-protector
 LDFLAGS += -g -ggdb -pthread
 
