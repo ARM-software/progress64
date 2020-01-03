@@ -259,6 +259,7 @@ read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
 	return re->ft[0];
     }
 #ifdef __arm__
+    (void)hpp;
     struct fragtbl ft;
     //64-bit load is atomic
     __atomic_load(&re->ft[idx % 2], &ft, __ATOMIC_ACQUIRE);

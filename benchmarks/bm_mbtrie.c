@@ -665,6 +665,21 @@ comph(const void *he,
 //x86 crc32 intrinsics seem to compute CRC32C (not CRC32)
 #define CRC32C(x, y) __crc32d((x), (y))
 #endif
+#ifdef __arm__
+//ARMv7 does not have a CRC instruction
+//Use a pseudo RNG instead
+static inline uint32_t
+xorshift32(uint32_t x)
+{
+    /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
+    //x == 0 will return 0
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    return x;
+}
+#define CRC32C(x, y) xorshift32((y))
+#endif
 
 static uint32_t
 read_as_table(const char *filename,
@@ -857,9 +872,9 @@ hs_free_cb(void *arg,
     if (!p64_hopscotch_remove(ht, as, as->hash))
     {
 	fprintf(stderr,
-		"Failed to remove element (ASN %u, hash %"PRIu64") "
+		"Failed to remove element (ASN %u, hash %lu) "
 		"from hash table\n",
-		as->asn, as->hash);
+		as->asn, (unsigned long)as->hash);
 	return;
     }
     bool retire_ok;

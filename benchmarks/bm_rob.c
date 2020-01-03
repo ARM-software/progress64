@@ -54,7 +54,7 @@ static pthread_t tid[MAXTHREADS];
 static uint32_t NUMTHREADS = 2;
 static int cpus[MAXTHREADS];
 static unsigned long CPUFREQ;
-static uint64_t AFFINITY = ~0U;
+static unsigned long AFFINITY = ~0UL;
 static uint32_t NUMOBJS = 10000000;
 static uint32_t ROBSIZE = 256;
 static uint32_t OOO = 13;

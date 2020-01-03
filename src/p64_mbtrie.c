@@ -47,13 +47,21 @@ struct p64_mbtrie
 #define CLR_VECTOR(ptr) (void *)((uintptr_t)(ptr) & ~VECTOR_BIT)
 
 //Some thread is currently checking if sub-vector can be collapsed
+#if __SIZEOF_POINTER__ == 8
 #define COLLAPSE_BIT UINT64_C(0)
+#else
+#define COLLAPSE_BIT UINT32_C(0)
+#endif
 #define IS_COLLAPSE(ptr) (((uintptr_t)(ptr) & COLLAPSE_BIT) != 0)
 #define SET_COLLAPSE(ptr) (void *)((uintptr_t)(ptr) |  COLLAPSE_BIT)
 #define CLR_COLLAPSE(ptr) (void *)((uintptr_t)(ptr) & ~COLLAPSE_BIT)
 
 //Some thread is currently holding the mutex for this sub-vector
+#if __SIZEOF_POINTER__ == 8
 #define MUTEX_BIT UINT64_C(1)
+#else
+#define MUTEX_BIT UINT32_C(1)
+#endif
 #define IS_MUTEX(ptr) (((uintptr_t)(ptr) & MUTEX_BIT) != 0)
 #define SET_MUTEX(ptr) (void *)((uintptr_t)(ptr) |  MUTEX_BIT)
 #define CLR_MUTEX(ptr) (void *)((uintptr_t)(ptr) & ~MUTEX_BIT)

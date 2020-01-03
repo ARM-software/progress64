@@ -213,7 +213,7 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
 	    }
 	}
 	nelems += (ht->buckets[bix].elem != NULL);
-	if (sliding_bm == ~(bitmap_t)0)
+	if (sliding_bm == (bitmap_t)~0)
 	{
 	    nfull++;
 	}
