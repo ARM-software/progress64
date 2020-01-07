@@ -159,25 +159,24 @@ thr_execute(uint32_t tidx)
 	    uint32_t key = idx;//Keys are unqiue
 	    assert(obj->key == key);
 	    uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+	    bool success;
 	    if (HOPSCOTCH)
 	    {
-		if (!p64_hopscotch_insert(HT, obj, hash))
-		{
-		    fprintf(stderr, "Failed to insert key %u\n", key);
-		    exit(EXIT_FAILURE);
-		}
+		success = p64_hopscotch_insert(HT, obj, hash);
 	    }
 	    else if (CUCKOOHT)
 	    {
-		if (!p64_cuckooht_insert(HT, &obj->ce, hash))
-		{
-		    fprintf(stderr, "Failed to insert key %u\n", key);
-		    exit(EXIT_FAILURE);
-		}
+		success = p64_cuckooht_insert(HT, &obj->ce, hash);
 	    }
 	    else
 	    {
 		p64_hashtable_insert(HT, &obj->he, hash);
+		success = true;
+	    }
+	    if (!success)
+	    {
+		fprintf(stderr, "Failed to insert key %u\n", key);
+		exit(EXIT_FAILURE);
 	    }
 	}
     }
@@ -189,12 +188,24 @@ thr_execute(uint32_t tidx)
 	    uint32_t key = idx;//Keys are unqiue
 	    assert(obj->key == key);
 	    uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+	    bool success;
 	    if (HOPSCOTCH)
-		p64_hopscotch_remove(HT, obj, hash);
+	    {
+		success = p64_hopscotch_remove(HT, obj, hash);
+	    }
 	    else if (CUCKOOHT)
-		p64_cuckooht_remove(HT, &obj->ce, hash);
+	    {
+		success = p64_cuckooht_remove(HT, &obj->ce, hash);
+	    }
 	    else
-		p64_hashtable_remove(HT, &obj->he, hash);
+	    {
+		success = p64_hashtable_remove(HT, &obj->he, hash);
+	    }
+	    if (!success)
+	    {
+		fprintf(stderr, "Failed to remove key %u\n", key);
+		exit(EXIT_FAILURE);
+	    }
 	}
     }
     else //OPER == Lookup

@@ -19,36 +19,41 @@
 #include "arch.h"
 #include "err_hnd.h"
 
-//Some magic to define CRC32C intrinsics
-#ifdef __aarch64__
-#ifndef __ARM_FEATURE_CRC32
-#pragma GCC target("+crc")
+#if defined __ARM_NEON
+#include <arm_neon.h>
 #endif
+
+#if defined __ARM_FEATURE_CRC32
 #include <arm_acle.h>
-#define CRC32C(x, y) __crc32cw((x), (y))
-#endif
-#if defined __x86_64__
-#ifndef __SSE4_2__
-#pragma GCC target("sse4.2")
-#endif
+#define scramble(x) \
+    _Generic((x), uint32_t:__crc32cw, uint64_t:__crc32cd)(0, (x))
+#elif defined __SSE4_2__
 #include <x86intrin.h>
-//x86 crc32 intrinsics seem to compute CRC32C (not CRC32)
-#define CRC32C(x, y) __crc32d((x), (y))
-#endif
-#ifdef __arm__
-//ARMv7 does not have a CRC instruction
-//Use a pseudo RNG instead
+#define scramble(x) _Generic((x), uint32_t:__crc32d, uint64_t:__crc32q)(0, (x))
+#else
+//Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs"
+//Scrambling using xorshift seems to create a high probability of false
+//positives in the signature matching when number of buckets is a power of two
 static inline uint32_t
 xorshift32(uint32_t x)
 {
-    /* Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs" */
     //x == 0 will return 0
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;
     return x;
 }
-#define CRC32C(x, y) xorshift32((y))
+static inline uint64_t
+xorshift64(uint64_t x)
+{
+    //x == 0 will return 0
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    return x;
+}
+#define scramble(x) \
+    _Generic((x), uint32_t:xorshift32, uint64_t:xorshift64)((x))
 #endif
 
 //Signatures are truncated hashes used for fast matching
@@ -60,15 +65,6 @@ typedef uint16_t sig_t;
 #if BKT_SIZE > 8
 #undef BKT_SIZE
 #define BKT_SIZE 8
-#endif
-
-#if defined __aarch64__ || defined __arm__
-#ifndef __ARM_NEON
-#pragma GCC target("+simd")
-#endif
-#include <arm_neon.h>
-#else
-#undef __ARM_NEON
 #endif
 
 //A shorter synonym for __atomic_compare_exchange_n()
@@ -203,7 +199,7 @@ p64_cuckooht_traverse(p64_cuckooht_t *ht,
 	    elem = CLR_ALL(elem);
 	    if (elem != NULL)
 	    {
-		if (!ht->use_hp)
+		if (LIKELY(!ht->use_hp))
 		{
 		    p64_qsbr_acquire();
 		    cb(arg, elem, idx * BKT_SIZE + j);
@@ -224,7 +220,7 @@ p64_cuckooht_traverse(p64_cuckooht_t *ht,
 					 ht->use_hp);
 	if (elem != NULL)
 	{
-	    if (!ht->use_hp)
+	    if (LIKELY(!ht->use_hp))
 	    {
 		p64_qsbr_acquire();
 		cb(arg, elem, idx | (1U << 31));
@@ -366,33 +362,34 @@ p64_cuckooht_free(p64_cuckooht_t *ht)
     }
 }
 
-#if defined __arm__
+#if defined __ARM_NEON && defined __arm__
 #if BKT_SIZE == 4
 typedef uint32_t mask_t;
 #define MASK_SHIFT 3 //8 bits per boolean flag
-#define MASK_ONE 0xFFU
+#define MASK_ONE UINT32_C(0xFF)
 #elif BKT_SIZE == 8
 typedef uint64_t mask_t;
-#define MASK_ONE 0xFFULL
+#define MASK_ONE UINT64_C(0xFF)
 #define MASK_SHIFT 3 //8 bits per boolean flag
 #endif
-#elif defined __aarch64__ && (BKT_SIZE == 6 || BKT_SIZE == 8)
+#elif defined __ARM_NEON && defined __aarch64__ && (BKT_SIZE == 6 || BKT_SIZE == 8)
 typedef uint64_t mask_t;
 #define MASK_SHIFT 3 //8 bits per boolean flag
-#define MASK_ONE 0xFFUL
+#define MASK_ONE UINT64_C(0xFF)
 #else
 typedef uint32_t mask_t;
 #define MASK_SHIFT 0 //1 bit per boolean flag
-#define MASK_ONE 1U
+#define MASK_ONE UINT32_C(1)
 #endif
 
 UNROLL_LOOPS ALWAYS_INLINE
 static inline mask_t
-find_matches(const sig_t sigs[BKT_SIZE], sig_t sig)
+find_sig(const sig_t sigs[BKT_SIZE], sig_t sig)
 {
     mask_t matches;
-#if defined __arm__
-    static_assert(BKT_SIZE == 4 || BKT_SIZE == 8, "BKT_SIZE == 4 || BKT_SIZE == 8");
+#if defined __ARM_NEON && defined __arm__
+    static_assert(BKT_SIZE == 4 || BKT_SIZE == 8,
+		 "BKT_SIZE == 4 || BKT_SIZE == 8");
     uint16x8_t vsig = vdupq_n_u16(sig);
     uint16x8_t vsigs = vld1q_u16(sigs);
     //compare sigs: equality => ~0 (per lane), inequality => 0
@@ -401,8 +398,9 @@ find_matches(const sig_t sigs[BKT_SIZE], sig_t sig)
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     //Cast will mask off upper bits which were based on non-existent sigs[4..7]
     matches = (mask_t)vget_lane_u64(vmatch, 0);
-#elif defined __aarch64__
-    static_assert(BKT_SIZE == 6 || BKT_SIZE == 8, "BKT_SIZE == 6 || BKT_SIZE == 8");
+#elif defined __ARM_NEON && defined __aarch64__
+    static_assert(BKT_SIZE == 6 || BKT_SIZE == 8,
+		 "BKT_SIZE == 6 || BKT_SIZE == 8");
     uint16x8_t vsig = vdupq_n_u16(sig);
     uint16x8_t vsigs = vld1q_u16(sigs);
     //compare sigs: equality => ~0 (per lane), inequality => 0
@@ -504,7 +502,7 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(CRC32C(0, hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -517,8 +515,8 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
     {
 	chgcnt = __atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
 	//Create bit masks with all matching hashes
-	mask_t mask0 = find_matches(bkt0->sigs, hash);
-	if (mask0 != 0)
+	mask_t mask0 = find_sig(bkt0->sigs, hash >> 16);
+	if (LIKELY(mask0 != 0))
 	{
 	    //Perform complete checks for any matches
 	    elem = check_matches(ht, bkt0, mask0, key, hash, hazpp);
@@ -527,8 +525,8 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
 		return elem;
 	    }
 	}
-	mask_t mask1 = find_matches(bkt1->sigs, hash);
-	if (mask1 != 0)
+	mask_t mask1 = find_sig(bkt1->sigs, hash >> 16);
+	if (LIKELY(mask1 != 0))
 	{
 	    elem = check_matches(ht, bkt1, mask1, key, hash, hazpp);
 	    if (elem != NULL)
@@ -540,7 +538,7 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
 	//an element which was moved between the buckets
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
     }
-    while (__atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt);
+    while (UNLIKELY(__atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt));
     //Check cellar bit if any elements which hash to this bucket are
     //present in the cellar
     if ((chgcnt & CELLAR_BIT) != 0)
@@ -593,14 +591,14 @@ write_sig(struct bucket *bkt,
 //Insert *new* element into bucket
 static inline bool
 bucket_insert(struct bucket *bkt,
-	      uint32_t mask,
+	      mask_t mask,
 	      p64_cuckooelem_t *elem,
 	      p64_cuckoohash_t hash)
 {
     //Try all matches one by one
     while (mask != 0)
     {
-	uint32_t i = __builtin_ctz(mask);
+	uint32_t i = __builtin_ctzll(mask) >> MASK_SHIFT;
 	sig_t oldsig = __atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
 	p64_cuckooelem_t *old = NULL;
 	//Try to grab slot
@@ -612,10 +610,10 @@ bucket_insert(struct bucket *bkt,
 	{
 	    //Success, the slot is ours
 	    //Now update corresponding signature field
-	    write_sig(bkt, i, oldsig, elem, hash);
+	    write_sig(bkt, i, oldsig, elem, hash >> 16);
 	    return true;
 	}
-	mask &= ~(1U << i);
+	mask &= ~(MASK_ONE << (i << MASK_SHIFT));
     }
     return false;
 }
@@ -634,7 +632,7 @@ sibling_bix(p64_cuckooht_t *ht,
     }
     else
     {
-	bix_t bix1 = ring_mod(CRC32C(0, hash), ht->nbkts);
+	bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
 	if (UNLIKELY(bix1 == bix0))
 	{
 	    bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -737,7 +735,7 @@ move_elem(p64_cuckooht_t *ht,
     {
 	//Success
 	//Now update corresponding hash field
-	write_sig(dst_bkt, dst_idx, oldsig, elem, elem->hash);
+	write_sig(dst_bkt, dst_idx, oldsig, elem, elem->hash >> 16);
     }
     //Else destination slot already updated
     //Now clear source slot
@@ -933,6 +931,87 @@ insert_cell(p64_cuckooht_t *ht,
     return false;
 }
 
+UNROLL_LOOPS ALWAYS_INLINE
+static inline mask_t
+find_null(p64_cuckooelem_t **elems, uint32_t *count)
+{
+    mask_t matches;
+#if defined __ARM_NEON && defined __arm__
+    static_assert(BKT_SIZE == 4 || BKT_SIZE == 8,
+		 "BKT_SIZE == 4 || BKT_SIZE == 8");
+    uint32x4_t vnull = vdupq_n_u32(0);
+#if BKT_SIZE == 4
+    uint32x4_t velems = vld1q_u32((uint32_t *)&elems[0]);
+    uint32x4_t vmatch32 = vceqq_u32(velems, vnull);
+    uint16x4_t vmatch16 = vmovn_u32(vmatch32);
+    //Combine vmatch16 with 0 to get 8 8-bit lanes
+    uint8x8_t vmatch8 = vmovn_u16(vcombine_u16(vmatch16, vdup_n_u16(0)));
+    uint8x8_t vcnt8 = vcnt_u8(vmatch8);
+    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
+    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
+    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
+    *count = vget_lane_u8(vcnt8, 0);
+    uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
+    matches = vget_lane_u64(vmatch, 0);
+#elif BKT_SIZE == 8
+    uint32x4_t velemsA = vld1q_u32((uint32_t *)&elems[0]);
+    uint32x4_t velemsB = vld1q_u32((uint32_t *)&elems[4]);
+    uint32x4_t vmatch32A = vceqq_u32(velemsA, vnull);
+    uint32x4_t vmatch32B = vceqq_u32(velemsB, vnull);
+    uint16x4_t vmatch16A = vmovn_u32(vmatch32A);
+    uint16x4_t vmatch16B = vmovn_u32(vmatch32B);
+    uint16x8_t vmatch16 = vcombine_u16(vmatch16A, vmatch16B);
+    uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    uint8x8_t vcnt8 = vcnt_u8(vmatch8);
+    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
+    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
+    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
+    *count = vget_lane_u8(vcnt8, 0);
+    uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
+    matches = vget_lane_u64(vmatch, 0);
+#endif
+#elif defined __ARM_NEON && defined __aarch64__
+    static_assert(BKT_SIZE == 6 || BKT_SIZE == 8,
+		 "BKT_SIZE == 6 || BKT_SIZE == 8");
+    uint64x2_t velemsA = vld1q_u64((uint64_t *)&elems[0]);
+    uint64x2_t velemsB = vld1q_u64((uint64_t *)&elems[2]);
+    uint64x2_t velemsC = vld1q_u64((uint64_t *)&elems[4]);
+#if BKT_SIZE == 8
+    uint64x2_t velemsD = vld1q_u64((uint64_t *)&elems[6]);
+#endif
+    uint64x2_t vmatch64A = vceqzq_u64(velemsA);
+    uint64x2_t vmatch64B = vceqzq_u64(velemsB);
+    uint64x2_t vmatch64C = vceqzq_u64(velemsC);
+#if BKT_SIZE == 8
+    uint64x2_t vmatch64D = vceqzq_u64(velemsD);
+#else
+    uint64x2_t vmatch64D = vdupq_n_u64(0);
+#endif
+    uint32x4_t vmatch32AB = vpmaxq_u32(vreinterpretq_u32_u64(vmatch64A),
+				       vreinterpretq_u32_u64(vmatch64B));
+    uint32x4_t vmatch32CD = vpmaxq_u32(vreinterpretq_u32_u64(vmatch64C),
+				       vreinterpretq_u32_u64(vmatch64D));
+    uint16x8_t vmatch16 = vpmaxq_u16(vreinterpretq_u16_u32(vmatch32AB),
+				     vreinterpretq_u16_u32(vmatch32CD));
+    uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    uint8x8_t vcnt = vcnt_u8(vmatch8);
+    *count = vaddv_u8(vcnt);
+    uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
+    matches = vget_lane_u64(vmatch, 0);
+#else
+    matches = 0;
+    for (uint32_t i = 0; i < BKT_SIZE; i++)
+    {
+	if (elems[i] == NULL)
+	{
+	    matches |= MASK_ONE << (i << MASK_SHIFT);
+	}
+    }
+    *count = __builtin_popcountll(matches);
+#endif
+    return matches;
+}
+
 UNROLL_LOOPS
 bool
 p64_cuckooht_insert(p64_cuckooht_t *ht,
@@ -945,37 +1024,27 @@ p64_cuckooht_insert(p64_cuckooht_t *ht,
 	return false;
     }
     elem->hash = hash;
-    if (!ht->use_hp)
-    {
-	p64_qsbr_acquire();
-    }
     bix_t bix0 = ring_mod(hash, ht->nbkts);
-    bix_t bix1 = ring_mod(CRC32C(0, hash), ht->nbkts);
+    struct bucket *bkt0 = &ht->buckets[bix0];
+    PREFETCH_FOR_READ(bkt0);
+    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
     }
-    struct bucket *bkt0 = &ht->buckets[bix0];
     struct bucket *bkt1 = &ht->buckets[bix1];
+    PREFETCH_FOR_READ(bkt1);
+    if (LIKELY(!ht->use_hp))
+    {
+	p64_qsbr_acquire();
+    }
     bool success;
     for (;;)
     {
-	//Compute emptiness of the two buckets
-	uint32_t empty0 = 0, empty1 = 0;
-	for (uint32_t i = 0; i < BKT_SIZE; i++)
-	{
-	    if (bkt0->elems[i] == NULL)
-	    {
-		empty0 |= 1U << i;
-	    }
-	    if (bkt1->elems[i] == NULL)
-	    {
-		empty1 |= 1U << i;
-	    }
-	}
-	//Inserting in the least full bucket helps increasing the load factor
-	uint32_t numempt0 = __builtin_popcount(empty0);
-	uint32_t numempt1 = __builtin_popcount(empty1);
+	//Also compute emptiness of the two buckets
+	uint32_t numempt0, numempt1;
+	mask_t empty0 = find_null(bkt0->elems, &numempt0);
+	mask_t empty1 = find_null(bkt1->elems, &numempt1);
 	success = bucket_insert(numempt0 > numempt1 ? bkt0 : bkt1,
 				numempt0 > numempt1 ? empty0 : empty1,
 				elem, hash);
@@ -1003,7 +1072,7 @@ p64_cuckooht_insert(p64_cuckooht_t *ht,
 	success = insert_cell(ht, elem, hash, bkt0);
 	break;
     }
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_release();
     }
@@ -1015,14 +1084,14 @@ static inline bool
 bucket_remove(p64_cuckooht_t *ht,
 	      bix_t bix,
 	      p64_cuckooelem_t *elem,
-	      uint32_t mask)
+	      mask_t mask)
 {
     struct bucket *bkt = &ht->buckets[bix];
     p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
     do
     {
 	p64_cuckooelem_t *old;
-	uint32_t i = __builtin_ctz(mask);
+	uint32_t i = __builtin_ctzll(mask) >> MASK_SHIFT;
 	for (;;)
 	{
 	    old = atomic_load_acquire(&bkt->elems[i],
@@ -1047,10 +1116,10 @@ bucket_remove(p64_cuckooht_t *ht,
 			   __ATOMIC_RELAXED))
 	{
 	    //Write invalid signature value
-	    write_sig(bkt, i, oldsig, NULL, elem->hash);
+	    write_sig(bkt, i, oldsig, NULL, elem->hash >> 16);
 	    return true;
 	}
-	mask &= ~(1U << i);
+	mask &= ~(MASK_ONE << (i << MASK_SHIFT));
     }
     while (mask != 0);
     return false;
@@ -1130,6 +1199,89 @@ remove_cell_by_ptr(p64_cuckooht_t *ht,
     return false;
 }
 
+UNROLL_LOOPS ALWAYS_INLINE
+static inline mask_t
+find_elem(p64_cuckooelem_t **elems, p64_cuckooelem_t *elem)
+{
+    mask_t matches;
+#if defined __ARM_NEON && defined __arm__
+    static_assert(BKT_SIZE == 4 || BKT_SIZE == 8,
+		 "BKT_SIZE == 4 || BKT_SIZE == 8");
+#if BKT_SIZE == 4
+    uint32x4_t velems = vld1q_u32((uint32_t *)&elems[0]);
+    uint32x4_t vnbits_all = vdupq_n_u32(~BITS_ALL);
+    velems = vandq_u32(velems, vnbits_all);
+    uint32x4_t velem = vdupq_n_u32((uintptr_t)elem);
+    uint32x4_t vmatch32 = vceqq_u32(velems, velem);
+    uint16x4_t vmatch16 = vmovn_u32(vmatch32);
+    //Combine vmatch16 with itself giving 8 lanes of results
+    uint8x8_t vmatch8 = vmovn_u16(vcombine_u16(vmatch16, vmatch16));
+    uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
+    //Cast to uint32_t to mask away bits 32..63
+    matches = (uint32_t)vget_lane_u64(vmatch, 0);
+#elif BKT_SIZE == 8
+    uint32x4_t velemsA = vld1q_u32((uint32_t *)&elems[0]);
+    uint32x4_t velemsB = vld1q_u32((uint32_t *)&elems[4]);
+    uint32x4_t vnbits_all = vdupq_n_u32(~BITS_ALL);
+    velemsA = vandq_u32(velemsA, vnbits_all);
+    velemsB = vandq_u32(velemsB, vnbits_all);
+    uint32x4_t velem = vdupq_n_u32((uintptr_t)elem);
+    uint32x4_t vmatch32A = vceqq_u32(velemsA, velem);
+    uint32x4_t vmatch32B = vceqq_u32(velemsB, velem);
+    uint16x4_t vmatch16A = vmovn_u32(vmatch32A);
+    uint16x4_t vmatch16B = vmovn_u32(vmatch32B);
+    uint16x8_t vmatch16 = vcombine_u16(vmatch16A, vmatch16B);
+    uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
+    matches = vget_lane_u64(vmatch, 0);
+#endif
+#elif defined __ARM_NEON && defined __aarch64__
+    static_assert(BKT_SIZE == 6 || BKT_SIZE == 8,
+		 "BKT_SIZE == 6 || BKT_SIZE == 8");
+    uint64x2_t velemsA = vld1q_u64((uint64_t *)&elems[0]);
+    uint64x2_t velemsB = vld1q_u64((uint64_t *)&elems[2]);
+    uint64x2_t velemsC = vld1q_u64((uint64_t *)&elems[4]);
+#if BKT_SIZE == 8
+    uint64x2_t velemsD = vld1q_u64((uint64_t *)&elems[6]);
+#endif
+    uint64x2_t vnbits_all = vdupq_n_u64(~BITS_ALL);
+    velemsA = vandq_u64(velemsA, vnbits_all);
+    velemsB = vandq_u64(velemsB, vnbits_all);
+    velemsC = vandq_u64(velemsC, vnbits_all);
+#if BKT_SIZE == 8
+    velemsD = vandq_u64(velemsD, vnbits_all);
+#endif
+    uint64x2_t velem = vdupq_n_u64((uintptr_t)elem);
+    uint64x2_t vmatch64A = vceqq_u64(velemsA, velem);
+    uint64x2_t vmatch64B = vceqq_u64(velemsB, velem);
+    uint64x2_t vmatch64C = vceqq_u64(velemsC, velem);
+#if BKT_SIZE == 8
+    uint64x2_t vmatch64D = vceqq_u64(velemsD, velem);
+#else
+    uint64x2_t vmatch64D = vdupq_n_u64(0);
+#endif
+    uint32x4_t vmatch32AB = vpmaxq_u32(vreinterpretq_u32_u64(vmatch64A),
+				       vreinterpretq_u32_u64(vmatch64B));
+    uint32x4_t vmatch32CD = vpmaxq_u32(vreinterpretq_u32_u64(vmatch64C),
+				       vreinterpretq_u32_u64(vmatch64D));
+    uint16x8_t vmatch16 = vpmaxq_u16(vreinterpretq_u16_u32(vmatch32AB),
+				     vreinterpretq_u16_u32(vmatch32CD));
+    uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
+    matches = vget_lane_u64(vmatch, 0);
+#else
+    matches = 0;
+    for (uint32_t i = 0; i < BKT_SIZE; i++)
+    {
+	if (CLR_ALL(elems[i]) == elem)
+	{
+	    matches |= MASK_ONE << (i << MASK_SHIFT);
+	}
+    }
+#endif
+    return matches;
+}
+
 UNROLL_LOOPS
 bool
 p64_cuckooht_remove(p64_cuckooht_t *ht,
@@ -1141,38 +1293,28 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
 	report_error("cuckooht", "element has low bits set", elem);
 	return false;
     }
-    if (!ht->use_hp)
-    {
-	p64_qsbr_acquire();
-    }
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(CRC32C(0, hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
     }
     struct bucket *bkt1 = &ht->buckets[bix1];
     PREFETCH_FOR_READ(bkt1);
+    if (LIKELY(!ht->use_hp))
+    {
+	p64_qsbr_acquire();
+    }
     uint32_t chgcnt;
     bool success = false;
     do
     {
 	chgcnt = __atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
-	uint32_t mask0 = 0, mask1 = 0;
-	for (uint32_t i = 0; i < BKT_SIZE; i++)
-	{
-	    if (CLR_ALL(bkt0->elems[i]) == elem)
-	    {
-		mask0 |= 1U << i;
-	    }
-	    if (CLR_ALL(bkt1->elems[i]) == elem)
-	    {
-		mask1 |= 1U << i;
-	    }
-	}
-	if (mask0 != 0)
+	mask_t mask0 = 0;
+	mask0 = find_elem(bkt0->elems, elem);
+	if (LIKELY(mask0 != 0))
 	{
 	    success = bucket_remove(ht, bix0, elem, mask0);
 	    if (success)
@@ -1180,7 +1322,8 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
 		goto done;
 	    }
 	}
-	if (mask1 != 0)
+	mask_t mask1 = find_elem(bkt1->elems, elem);
+	if (LIKELY(mask1 != 0))
 	{
 	    success = bucket_remove(ht, bix1, elem, mask1);
 	    if (success)
@@ -1198,7 +1341,7 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
 	success = remove_cell_by_ptr(ht, elem, hash);
     }
 done:
-    if (!ht->use_hp)
+    if (LIKELY(!ht->use_hp))
     {
 	p64_qsbr_release();
     }
