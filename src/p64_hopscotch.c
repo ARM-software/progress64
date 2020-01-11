@@ -19,18 +19,19 @@
 #include "arch.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
+#include "lockfree.h"
 
-typedef size_t index_t;
+typedef size_t bix_t;
 
 //CELLAR_BIT is used in traverse call-back to indicate index refers to cellar
 #define CELLAR_BIT ((size_t)1 << (sizeof(size_t) * CHAR_BIT - 1))
 
-static inline index_t
-ring_add(index_t a, index_t b, index_t modulo)
+static inline bix_t
+ring_add(bix_t a, bix_t b, bix_t modulo)
 {
     assert(a < modulo);
     assert(b < modulo);
-    index_t sum = a + b;
+    bix_t sum = a + b;
     if (UNLIKELY(sum >= modulo))
     {
 	sum -= modulo;
@@ -39,12 +40,12 @@ ring_add(index_t a, index_t b, index_t modulo)
     return sum;
 }
 
-static inline index_t
-ring_sub(index_t a, index_t b, index_t modulo)
+static inline bix_t
+ring_sub(bix_t a, bix_t b, bix_t modulo)
 {
     assert(a < modulo);
     assert(b < modulo);
-    index_t dif = a - b;
+    bix_t dif = a - b;
     if (UNLIKELY(dif >= modulo))
     {
 	dif += modulo;
@@ -53,30 +54,42 @@ ring_sub(index_t a, index_t b, index_t modulo)
     return dif;
 }
 
-static inline index_t
-ring_mod(p64_hopschash_t hash, index_t modulo)
+static inline bix_t
+ring_mod(p64_hopschash_t hash, bix_t modulo)
 {
-    index_t rem = hash % modulo;
+    bix_t rem = hash % modulo;
     assert(rem < modulo);
     return rem;
 }
 
 #if __SIZEOF_POINTER__ == 4
 #define BITMAP_BITS 16
+#define SIG_BITS 0 //No space for sig
 #define COUNT_BITS 15
-typedef uint16_t bitmap_t;
 #else //__SIZEOF_POINTER__ == 8
-#define BITMAP_BITS 32
+#define BITMAP_BITS 24
+#define SIG_BITS 8
 #define COUNT_BITS 31
-typedef uint32_t bitmap_t;
 #endif
+
+#define BITMAP_MASK (uint32_t)((1UL << BITMAP_BITS) - 1U)
+#define SIG_MASK ((1U << SIG_BITS) - 1U)
 
 struct bmc
 {
-    bitmap_t bitmap;//Neighbourhood map of elements which hash to this bucket
-    unsigned cellar:1;//True if elements stored in cellar
-    unsigned count:COUNT_BITS;//Change counter
+    //Neighbourhood map of elements which hash to this bucket
+    unsigned bitmap:BITMAP_BITS;
+#if SIG_BITS != 0
+    //Signature (truncated hash) of element stored in this bucket
+    unsigned sig:SIG_BITS;
+#endif
+    //Change counter
+    unsigned count:COUNT_BITS;
+    //True if element(s) hashing to this bucket is stored in cellar
+    unsigned cellar:1;
 };
+static_assert(sizeof(struct bmc) == sizeof(void *),
+	     "sizeof(struct bmc) == sizeof(void *)");
 
 struct cell
 {
@@ -93,8 +106,8 @@ struct bucket
 struct p64_hopscotch
 {
     p64_hopscotch_compare cf;
-    index_t nbkts;
-    index_t ncells;
+    bix_t nbkts;
+    bix_t ncells;
     uint8_t use_hp;
     struct cell *cellar;//Pointer to cell array
     struct bucket buckets[] ALIGNED(CACHE_LINE);
@@ -130,7 +143,7 @@ p64_hopscotch_traverse(p64_hopscotch_t *ht,
 		       p64_hopscotch_trav_cb cb,
 		       void *arg)
 {
-    for (index_t idx = 0; idx < ht->nbkts; idx++)
+    for (bix_t idx = 0; idx < ht->nbkts; idx++)
     {
 	p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 	void *elem = atomic_load_acquire(&ht->buckets[idx].elem,
@@ -151,7 +164,7 @@ p64_hopscotch_traverse(p64_hopscotch_t *ht,
 	}
 	atomic_ptr_release(&hp, ht->use_hp);
     }
-    for (index_t idx = 0; idx < ht->ncells; idx++)
+    for (bix_t idx = 0; idx < ht->ncells; idx++)
     {
 	p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 	void *elem = atomic_load_acquire(&ht->cellar[idx].elem,
@@ -177,26 +190,28 @@ p64_hopscotch_traverse(p64_hopscotch_t *ht,
 void
 p64_hopscotch_check(p64_hopscotch_t *ht)
 {
-    size_t histo[BITMAP_BITS] = { 0 };
+    size_t dist_hg[BITMAP_BITS] = { 0 };
+    size_t full_hg[BITMAP_BITS + 1] = { 0 };
     size_t nfull = 0;
     size_t nelems = 0;
-    bitmap_t sliding_bm = 0;
+    uint32_t sliding_bm = 0;
     //Initialise sliding_bm from last BITMAP_BITS buckets
-    for (index_t bix = ht->nbkts - BITMAP_BITS; bix < ht->nbkts; bix++)
+    for (bix_t bix = ht->nbkts - BITMAP_BITS; bix < ht->nbkts; bix++)
     {
-	bitmap_t bix_bm = ht->buckets[bix].bmc.bitmap;
+	uint32_t bix_bm = ht->buckets[bix].bmc.bitmap;
 	sliding_bm >>= 1;
 	sliding_bm |= bix_bm;
     }
-    for (index_t bix = 0; bix < ht->nbkts; bix++)
+    for (bix_t bix = 0; bix < ht->nbkts; bix++)
     {
-	bitmap_t bix_bm = ht->buckets[bix].bmc.bitmap;
+	uint32_t bix_bm = ht->buckets[bix].bmc.bitmap;
 	sliding_bm >>= 1;
 	if ((sliding_bm & bix_bm) != 0)
 	{
 	    fprintf(stderr, "%zu: (sliding_bm & bix_bm) != 0\n", bix);
 	}
 	sliding_bm |= bix_bm;
+	assert((sliding_bm & ~BITMAP_MASK) == 0);
 	if ((sliding_bm & 1) == 0)
 	{
 	    //Bucket should be empty
@@ -213,19 +228,20 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
 	    }
 	}
 	nelems += (ht->buckets[bix].elem != NULL);
-	if (sliding_bm == (bitmap_t)~0)
+	if (sliding_bm == BITMAP_MASK)
 	{
 	    nfull++;
 	}
+	full_hg[__builtin_popcount(bix_bm)]++;
 	while (bix_bm != 0)
 	{
 	    uint32_t bit = __builtin_ctz(bix_bm);
 	    bix_bm &= ~(1U << bit);
-	    histo[bit]++;
+	    dist_hg[bit]++;
 	}
     }
     size_t ncellar = 0;
-    for (index_t i = 0; i < ht->ncells; i++)
+    for (bix_t i = 0; i < ht->ncells; i++)
     {
 	nelems += (ht->cellar[i].elem != NULL);
 	ncellar += (ht->cellar[i].elem != NULL);
@@ -234,15 +250,30 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
 	    "%zu elements, load=%.2f\n",
 	    ht->nbkts, ht->ncells,
 	    nelems, (float)nelems / (ht->nbkts + ht->ncells));
-    printf("Neighbourhood distance histogram:\n");
+    printf("bitmap utilisation histogram:\n");
     for (uint32_t i = 0; i < BITMAP_BITS / 2; i++)
     {
-	printf("%2u: %6zu (%.3f)\t\t%2u: %6zu (%.3f)\n",
-		i, histo[i], histo[i] / (float)nelems,
-		i + BITMAP_BITS / 2, histo[i + BITMAP_BITS / 2],
-		histo[i + BITMAP_BITS / 2] / (float)nelems);
+	printf("%2u: %7zu (%.3f)\t\t%2u: %7zu (%.3f)\n",
+		i, full_hg[i], full_hg[i] / (float)nelems,
+		i + 1 + BITMAP_BITS / 2, full_hg[i + 1 + BITMAP_BITS / 2],
+		full_hg[i + 1 + BITMAP_BITS / 2] / (float)nelems);
     }
-    printf("Cellar: %zu\n", ncellar);
+    printf("%2u: %7zu (%.3f)\n",
+	   BITMAP_BITS / 2,
+	   full_hg[BITMAP_BITS / 2], full_hg[BITMAP_BITS / 2] / (float)nelems);
+    printf("Cellar utilisation: %zu (%.3f)\n", ncellar, ncellar / (float)nelems);
+    printf("Distances from home bucket:\n");
+    size_t sum = 0;
+    for (uint32_t i = 0; i < BITMAP_BITS / 2; i++)
+    {
+	sum += i * dist_hg[i] +
+	       (i + BITMAP_BITS / 2) * dist_hg[i + BITMAP_BITS / 2];
+	printf("%2u: %7zu (%.3f)\t\t%2u: %7zu (%.3f)\n",
+		i, dist_hg[i], dist_hg[i] / (float)nelems,
+		i + BITMAP_BITS / 2, dist_hg[i + BITMAP_BITS / 2],
+		dist_hg[i + BITMAP_BITS / 2] / (float)nelems);
+    }
+    printf("Avg distance: %.2f\n", sum / (float)nelems);
     printf("%zu neighbourhoods are completely full\n", nfull);
 }
 
@@ -290,7 +321,7 @@ p64_hopscotch_free(p64_hopscotch_t *ht)
     if (ht != NULL)
     {
 	//Check if hash table is empty
-	for (index_t i = 0; i < ht->nbkts; i++)
+	for (bix_t i = 0; i < ht->nbkts; i++)
 	{
 	    //No need to use HP or QSBR, elements are not accessed
 	    if (ht->buckets[i].elem != NULL ||
@@ -300,7 +331,7 @@ p64_hopscotch_free(p64_hopscotch_t *ht)
 		return;
 	    }
 	}
-	for (index_t i = 0; i < ht->ncells; i++)
+	for (bix_t i = 0; i < ht->ncells; i++)
 	{
 	    //No need to use HP or QSBR, elements are not accessed
 	    if (ht->cellar[i].elem != NULL)
@@ -323,9 +354,9 @@ search_cellar(p64_hopscotch_t *ht,
     {
 	return NULL;
     }
-    index_t start = ring_mod(hash, ht->ncells);
+    bix_t start = ring_mod(hash, ht->ncells);
     //Start search from start position
-    index_t idx = start;
+    bix_t idx = start;
     do
     {
 	if (ht->cellar[idx].hash == hash)
@@ -344,16 +375,21 @@ search_cellar(p64_hopscotch_t *ht,
     return NULL;
 }
 
-void *
-p64_hopscotch_lookup(p64_hopscotch_t *ht,
-		     const void *key,
-		     p64_hopschash_t hash,
-		     p64_hazardptr_t *hazpp)
+static inline uint32_t
+hash_to_sig(p64_hopschash_t hash)
 {
-    //Caller must call QSBR acquire/release/quiescent as appropriate
-    index_t bix = ring_mod(hash, ht->nbkts);
-    PREFETCH_FOR_READ((char *)&ht->buckets[bix]);
-    PREFETCH_FOR_READ((char *)&ht->buckets[bix] + CACHE_LINE);
+    return (hash >> 16) & SIG_MASK;
+}
+
+ALWAYS_INLINE
+static inline void *
+lookup(p64_hopscotch_t *ht,
+       const void *key,
+       p64_hopschash_t hash,
+       bix_t bix,
+       p64_hazardptr_t *hazpp,
+       bool use_hp)
+{
     struct bmc cur;
     __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
     while (cur.bitmap != 0)
@@ -361,19 +397,27 @@ p64_hopscotch_lookup(p64_hopscotch_t *ht,
 	//Bitmap indicates which buckets in neighbourhood that contain
 	//elements which hash to this bucket
 	uint32_t bit = __builtin_ctz(cur.bitmap);
-	index_t idx = ring_add(bix, bit, ht->nbkts);
+	bix_t idx = ring_add(bix, bit, ht->nbkts);
+	struct bmc elem_bmc;
 	void *elem = atomic_load_acquire(&ht->buckets[idx].elem,
 					 hazpp,
-					 ht->use_hp);
+					 use_hp);
+	__atomic_load(&ht->buckets[idx].bmc, &elem_bmc, __ATOMIC_RELAXED);
 	if (LIKELY(elem != NULL))
 	{
-	    if (LIKELY(ht->cf(elem, key) == 0))
+#if SIG_BITS != 0
+	    uint32_t sig = hash_to_sig(hash);
+	    if (LIKELY(elem_bmc.sig == sig))
+#endif
 	    {
-		//Found our element
-		//Keep hazard pointer set
-		return elem;
+		if (LIKELY(ht->cf(elem, key) == 0))
+		{
+		    //Found our element
+		    //Keep hazard pointer set
+		    return elem;
+		}
+		//Else false positive
 	    }
-	    //Else false positive
 	}
 	//Else element just re/moved
 	cur.bitmap &= ~(1U << bit);
@@ -396,7 +440,7 @@ p64_hopscotch_lookup(p64_hopscotch_t *ht,
     if (cur.cellar)
     {
 	void *elem = search_cellar(ht, key, hash, hazpp);
-	if (elem != NULL)
+	if (elem)
 	{
 	    //Found our element
 	    //Keep hazard pointer set
@@ -406,169 +450,67 @@ p64_hopscotch_lookup(p64_hopscotch_t *ht,
     return NULL;
 }
 
-static unsigned long
-load_elems(p64_hopscotch_t *ht,
-	   unsigned long mask,
-	   size_t bix[],
-	   struct bmc cur[],
-	   void *result[])
+void *
+p64_hopscotch_lookup(p64_hopscotch_t *ht,
+		     const void *key,
+		     p64_hopschash_t hash,
+		     p64_hazardptr_t *hazpp)
 {
-    unsigned long next_mask = 0;
-    do
-    {
-	uint32_t i = __builtin_ctz(mask);
-	mask &= ~(1UL << i);
-	if (cur[i].bitmap != 0)
-	{
-	    uint32_t bit = __builtin_ctz(cur[i].bitmap);
-	    //Keep bit in bitmap, we need to find it later
-	    index_t idx = ring_add(bix[i], bit, ht->nbkts);
-	    result[i] = __atomic_load_n(&ht->buckets[idx].elem,
-					__ATOMIC_RELAXED);
-	    next_mask |= 1UL << i;
-	}
-    }
-    while (LIKELY(mask != 0));
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
-    return next_mask;
+    //Caller must call QSBR acquire/release/quiescent as appropriate
+    bix_t bix = ring_mod(hash, ht->nbkts);
+    PREFETCH_FOR_READ((char *)&ht->buckets[bix]);
+    PREFETCH_FOR_READ((char *)&ht->buckets[bix] + CACHE_LINE);
+    void *elem = lookup(ht, key, hash, bix, hazpp, ht->use_hp);
+    return elem;
 }
 
-static unsigned long
-check_elems(p64_hopscotch_t *ht,
-	    unsigned long mask,
-	    const void *keys[],
-	    size_t bix[],
-	    struct bmc cur[],
-	    void *result[],
-	    unsigned long *success)
-{
-    unsigned long next_mask = 0;
-    do
-    {
-	uint32_t i = __builtin_ctz(mask);
-	mask &= ~(1UL << i);
-	//This bit in neighbourhood has been processed so clear it
-	assert(cur[i].bitmap != 0);
-	uint32_t bit = __builtin_ctz(cur[i].bitmap);
-	cur[i].bitmap &= ~(1U << bit);
-
-	if (result[i] != NULL)
-	{
-	    if (ht->cf(result[i], keys[i]) == 0)
-	    {
-		//Found our element
-		*success |= 1UL << i;
-		continue;
-	    }
-	    //Else False positive
-	    result[i] = NULL;
-	}
-	if (cur[i].bitmap == 0)
-	{
-	    //No more neighbours to check
-	    struct bmc fresh;
-	    __atomic_load(&ht->buckets[bix[i]].bmc, &fresh, __ATOMIC_RELAXED);
-	    if (fresh.count != cur[i].count && fresh.bitmap != 0)
-	    {
-		//Bitmap has changed since we began so start over
-		cur[i] = fresh;
-		__atomic_thread_fence(__ATOMIC_ACQUIRE);
-		next_mask |= 1UL << i;
-	    }
-	    //Else bitmap hasn't changed or has become empty
-	}
-	else//More elements in neighbourhood to check
-	{
-	    next_mask |= 1UL << i;
-	}
-    }
-    while (LIKELY(mask != 0));
-    return next_mask;
-}
-
-unsigned long
+void
 p64_hopscotch_lookup_vec(p64_hopscotch_t *ht,
 			 uint32_t num,
 			 const void *keys[num],
 			 p64_hopschash_t hashes[num],
 			 void *result[num])
 {
-    uint32_t long_bits = sizeof(long) * CHAR_BIT;
-    if (UNLIKELY(num > long_bits))
-    {
-	report_error("hopscotch", "invalid vector size", num);
-	return 0;
-    }
+    //Caller must call QSBR acquire/release/quiescent as appropriate
     if (UNLIKELY(ht->use_hp))
     {
 	report_error("hopscotch", "hazard pointers not supported", 0);
-	return 0;
     }
-    index_t bix[num];
-    struct bmc cur[num];
+    bix_t bix[num];
     for (uint32_t i = 0; i < num; i++)
     {
-	//Compute all hash bucket indexes
+	//Compute all bucket indexes
 	bix[i] = ring_mod(hashes[i], ht->nbkts);
-	//Load all bitmaps:counters
-	__atomic_load(&ht->buckets[bix[i]].bmc, &cur[i], __ATOMIC_RELAXED);
-	//Initialise results
-	result[i] = NULL;
-    }
-    unsigned long mask = num == long_bits ? ~0UL : (1UL << num) - 1;
-    unsigned long success = 0;//Success bitmap
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
-    while (mask != 0)
-    {
-	mask = load_elems(ht, mask, bix, cur, result);
-	if (mask == 0)
+	//Prefetch bucket metadata
+	PREFETCH_FOR_READ((char *)&ht->buckets[bix[i]]);
+	if (num <= 8)
 	{
-	    break;
+	    PREFETCH_FOR_READ((char *)&ht->buckets[bix[i]] + CACHE_LINE);
 	}
-	mask = check_elems(ht, mask, keys, bix, cur, result, &success);
     }
-    //Search the cellar for any misses
-    mask = num == long_bits ? ~0UL : (1UL << num) - 1;
-    if (success != mask)
+    for (uint32_t i = 0; i < num; i++)
     {
-	mask &= ~success;//Bit mask of failures
-	assert(mask != 0);
-	do
-	{
-	    uint32_t i = __builtin_ctz(mask);
-	    mask &= ~(1UL << i);
-	    if (cur[i].cellar)
-	    {
-		void *elem = search_cellar(ht, keys[i], hashes[i], NULL);
-		if (elem != NULL)
-		{
-		    result[i] = elem;
-		    success |= 1UL << i;
-		}
-	    }
-	}
-	while (mask != 0);
+	result[i] = lookup(ht, keys[i], hashes[i], bix[i], NULL, false);
     }
-    return success;
 }
 
 static void
 bitmap_set_mask(p64_hopscotch_t *ht,
-		index_t bix,//Bucket hash maps to
-		index_t idx)//Bucket element inserted into
+		bix_t bix,//Bucket hash maps to
+		bix_t idx)//Bucket element inserted into
 {
-    struct bmc old, new;
     uint32_t bit = ring_sub(idx, bix, ht->nbkts);
     assert(bit < BITMAP_BITS);
-    bitmap_t mask = 1U << bit;
-    //TODO use atomic_add? requires bmc to be scalar or union
+    uint32_t mask = 1U << bit;
+    struct bmc old, new;
     do
     {
 	__atomic_load(&ht->buckets[bix].bmc, &old, __ATOMIC_RELAXED);
 	assert((old.bitmap & mask) == 0);
-	new.bitmap = old.bitmap | mask;
-	new.cellar = old.cellar;
-	new.count = old.count + 1;
+	new = old;
+	new.bitmap |= mask;
+	//Always increase change counter
+	new.count++;
     }
     while (!__atomic_compare_exchange(&ht->buckets[bix].bmc,
 				      &old,
@@ -580,7 +522,7 @@ bitmap_set_mask(p64_hopscotch_t *ht,
 
 static void
 bitmap_update_cellar(p64_hopscotch_t *ht,
-		     index_t bix)
+		     bix_t bix)
 {
     struct bmc old, new;
     do
@@ -588,7 +530,7 @@ bitmap_update_cellar(p64_hopscotch_t *ht,
 	__atomic_load(&ht->buckets[bix].bmc, &old, __ATOMIC_ACQUIRE);
 	new = old;
 	new.cellar = 0;
-	for (index_t i = 0; i < ht->ncells; i++)
+	for (bix_t i = 0; i < ht->ncells; i++)
 	{
 	    p64_hopschash_t hash =
 		__atomic_load_n(&ht->cellar[i].hash, __ATOMIC_RELAXED);
@@ -606,8 +548,9 @@ bitmap_update_cellar(p64_hopscotch_t *ht,
 	    //No need to update
 	    break;
 	}
+	//Always increase change counter
 	new.count++;
-	//Attempt to update bmc, fail if count has changed
+	//Attempt to update bmc, fail and retry if count has changed
     }
     while (!__atomic_compare_exchange(&ht->buckets[bix].bmc,
 				      &old,
@@ -619,10 +562,10 @@ bitmap_update_cellar(p64_hopscotch_t *ht,
 
 static bool
 find_empty_bkt(p64_hopscotch_t *ht,
-	       index_t bix,
-	       index_t *empty)
+	       bix_t bix,
+	       bix_t *empty)
 {
-    index_t idx = bix;
+    bix_t idx = bix;
     do
     {
 	void *elem = __atomic_load_n(&ht->buckets[idx].elem, __ATOMIC_RELAXED);
@@ -640,14 +583,14 @@ find_empty_bkt(p64_hopscotch_t *ht,
 
 static bool
 find_move_candidate(p64_hopscotch_t *ht,
-		    index_t empty,
-		    index_t *src_bix,
-		    index_t *src_idx,
-		    struct bmc *src_bmc)
+		    bix_t empty,
+		    bix_t *home_bix,
+		    struct bmc *home_bmc,
+		    bix_t *src_idx)
 {
     for (uint32_t i = BITMAP_BITS - 1; i != 0; i--)
     {
-	index_t bix = ring_sub(empty, i, ht->nbkts);
+	bix_t bix = ring_sub(empty, i, ht->nbkts);
 	//Assert empty is in the neighbourhood of bix
 	assert(ring_sub(empty, bix, ht->nbkts) < BITMAP_BITS);
 	struct bmc bmc;
@@ -657,13 +600,13 @@ find_move_candidate(p64_hopscotch_t *ht,
 	    //Check first element that hash to bix bucket
 	    uint32_t bit = __builtin_ctz(bmc.bitmap);
 	    //Test if bix + bit is before empty
-	    index_t dist_b2e = ring_sub(empty, bix, ht->nbkts);
+	    bix_t dist_b2e = ring_sub(empty, bix, ht->nbkts);
 	    if (bit < dist_b2e)
 	    {
 		//Found element closer to bix which can be moved to empty bucket
-		*src_bix = bix;
+		*home_bix = bix;
 		*src_idx = ring_add(bix, bit, ht->nbkts);
-		*src_bmc = bmc;
+		*home_bmc = bmc;
 		return true;
 	    }
 	    //Else bix+bit is after empty and so is any other set bits in bitmap
@@ -673,53 +616,108 @@ find_move_candidate(p64_hopscotch_t *ht,
     return false;
 }
 
+static inline bool
+write_elem(struct bucket *bkt,
+	   void *elem,
+	   uint32_t sig,
+	   bool home_bkt,//Writing element to its home bucket
+	   bool rls)
+{
+#if SIG_BITS == 0
+    (void)sig;
+#endif
+    union
+    {
+	struct bucket bk;
+	ptrpair_t pp;
+    } old, new;
+    do
+    {
+#if 1
+//Using atomic loads sometimes leads to 35-50ns more overhead
+	__atomic_load(&bkt->bmc, &old.bk.bmc, __ATOMIC_RELAXED);
+	__atomic_load(&bkt->elem, &old.bk.elem, __ATOMIC_RELAXED);
+#else//Let's use plain loads
+	old.bk = *bkt;
+#endif
+	if (UNLIKELY(old.bk.elem != NULL))
+	{
+	    //Slot not empty anymore
+	    return false;
+	}
+	old.bk.elem = NULL;
+	new.bk.bmc = old.bk.bmc;
+	new.bk.bmc.bitmap |= home_bkt;
+#if SIG_BITS != 0
+	new.bk.bmc.sig = sig;
+#endif
+	new.bk.bmc.count += home_bkt;
+	new.bk.elem = elem;
+    }
+    while (UNLIKELY(!lockfree_compare_exchange_pp((ptrpair_t*)bkt,
+						  &old.pp,
+						  new.pp,
+						  /*weak=*/false,
+						  rls ? __ATOMIC_RELEASE : __ATOMIC_RELAXED,
+						  __ATOMIC_RELAXED)));
+    return true;
+}
+
 enum move_result { ht_full, dst_no_empty, move_ok };
 
 static enum move_result
 move_elem(p64_hopscotch_t *ht,
-	  index_t *empty)
+	  bix_t *empty)
 {
-    index_t dst_idx = *empty;
+    bix_t dst_idx = *empty;
     for (;;)
     {
 	//Find source bucket which has empty bucket in its neighbourhood
-	index_t src_bix, src_idx;
-	struct bmc src_bmc;
-	if (!find_move_candidate(ht, dst_idx, &src_bix, &src_idx, &src_bmc))
+	bix_t home_bix, src_idx;
+	struct bmc home_bmc;
+	if (!find_move_candidate(ht, dst_idx, &home_bix, &home_bmc, &src_idx))
 	{
 	    //Found no candidate which can be moved to empty bucket
 	    return ht_full;
 	}
 	//Copy element from source to empty bucket
-	void *move_elem = __atomic_load_n(&ht->buckets[src_idx].elem,
-					  __ATOMIC_RELAXED);
-	void *old = NULL;
-	if (!__atomic_compare_exchange_n(&ht->buckets[dst_idx].elem,
-					 &old,
-					 move_elem,
-					 /*weak=*/false,
-					 __ATOMIC_RELAXED,
-					 __ATOMIC_RELAXED))
+	struct bucket src;
+#if 0
+	__atomic_load(&ht->buckets[src_idx].bmc, &src.bmc, __ATOMIC_RELAXED);
+	__atomic_load(&ht->buckets[src_idx].elem, &src.elem, __ATOMIC_RELAXED);
+#else
+	src = ht->buckets[src_idx];
+#endif
+#if SIG_BITS != 0
+	uint32_t src_sig = src.bmc.sig;
+#else
+	uint32_t src_sig = 0;
+#endif
+	if (UNLIKELY(!write_elem(&ht->buckets[dst_idx],
+				 src.elem,
+				 src_sig,
+				 false,
+				 false)))
 	{
 	    //Bucket not empty anymore
 	    return dst_no_empty;
 	}
-	//Update src_bix bitmap to reflect move
+	//Update home_bix bitmap to reflect move
 	struct bmc new_bmc;
-	new_bmc.bitmap = src_bmc.bitmap;
-	uint32_t src_bit = ring_sub(src_idx, src_bix, ht->nbkts);
+	new_bmc = home_bmc;
+	uint32_t src_bit = ring_sub(src_idx, home_bix, ht->nbkts);
 	assert(src_bit < BITMAP_BITS);
-	uint32_t dst_bit = ring_sub(dst_idx, src_bix, ht->nbkts);
+	uint32_t dst_bit = ring_sub(dst_idx, home_bix, ht->nbkts);
 	assert(dst_bit < BITMAP_BITS);
 	assert(dst_bit > src_bit);
 	//Clear source bit
 	new_bmc.bitmap &= ~(1U << src_bit);
 	//Set destination bit
 	new_bmc.bitmap |= 1U << dst_bit;
-	new_bmc.cellar = src_bmc.cellar;
-	new_bmc.count = src_bmc.count + 1;
-	if (__atomic_compare_exchange(&ht->buckets[src_bix].bmc,
-				      &src_bmc,
+	//Always increase change counter
+	new_bmc.count++;
+	if (__atomic_compare_exchange(&ht->buckets[home_bix].bmc,
+				      &home_bmc,
 				      &new_bmc,
 				      /*weak=*/false,
 				      __ATOMIC_RELEASE,
@@ -732,7 +730,7 @@ move_elem(p64_hopscotch_t *ht,
 	    *empty = src_idx;
 	    return move_ok;
 	}
-	//Else src_bix bitmap changed, our element could have been moved
+	//Else home_bix bitmap changed, our element could have been moved
 	//Undo move
 	__atomic_store_n(&ht->buckets[dst_idx].elem, NULL, __ATOMIC_RELAXED);
 	//Restart from beginning
@@ -742,13 +740,14 @@ move_elem(p64_hopscotch_t *ht,
 static bool
 insert_bkt(p64_hopscotch_t *ht,
 	   void *elem,
-	   index_t bix)
+	   p64_hopschash_t hash)
 {
-    for (;;)
+    bix_t bix = ring_mod(hash, ht->nbkts);
+    bix_t empty;
+    do
     {
-	index_t empty;
 find_empty:
-	if (!find_empty_bkt(ht, bix, &empty))
+	if (UNLIKELY(!find_empty_bkt(ht, bix, &empty)))
 	{
 	    return false;//Hash table full
 	}
@@ -768,19 +767,18 @@ find_empty:
 	assert(ring_sub(empty, bix, ht->nbkts) < BITMAP_BITS);
 	//Empty bucket is in neighbourhood
 	//Insert new element into empty bucket
-	void *old = NULL;
-	if (__atomic_compare_exchange_n(&ht->buckets[empty].elem,
-					&old,
-					elem,
-					/*weak=*/false,
-					__ATOMIC_RELEASE,
-					__ATOMIC_RELAXED))
-	{
-	    bitmap_set_mask(ht, bix, empty);
-	    return true;
-	}
-	//Else bucket not empty anymore
     }
+    while (UNLIKELY(!write_elem(&ht->buckets[empty],
+				elem,
+				hash_to_sig(hash),
+				empty == bix,
+				true)));
+    if (empty != bix)
+    {
+	//Must also update home bucket.bmc
+	bitmap_set_mask(ht, bix, empty);
+    }
+    return true;
 }
 
 static bool
@@ -792,8 +790,8 @@ insert_cell(p64_hopscotch_t *ht,
     {
 	return false;
     }
-    index_t start = ring_mod(hash, ht->ncells);
-    index_t idx = start;
+    bix_t start = ring_mod(hash, ht->ncells);
+    bix_t idx = start;
     do
     {
 	if (__atomic_load_n(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == NULL)
@@ -809,7 +807,7 @@ insert_cell(p64_hopscotch_t *ht,
 		__atomic_store_n(&ht->cellar[idx].hash, hash, __ATOMIC_RELAXED);
 		//Set cellar bit in bix bucket to indicate present of element
 		//in cellar
-		index_t bix = ring_mod(hash, ht->nbkts);
+		bix_t bix = ring_mod(hash, ht->nbkts);
 		struct bmc old, new;
 		do
 		{
@@ -843,7 +841,7 @@ p64_hopscotch_insert(p64_hopscotch_t *ht,
     {
 	p64_qsbr_acquire();
     }
-    bool success = insert_bkt(ht, elem, ring_mod(hash, ht->nbkts));
+    bool success = insert_bkt(ht, elem, hash);
     if (UNLIKELY(!success))
     {
 	success = insert_cell(ht, elem, hash);
@@ -858,8 +856,9 @@ p64_hopscotch_insert(p64_hopscotch_t *ht,
 static bool
 remove_bkt_by_ptr(p64_hopscotch_t *ht,
 		  void *rem_elem,
-		  index_t bix)
+		  p64_hopschash_t hash)
 {
+    bix_t bix = ring_mod(hash, ht->nbkts);
     uint32_t prev_count;
     struct bmc cur;
     __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
@@ -875,21 +874,22 @@ remove_bkt_by_ptr(p64_hopscotch_t *ht,
 	    //Bitmap indicates which buckets in neighbourhood that contain
 	    //elements which hash this bucket
 	    uint32_t bit = __builtin_ctz(cur.bitmap);
-	    index_t idx = (bix + bit) % ht->nbkts;
+	    bix_t idx = (bix + bit) % ht->nbkts;
 	    if (__atomic_load_n(&ht->buckets[idx].elem, __ATOMIC_RELAXED) ==
 				rem_elem)
 	    {
 		//Found our element
+		struct bmc new = old;
 		//Clear bit in bix bitmap
-		struct bmc new;
-		new.bitmap = old.bitmap & ~(1U << bit);
-		new.cellar = old.cellar;
-		new.count = old.count + 1;
+		new.bitmap &= ~(1U << bit);
+		//Always increase change counter
+		new.count++;
+		//TODO loop because bmc.sig might have changed
 		if (__atomic_compare_exchange(&ht->buckets[bix].bmc,
 					      &old,//Updated on failure
 					      &new,
 					      /*weak=*/false,
-					      __ATOMIC_RELAXED,
+					      __ATOMIC_RELEASE,
 					      __ATOMIC_RELAXED))
 		{
 		    //Successfully updated bitmap, now clear bucket
@@ -921,8 +921,8 @@ remove_cell_by_ptr(p64_hopscotch_t *ht,
     {
 	return NULL;
     }
-    index_t start = ring_mod(hash, ht->ncells);
-    index_t idx = start;
+    bix_t start = ring_mod(hash, ht->ncells);
+    bix_t idx = start;
     do
     {
 	if (__atomic_load_n(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == elem)
@@ -956,7 +956,7 @@ p64_hopscotch_remove(p64_hopscotch_t *ht,
     {
 	p64_qsbr_acquire();
     }
-    bool success = remove_bkt_by_ptr(ht, elem, ring_mod(hash, ht->nbkts));
+    bool success = remove_bkt_by_ptr(ht, elem, hash);
     if (UNLIKELY(!success))
     {
 	success = remove_cell_by_ptr(ht, elem, hash);
@@ -971,10 +971,11 @@ p64_hopscotch_remove(p64_hopscotch_t *ht,
 static void *
 remove_bkt_by_key(p64_hopscotch_t *ht,
 		  const void *key,
-		  index_t bix,
+		  p64_hopschash_t hash,
 		  p64_hazardptr_t *hazpp)
 {
     uint32_t prev_count;
+    bix_t bix = ring_mod(hash, ht->nbkts);
     struct bmc cur;
     __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
     do
@@ -989,32 +990,45 @@ remove_bkt_by_key(p64_hopscotch_t *ht,
 	    //Bitmap indicates which buckets in neighbourhood that contain
 	    //elements which hash this bucket
 	    uint32_t bit = __builtin_ctz(cur.bitmap);
-	    index_t idx = (bix + bit) % ht->nbkts;
+	    bix_t idx = (bix + bit) % ht->nbkts;
+	    struct bmc elem_bmc;
+	    __atomic_load(&ht->buckets[idx].bmc, &elem_bmc, __ATOMIC_RELAXED);
 	    void *elem = atomic_load_acquire(&ht->buckets[idx].elem,
 					     hazpp,
 					     ht->use_hp);
-	    if (elem != NULL && ht->cf(elem, key) == 0)
+	    if (LIKELY(elem != NULL))
 	    {
-		//Found our element
-		//Clear bit in bix bitmap
-		struct bmc new;
-		new.bitmap = old.bitmap & ~(1U << bit);
-		new.count = old.count + 1;
-		if (__atomic_compare_exchange(&ht->buckets[bix].bmc,
-					      &old,
-					      &new,
-					      /*weak=*/false,
-					      __ATOMIC_RELAXED,
-					      __ATOMIC_RELAXED))
+#if SIG_BITS != 0
+		uint32_t sig = hash_to_sig(hash);
+		if (elem_bmc.sig == sig)
+#endif
 		{
-		    //Successfully updated bitmap, now clear bucket
-		    __atomic_store_n(&ht->buckets[idx].elem,
-				     NULL,
-				     __ATOMIC_RELAXED);
-		    return elem;
+		    if (LIKELY(ht->cf(elem, key) == 0))
+		    {
+			//Found our element
+			struct bmc new = old;
+			//Clear bit in bix bitmap
+			new.bitmap &= ~(1U << bit);
+			//Always increase change counter
+			new.count++;
+			if (__atomic_compare_exchange(&ht->buckets[bix].bmc,
+						      &old,
+						      &new,
+						      /*weak=*/false,
+						      __ATOMIC_RELAXED,
+						      __ATOMIC_RELAXED))
+			{
+			    //Successfully updated bitmap, now clear bucket
+			    __atomic_store_n(&ht->buckets[idx].elem,
+					     NULL,
+					     __ATOMIC_RELAXED);
+			    return elem;
+			}
+			//Else bitmap changed
+			break;//Quit inner loop early
+		    }
+		    //Else false positive
 		}
-		//Else bitmap changed
-		break;//Quit inner loop early
 	    }
 	    cur.bitmap &= ~(1U << bit);
 	}
@@ -1039,8 +1053,8 @@ remove_cell_by_key(p64_hopscotch_t *ht,
     {
 	return NULL;
     }
-    index_t start = ring_mod(hash, ht->ncells);
-    index_t idx = start;
+    bix_t start = ring_mod(hash, ht->ncells);
+    bix_t idx = start;
     do
     {
 	if (__atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_ACQUIRE) == hash)
@@ -1086,7 +1100,7 @@ p64_hopscotch_remove_by_key(p64_hopscotch_t *ht,
     {
 	p64_qsbr_acquire();
     }
-    void *elem = remove_bkt_by_key(ht, key, ring_mod(hash, ht->nbkts), hazpp);
+    void *elem = remove_bkt_by_key(ht, key, hash, hazpp);
     if (UNLIKELY(!elem))
     {
 	elem = remove_cell_by_key(ht, key, hash, hazpp);

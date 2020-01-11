@@ -71,6 +71,12 @@ p64_hashelem_t *p64_hashtable_lookup(p64_hashtable_t *ht,
 })
 #endif
 
+void p64_hashtable_lookup_vec(p64_hashtable_t *ht,
+			      uint32_t num,
+			      const void *keys[num],
+			      p64_hashvalue_t hashes[num],
+			      p64_hashelem_t *result[num]);
+
 //Insert an element into the hash table
 void p64_hashtable_insert(p64_hashtable_t *ht,
 			  p64_hashelem_t *he,

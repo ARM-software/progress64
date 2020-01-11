@@ -268,15 +268,13 @@ list_lookup(p64_hashtable_t *ht,
     }
 }
 
-p64_hashelem_t *
-p64_hashtable_lookup(p64_hashtable_t *ht,
-		     const void *key,
-		     p64_hashvalue_t hash,
-		     p64_hazardptr_t *hazpp)
+static inline p64_hashelem_t *
+lookup(p64_hashtable_t *ht,
+       struct hash_bucket *bkt,
+       const void *key,
+       p64_hashvalue_t hash,
+       p64_hazardptr_t *hazpp)
 {
-    //Caller must call QSBR acquire/release/quiescent as appropriate
-    size_t bix = hash_to_bix(ht, hash);
-    struct hash_bucket *bkt = &ht->buckets[bix];
     p64_hashelem_t *he;
     he = bucket_lookup(ht, bkt, key, hash, hazpp);
     if (he != NULL)
@@ -289,6 +287,50 @@ p64_hashtable_lookup(p64_hashtable_t *ht,
 	return he;
     }
     return NULL;
+}
+
+p64_hashelem_t *
+p64_hashtable_lookup(p64_hashtable_t *ht,
+		     const void *key,
+		     p64_hashvalue_t hash,
+		     p64_hazardptr_t *hazpp)
+{
+    //Caller must call QSBR acquire/release/quiescent as appropriate
+    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+    if (hazpp == NULL)
+    {
+	hazpp = &hp;
+    }
+    size_t bix = hash_to_bix(ht, hash);
+    struct hash_bucket *bkt = &ht->buckets[bix];
+    p64_hashelem_t *he = lookup(ht, bkt, key, hash, hazpp);
+    return he;
+}
+
+void
+p64_hashtable_lookup_vec(p64_hashtable_t *ht,
+			 uint32_t num,
+			 const void *keys[num],
+			 p64_hashvalue_t hashes[num],
+			 p64_hashelem_t *result[num])
+{
+    //Caller must call QSBR acquire/release/quiescent as appropriate
+    if (UNLIKELY(ht->use_hp))
+    {
+	report_error("hashtable", "hazard pointers not supported", 0);
+    }
+    struct hash_bucket *bkts[num];
+    for (uint32_t i = 0; i < num; i++)
+    {
+	size_t bix = hash_to_bix(ht, hashes[i]);
+	bkts[i] = &ht->buckets[bix];
+	PREFETCH_FOR_READ(bkts[i]);
+    }
+    for (uint32_t i = 0; i < num; i++)
+    {
+	p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+	result[i] = lookup(ht, bkts[i], keys[i], hashes[i], &hp);
+    }
 }
 
 //Remove node, return true if element removed by us or some other thread

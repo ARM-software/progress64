@@ -492,23 +492,15 @@ search_cellar(p64_cuckooht_t *ht,
     return NULL;
 }
 
-p64_cuckooelem_t *
-p64_cuckooht_lookup(p64_cuckooht_t *ht,
-		    const void *key,
-		    p64_cuckoohash_t hash,
-		    p64_hazardptr_t *hazpp)
+ALWAYS_INLINE
+static inline void *
+lookup(p64_cuckooht_t *ht,
+       const void *key,
+       p64_cuckoohash_t hash,
+       struct bucket *bkt0,
+       struct bucket *bkt1,
+       p64_hazardptr_t *hazpp)
 {
-    //Caller must call QSBR acquire/release/quiescent as appropriate
-    bix_t bix0 = ring_mod(hash, ht->nbkts);
-    struct bucket *bkt0 = &ht->buckets[bix0];
-    PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
-    if (UNLIKELY(bix1 == bix0))
-    {
-	bix1 = ring_add(bix1, 1, ht->nbkts);
-    }
-    struct bucket *bkt1 = &ht->buckets[bix1];
-    PREFETCH_FOR_READ(bkt1);
     uint32_t chgcnt;
     p64_cuckooelem_t *elem;
     do
@@ -550,6 +542,62 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
 	}
     }
     return NULL;
+}
+
+p64_cuckooelem_t *
+p64_cuckooht_lookup(p64_cuckooht_t *ht,
+		    const void *key,
+		    p64_cuckoohash_t hash,
+		    p64_hazardptr_t *hazpp)
+{
+    //Caller must call QSBR acquire/release/quiescent as appropriate
+    bix_t bix0 = ring_mod(hash, ht->nbkts);
+    struct bucket *bkt0 = &ht->buckets[bix0];
+    PREFETCH_FOR_READ(bkt0);
+    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
+    if (UNLIKELY(bix1 == bix0))
+    {
+	bix1 = ring_add(bix1, 1, ht->nbkts);
+    }
+    struct bucket *bkt1 = &ht->buckets[bix1];
+    PREFETCH_FOR_READ(bkt1);
+    p64_cuckooelem_t *elem = lookup(ht, key, hash, bkt0, bkt1, hazpp);
+    return elem;
+}
+
+void
+p64_cuckooht_lookup_vec(p64_cuckooht_t *ht,
+			uint32_t num,
+			const void *keys[num],
+			p64_cuckoohash_t hashes[num],
+			p64_cuckooelem_t *result[num])
+{
+    //Caller must call QSBR acquire/release/quiescent as appropriate
+    if (UNLIKELY(ht->use_hp))
+    {
+	report_error("cuckooht", "hazard pointers not supported", 0);
+    }
+    bix_t bix0[num], bix1[num];
+    for (uint32_t i = 0; i < num; i++)
+    {
+	//Compute all bucket indexes and prefetch all buckets
+	bix0[i] = ring_mod(hashes[i], ht->nbkts);
+	struct bucket *bkt0 = &ht->buckets[bix0[i]];
+	PREFETCH_FOR_READ(bkt0);
+	bix1[i] = ring_mod(scramble(hashes[i]), ht->nbkts);
+	if (UNLIKELY(bix1[i] == bix0[i]))
+	{
+	    bix1[i] = ring_add(bix1[i], 1, ht->nbkts);
+	}
+	struct bucket *bkt1 = &ht->buckets[bix1[i]];
+	PREFETCH_FOR_READ(bkt1);
+    }
+    for (uint32_t i = 0; i < num; i++)
+    {
+	struct bucket *bkt0 = &ht->buckets[bix0[i]];
+	struct bucket *bkt1 = &ht->buckets[bix1[i]];
+	result[i] = lookup(ht, keys[i], hashes[i], bkt0, bkt1, NULL);
+    }
 }
 
 //Write signature to bucket

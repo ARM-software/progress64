@@ -59,18 +59,15 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
 		    p64_cuckoohash_t hash,
 		    p64_hazardptr_t *hp);
 
-#if 0
 //Look up a vector of elements, given the keys and corresponding hashes
-//Return bitmask with successful lookups (result[i] != NULL)
 //Must only be used with QSBR!
 //Caller must call QSBR acquire/release/quiescent as appropriate
-unsigned long
+void
 p64_cuckooht_lookup_vec(p64_cuckooht_t *ht,
 			uint32_t num,
 			const void *keys[num],
 			p64_cuckoohash_t hashes[num],
 			p64_cuckooelem_t *result[num]);
-#endif
 
 //Insert an element into the hash table
 //Return true if insertion succeeds, false otherwise

@@ -37,7 +37,9 @@
 #define PRIO 1
 #define SCHED SCHED_FIFO
 
-enum operation { Insert, Remove, Lookup };
+#define MAXVECSIZE 32
+
+enum operation { Insert, Remove, LookupHit, LookupMiss, TheBeyond };
 
 struct object
 {
@@ -58,6 +60,7 @@ static int cpus[MAXTHREADS];
 static unsigned long CPUFREQ;
 static unsigned long AFFINITY = ~0UL;
 static uint32_t NUMKEYS = 10000000;
+static uint32_t VECSIZE = 0;
 static struct object *OBJS;//Array of all objects
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static bool HOPSCOTCH = false;
@@ -149,83 +152,152 @@ xorshift32(uint32_t x)
 #endif
 
 static void
-thr_execute(uint32_t tidx)
+thr_insert(uint32_t tidx)
 {
-    if (OPER == Insert)
+    for (uint32_t idx = tidx; idx < NUMKEYS; idx += NUMTHREADS)
     {
-	for (uint32_t idx = tidx; idx < NUMKEYS; idx += NUMTHREADS)
+	struct object *obj = &OBJS[idx];
+	uint32_t key = idx;//Keys are unique
+	assert(obj->key == key);
+	uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+	bool success;
+	if (HOPSCOTCH)
 	{
-	    struct object *obj = &OBJS[idx];
-	    uint32_t key = idx;//Keys are unqiue
-	    assert(obj->key == key);
-	    uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
-	    bool success;
-	    if (HOPSCOTCH)
-	    {
-		success = p64_hopscotch_insert(HT, obj, hash);
-	    }
-	    else if (CUCKOOHT)
-	    {
-		success = p64_cuckooht_insert(HT, &obj->ce, hash);
-	    }
-	    else
-	    {
-		p64_hashtable_insert(HT, &obj->he, hash);
-		success = true;
-	    }
-	    if (!success)
-	    {
-		fprintf(stderr, "Failed to insert key %u\n", key);
-		exit(EXIT_FAILURE);
-	    }
+	    success = p64_hopscotch_insert(HT, obj, hash);
+	}
+	else if (CUCKOOHT)
+	{
+	    success = p64_cuckooht_insert(HT, &obj->ce, hash);
+	}
+	else
+	{
+	    p64_hashtable_insert(HT, &obj->he, hash);
+	    success = true;
+	}
+	if (!success)
+	{
+	    fprintf(stderr, "Failed to insert key %u\n", key);
+	    exit(EXIT_FAILURE);
 	}
     }
-    else if (OPER == Remove)
+}
+
+static void
+thr_remove(uint32_t tidx)
+{
+    for (uint32_t idx = tidx; idx < NUMKEYS; idx += NUMTHREADS)
     {
-	for (uint32_t idx = tidx; idx < NUMKEYS; idx += NUMTHREADS)
+	struct object *obj = &OBJS[idx];
+	uint32_t key = idx;//Keys are unique
+	assert(obj->key == key);
+	uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+	bool success;
+	if (HOPSCOTCH)
 	{
-	    struct object *obj = &OBJS[idx];
-	    uint32_t key = idx;//Keys are unqiue
-	    assert(obj->key == key);
-	    uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
-	    bool success;
-	    if (HOPSCOTCH)
-	    {
-		success = p64_hopscotch_remove(HT, obj, hash);
-	    }
-	    else if (CUCKOOHT)
-	    {
-		success = p64_cuckooht_remove(HT, &obj->ce, hash);
-	    }
-	    else
-	    {
-		success = p64_hashtable_remove(HT, &obj->he, hash);
-	    }
-	    if (!success)
-	    {
-		fprintf(stderr, "Failed to remove key %u\n", key);
-		exit(EXIT_FAILURE);
-	    }
+	    success = p64_hopscotch_remove(HT, obj, hash);
+	}
+	else if (CUCKOOHT)
+	{
+	    success = p64_cuckooht_remove(HT, &obj->ce, hash);
+	}
+	else
+	{
+	    success = p64_hashtable_remove(HT, &obj->he, hash);
+	}
+	if (!success)
+	{
+	    fprintf(stderr, "Failed to remove key %u\n", key);
+	    exit(EXIT_FAILURE);
 	}
     }
-    else //OPER == Lookup
+}
+
+static void
+thr_lookup_hit(uint32_t tidx)
+{
+    uint32_t vecsize = VECSIZE;
+    uint32_t numthreads = NUMTHREADS;
+    uint32_t numkeys = NUMKEYS;
+    for (uint32_t i = 0; i < numthreads; i++)
     {
-	p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
-	for (uint32_t i = 0; i < NUMTHREADS; i++)
+	if (vecsize != 0)
 	{
-	    for (uint32_t idx = tidx; idx < NUMKEYS; idx += NUMTHREADS)
+	    uint32_t k[MAXVECSIZE];
+	    const void *keys[MAXVECSIZE];
+	    uintptr_t hashes[MAXVECSIZE];
+	    void *res[MAXVECSIZE];
+	    for (uint32_t j = 0; j < vecsize; j++)
+	    {
+		keys[j] = &k[j];
+	    }
+
+	    for (uint32_t i = tidx;
+		 i + vecsize <= numkeys;
+		 i += numthreads * vecsize)
+	    {
+		for (uint32_t j = 0; j < vecsize; j++)
+		{
+		    k[j] = i + j; //Keys are unique
+		    hashes[j] = CRC32C(0, k[j]);//Hashes may not be unique
+		}
+		if (HOPSCOTCH)
+		{
+		    p64_hopscotch_lookup_vec(HT, vecsize, keys, hashes, res);
+		}
+		else if (CUCKOOHT)
+		{
+		    p64_cuckooht_lookup_vec(HT, vecsize, keys, hashes, (void*)res);
+		}
+		else
+		{
+		    p64_hashtable_lookup_vec(HT, vecsize, keys, hashes, (void*)res);
+		}
+		for (uint32_t j = 0; j < vecsize; j++)
+		{
+		    if (res[j] == NULL)
+		    {
+			fprintf(stderr, "Lookup failed to find key %u\n",
+				k[j]);
+			exit(EXIT_FAILURE);
+		    }
+		    struct object *obj;
+		    if (HOPSCOTCH)
+		    {
+			obj = res[j];
+		    }
+		    else if (CUCKOOHT)
+		    {
+			obj = container_of(res[j], struct object, ce);
+		    }
+		    else
+		    {
+			obj = container_of(res[j], struct object, he);
+		    }
+		    if (obj->key != k[j])
+		    {
+			fprintf(stderr, "Lookup returned wrong key: "
+				"wanted %u, actual %u\n",
+				k[j], obj->key);
+			exit(EXIT_FAILURE);
+		    }
+		}
+	    }
+	}
+	else
+	{
+	    for (uint32_t idx = tidx; idx < numkeys; idx += numthreads)
 	    {
 		struct object *obj = NULL;
-		uint32_t key = idx;//Keys are unqiue
+		uint32_t key = idx;//Keys are unique
 		uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
 		if (HOPSCOTCH)
 		{
-		    obj = p64_hopscotch_lookup(HT, &key, hash, &hp);
+		    obj = p64_hopscotch_lookup(HT, &key, hash, NULL);
 		}
 		else if (CUCKOOHT)
 		{
 		    p64_cuckooelem_t *ce =
-			p64_cuckooht_lookup(HT, &key, hash, &hp);
+			p64_cuckooht_lookup(HT, &key, hash, NULL);
 		    if (ce != NULL)
 		    {
 			obj = container_of(ce, struct object, ce);
@@ -234,7 +306,7 @@ thr_execute(uint32_t tidx)
 		else
 		{
 		    p64_hashelem_t *he =
-			p64_hashtable_lookup(HT, &key, hash, &hp);
+			p64_hashtable_lookup(HT, &key, hash, NULL);
 		    if (he != NULL)
 		    {
 			obj = container_of(he, struct object, he);
@@ -248,12 +320,123 @@ thr_execute(uint32_t tidx)
 		else if (obj->key != key)
 		{
 		    fprintf(stderr, "Lookup returned wrong key: "
-				    "wanted %u, actual %u\n",
-				    key, obj->key);
+			    "wanted %u, actual %u\n",
+			    key, obj->key);
 		    exit(EXIT_FAILURE);
 		}
 	    }
 	}
+    }
+}
+
+static void
+thr_lookup_miss(uint32_t tidx)
+{
+    uint32_t vecsize = VECSIZE;
+    uint32_t numthreads = NUMTHREADS;
+    uint32_t numkeys = NUMKEYS;
+    for (uint32_t i = 0; i < numthreads; i++)
+    {
+	if (vecsize != 0)
+	{
+	    uint32_t k[MAXVECSIZE];
+	    const void *keys[MAXVECSIZE];
+	    uintptr_t hashes[MAXVECSIZE];
+	    void *res[MAXVECSIZE];
+	    for (uint32_t j = 0; j < vecsize; j++)
+	    {
+		keys[j] = &k[j];
+	    }
+
+	    for (uint32_t i = tidx;
+		 i + vecsize <= numkeys;
+		 i += numthreads * vecsize)
+	    {
+		for (uint32_t j = 0; j < vecsize; j++)
+		{
+		    k[j] = numkeys + i + j;
+		    hashes[j] = CRC32C(0, k[j]);//Hashes may not be unique
+		}
+		if (HOPSCOTCH)
+		{
+		    p64_hopscotch_lookup_vec(HT, vecsize, keys, hashes, res);
+		}
+		else if (CUCKOOHT)
+		{
+		    p64_cuckooht_lookup_vec(HT, vecsize, keys, hashes, (void*)res);
+		}
+		else
+		{
+		    p64_hashtable_lookup_vec(HT, vecsize, keys, hashes, (void*)res);
+		}
+		for (uint32_t j = 0; j < vecsize; j++)
+		{
+		    if (res[j] != NULL)
+		    {
+			fprintf(stderr, "Lookup non-existent key %u found something\n", k[j]);
+			exit(EXIT_FAILURE);
+		    }
+		}
+	    }
+	}
+	else
+	{
+	    for (uint32_t idx = tidx; idx < numkeys; idx += numthreads)
+	    {
+		struct object *obj = NULL;
+		uint32_t key = numkeys + idx;
+		uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+		if (HOPSCOTCH)
+		{
+		    obj = p64_hopscotch_lookup(HT, &key, hash, NULL);
+		}
+		else if (CUCKOOHT)
+		{
+		    p64_cuckooelem_t *ce =
+			p64_cuckooht_lookup(HT, &key, hash, NULL);
+		    if (ce != NULL)
+		    {
+			obj = container_of(ce, struct object, ce);
+		    }
+		}
+		else
+		{
+		    p64_hashelem_t *he =
+			p64_hashtable_lookup(HT, &key, hash, NULL);
+		    if (he != NULL)
+		    {
+			obj = container_of(he, struct object, he);
+		    }
+		}
+		if (obj != NULL)
+		{
+		    fprintf(stderr, "Lookup non-existent key %u found key %u\n",
+			    key, obj->key);
+		    exit(EXIT_FAILURE);
+		}
+	    }
+	}
+    }
+}
+
+static void
+thr_execute(uint32_t tidx)
+{
+    if (OPER == Insert)
+    {
+	thr_insert(tidx);
+    }
+    else if (OPER == Remove)
+    {
+	thr_remove(tidx);
+    }
+    else if (OPER == LookupHit)
+    {
+	thr_lookup_hit(tidx);
+    }
+    else//OPER == LookupMiss
+    {
+	thr_lookup_miss(tidx);
     }
 }
 
@@ -264,7 +447,8 @@ entrypoint(void *arg)
 
     p64_qsbr_register(QSBR);
 
-    for (uint32_t i = 0; i < 3; i++)
+    //Iterate over operations
+    for (uint32_t i = Insert; i < TheBeyond; i++)
     {
 	//Wait for my signal to start
 	barrier_thr_begin(tidx);
@@ -390,7 +574,7 @@ benchmark(uint32_t numthreads, enum operation oper)
     ts = END_TIME;
 
     uint32_t numops = NUMKEYS;
-    if (oper == Lookup)
+    if (oper == LookupHit || oper == LookupMiss)
     {
 	numops *= numthreads;
     }
@@ -398,7 +582,7 @@ benchmark(uint32_t numthreads, enum operation oper)
     uint32_t elapsed_s = elapsed_ns / 1000000000ULL;
     printf("%u %s, %u.%04llu seconds, ",
 	    numops,
-	    oper == Insert ? "insertions" : oper == Remove ? "removals" : "lookups",
+	    oper == Insert ? "insertions" : oper == Remove ? "removals" : oper == LookupHit ? "lookup hits" : "lookup misses",
 	    elapsed_s,
 	    (elapsed_ns % 1000000000LLU) / 100000LLU);
 
@@ -446,7 +630,7 @@ main(int argc, char *argv[])
     uint32_t numelems = NUMKEYS;
     uint32_t numcells = 0;
 
-    while ((c = getopt(argc, argv, "a:c:Cf:Hk:m:s:t:v")) != -1)
+    while ((c = getopt(argc, argv, "a:c:Cf:Hk:m:s:t:v:V")) != -1)
     {
 	switch (c)
 	{
@@ -516,6 +700,17 @@ main(int argc, char *argv[])
 		    break;
 		}
 	    case 'v' :
+	    {
+		int32_t vz = atoi(optarg);
+		if (vz < 1 || (uint32_t)vz > MAXVECSIZE)
+		{
+		    fprintf(stderr, "Invalid vector size %s\n", optarg);
+		    exit(EXIT_FAILURE);
+		}
+		VECSIZE = vz;
+		break;
+	    }
+	    case 'V' :
 		VERBOSE = true;
 		break;
 	    default :
@@ -529,7 +724,8 @@ usage :
 			"-k <numkeys>     Number of keys\n"
 			"-m <size>        Size of main hash table\n"
 			"-t <numthr>      Number of threads\n"
-			"-v               Verbose\n"
+			"-v <vecsize>     Use vector lookup\n"
+			"-V               Verbose\n"
 		       );
 		exit(EXIT_FAILURE);
 	}
@@ -601,7 +797,8 @@ usage :
 		p64_cuckooht_check(HT);
 	    }
 	}
-	benchmark(NUMTHREADS, Lookup);
+	benchmark(NUMTHREADS, LookupHit);
+	benchmark(NUMTHREADS, LookupMiss);
 	benchmark(NUMTHREADS, Remove);
     }
 

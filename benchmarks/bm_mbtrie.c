@@ -25,7 +25,7 @@
 void p64_hopscotch_check(p64_hopscotch_t *);
 
 #define MAX_ROUTES 1000000
-#define MAX_ASNODES 500000
+#define MAX_ASNODES 510000
 #define HS_NUM_CELLS 100
 #define NLOOKUPS 2000000
 #define ALIGNMENT 64
@@ -812,9 +812,7 @@ syntax_error:
 		    const void *keys[1] = { &asn };
 		    p64_hopschash_t hashes[1] = { hash };
 		    void *res[1];
-		    unsigned long m;
-		    m = p64_hopscotch_lookup_vec(ht, 1, keys, hashes, res);
-		    (void)m;
+		    p64_hopscotch_lookup_vec(ht, 1, keys, hashes, res);
 		    as = res[0];
 		    assert((m == 0 && as == NULL) || (m == 1 && as != NULL));
 		}

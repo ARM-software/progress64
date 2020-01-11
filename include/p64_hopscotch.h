@@ -70,7 +70,7 @@ p64_hopscotch_lookup(p64_hopscotch_t *ht,
 //Return bitmask with successful lookups (result[i] != NULL)
 //Must only be used with QSBR!
 //Caller must call QSBR acquire/release/quiescent as appropriate
-unsigned long
+void
 p64_hopscotch_lookup_vec(p64_hopscotch_t *ht,
 			 uint32_t num,
 			 const void *keys[num],
