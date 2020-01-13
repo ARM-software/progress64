@@ -292,7 +292,9 @@ thr_lookup_hit(uint32_t tidx)
 		uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
 		if (HOPSCOTCH)
 		{
-		    obj = p64_hopscotch_lookup(HT, &key, hash, NULL);
+		    //UBSAN complains if &hp is not specified
+		    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+		    obj = p64_hopscotch_lookup(HT, &key, hash, &hp);
 		}
 		else if (CUCKOOHT)
 		{
@@ -305,8 +307,10 @@ thr_lookup_hit(uint32_t tidx)
 		}
 		else
 		{
+		    //UBSAN complains if &hp is not specified
+		    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 		    p64_hashelem_t *he =
-			p64_hashtable_lookup(HT, &key, hash, NULL);
+			p64_hashtable_lookup(HT, &key, hash, &hp);
 		    if (he != NULL)
 		    {
 			obj = container_of(he, struct object, he);
@@ -388,7 +392,9 @@ thr_lookup_miss(uint32_t tidx)
 		uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
 		if (HOPSCOTCH)
 		{
-		    obj = p64_hopscotch_lookup(HT, &key, hash, NULL);
+		    //UBSAN complains if &hp is not specified
+		    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+		    obj = p64_hopscotch_lookup(HT, &key, hash, &hp);
 		}
 		else if (CUCKOOHT)
 		{
@@ -401,8 +407,10 @@ thr_lookup_miss(uint32_t tidx)
 		}
 		else
 		{
+		    //UBSAN complains if &hp is not specified
+		    p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
 		    p64_hashelem_t *he =
-			p64_hashtable_lookup(HT, &key, hash, NULL);
+			p64_hashtable_lookup(HT, &key, hash, &hp);
 		    if (he != NULL)
 		    {
 			obj = container_of(he, struct object, he);

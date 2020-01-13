@@ -348,7 +348,9 @@ static inline void *
 search_cellar(p64_hopscotch_t *ht,
 	      const void *key,
 	      p64_hopschash_t hash,
-	      p64_hazardptr_t *hazpp)
+	      p64_hazardptr_t *hazpp,
+	      bool use_hp,
+	      bool check_key)
 {
     if (UNLIKELY(ht->ncells == 0))
     {
@@ -363,10 +365,22 @@ search_cellar(p64_hopscotch_t *ht,
 	{
 	    void *elem = atomic_load_acquire(&ht->cellar[idx].elem,
 					     hazpp,
-					     hazpp != NULL && ht->use_hp);
-	    if (elem != NULL && ht->cf(elem, key) == 0)
+					     use_hp);
+	    if (elem != NULL)
 	    {
-		return elem;
+		if (check_key)
+		{
+		    if (LIKELY(ht->cf(elem, key) == 0))
+		    {
+			return elem;
+		    }
+		    //Else false positive
+		}
+		else//Check key later
+		{
+		    PREFETCH_FOR_READ(elem);
+		    return elem;
+		}
 	    }
 	}
 	idx = ring_add(idx, 1, ht->ncells);
@@ -388,7 +402,8 @@ lookup(p64_hopscotch_t *ht,
        p64_hopschash_t hash,
        bix_t bix,
        p64_hazardptr_t *hazpp,
-       bool use_hp)
+       bool use_hp,
+       bool check_key)
 {
     struct bmc cur;
     __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
@@ -410,13 +425,21 @@ lookup(p64_hopscotch_t *ht,
 	    if (LIKELY(elem_bmc.sig == sig))
 #endif
 	    {
-		if (LIKELY(ht->cf(elem, key) == 0))
+		if (check_key)
 		{
-		    //Found our element
-		    //Keep hazard pointer set
+		    if (LIKELY(ht->cf(elem, key) == 0))
+		    {
+			//Found our element
+			//Keep hazard pointer set
+			return elem;
+		    }
+		    //Else false positive
+		}
+		else//Check key later
+		{
+		    PREFETCH_FOR_READ(elem);
 		    return elem;
 		}
-		//Else false positive
 	    }
 	}
 	//Else element just re/moved
@@ -439,7 +462,7 @@ lookup(p64_hopscotch_t *ht,
     }
     if (cur.cellar)
     {
-	void *elem = search_cellar(ht, key, hash, hazpp);
+	void *elem = search_cellar(ht, key, hash, hazpp, use_hp, check_key);
 	if (elem)
 	{
 	    //Found our element
@@ -460,7 +483,7 @@ p64_hopscotch_lookup(p64_hopscotch_t *ht,
     bix_t bix = ring_mod(hash, ht->nbkts);
     PREFETCH_FOR_READ((char *)&ht->buckets[bix]);
     PREFETCH_FOR_READ((char *)&ht->buckets[bix] + CACHE_LINE);
-    void *elem = lookup(ht, key, hash, bix, hazpp, ht->use_hp);
+    void *elem = lookup(ht, key, hash, bix, hazpp, ht->use_hp, true);
     return elem;
 }
 
@@ -490,7 +513,17 @@ p64_hopscotch_lookup_vec(p64_hopscotch_t *ht,
     }
     for (uint32_t i = 0; i < num; i++)
     {
-	result[i] = lookup(ht, keys[i], hashes[i], bix[i], NULL, false);
+	result[i] = lookup(ht, keys[i], hashes[i], bix[i], NULL, false, false);
+    }
+    for (uint32_t i = 0; i < num; i++)
+    {
+	if (LIKELY(result[i] != NULL))
+	{
+	    if (ht->cf(result[i], keys[i]) != 0)
+	    {
+		result[i] = p64_hopscotch_lookup(ht, keys[i], hashes[i], NULL);
+	    }
+	}
     }
 }
 

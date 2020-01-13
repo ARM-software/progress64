@@ -203,7 +203,8 @@ bucket_lookup(p64_hashtable_t *ht,
 	      struct hash_bucket *bkt,
 	      const void *key,
 	      p64_hashvalue_t hash,
-	      p64_hazardptr_t *hazpp)
+	      p64_hazardptr_t *hazpp,
+	      bool check_key)
 {
     uint32_t mask = 0;
     //We want this loop unrolled
@@ -226,9 +227,19 @@ bucket_lookup(p64_hashtable_t *ht,
 	assert(REM_MARK(he) == he);
 	if (he != NULL)
 	{
-	    if (ht->cf(he, key) == 0)
+	    //Already matched on hash above
+	    if (check_key)
 	    {
-		//Found our element
+		if (ht->cf(he, key) == 0)
+		{
+		    //Found our element
+		    return he;
+		}
+		//Else false positive
+	    }
+	    else//Check key later
+	    {
+		PREFETCH_FOR_READ(he);
 		return he;
 	    }
 	}
@@ -241,7 +252,8 @@ static p64_hashelem_t *
 list_lookup(p64_hashtable_t *ht,
 	    p64_hashelem_t *prnt,
 	    const void *key,
-	    p64_hazardptr_t *hazpp)
+	    p64_hazardptr_t *hazpp,
+	    bool check_key)
 {
     p64_hazardptr_t hpprnt = P64_HAZARDPTR_NULL;
     for (;;)
@@ -256,9 +268,19 @@ list_lookup(p64_hashtable_t *ht,
 	    atomic_ptr_release(&hpprnt, ht->use_hp);
 	    return NULL;
 	}
-	if (ht->cf(this, key) == 0)
+	if (check_key)
 	{
-	    //Found our element
+	    if (ht->cf(this, key) == 0)
+	    {
+		//Found our element
+		atomic_ptr_release(&hpprnt, ht->use_hp);
+		return this;
+	    }
+	    //Else false positive
+	}
+	else//Check key later
+	{
+	    PREFETCH_FOR_READ(this);
 	    atomic_ptr_release(&hpprnt, ht->use_hp);
 	    return this;
 	}
@@ -268,20 +290,22 @@ list_lookup(p64_hashtable_t *ht,
     }
 }
 
+ALWAYS_INLINE
 static inline p64_hashelem_t *
 lookup(p64_hashtable_t *ht,
        struct hash_bucket *bkt,
        const void *key,
        p64_hashvalue_t hash,
-       p64_hazardptr_t *hazpp)
+       p64_hazardptr_t *hazpp,
+       bool check_key)
 {
     p64_hashelem_t *he;
-    he = bucket_lookup(ht, bkt, key, hash, hazpp);
+    he = bucket_lookup(ht, bkt, key, hash, hazpp, check_key);
     if (he != NULL)
     {
 	return he;
     }
-    he = list_lookup(ht, &bkt->elems[hash % BKT_SIZE], key, hazpp);
+    he = list_lookup(ht, &bkt->elems[hash % BKT_SIZE], key, hazpp, check_key);
     if (he != NULL)
     {
 	return he;
@@ -303,7 +327,7 @@ p64_hashtable_lookup(p64_hashtable_t *ht,
     }
     size_t bix = hash_to_bix(ht, hash);
     struct hash_bucket *bkt = &ht->buckets[bix];
-    p64_hashelem_t *he = lookup(ht, bkt, key, hash, hazpp);
+    p64_hashelem_t *he = lookup(ht, bkt, key, hash, hazpp, true);
     return he;
 }
 
@@ -329,7 +353,18 @@ p64_hashtable_lookup_vec(p64_hashtable_t *ht,
     for (uint32_t i = 0; i < num; i++)
     {
 	p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
-	result[i] = lookup(ht, bkts[i], keys[i], hashes[i], &hp);
+	result[i] = lookup(ht, bkts[i], keys[i], hashes[i], &hp, false);
+    }
+    for (uint32_t i = 0; i < num; i++)
+    {
+	if (result[i] != NULL)
+	{
+	    if (ht->cf(result[i], keys[i]) != 0)
+	    {
+		p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
+		result[i] = p64_hashtable_lookup(ht, keys[i], hashes[i], &hp);
+	    }
+	}
     }
 }
 

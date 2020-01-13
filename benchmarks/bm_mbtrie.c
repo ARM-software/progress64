@@ -814,7 +814,6 @@ syntax_error:
 		    void *res[1];
 		    p64_hopscotch_lookup_vec(ht, 1, keys, hashes, res);
 		    as = res[0];
-		    assert((m == 0 && as == NULL) || (m == 1 && as != NULL));
 		}
 		else
 		{

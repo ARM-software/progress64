@@ -432,7 +432,9 @@ check_matches(p64_cuckooht_t *ht,
 	      mask_t mask,
 	      const void *key,
 	      p64_cuckoohash_t hash,
-	      p64_hazardptr_t *hazpp)
+	      p64_hazardptr_t *hazpp,
+	      bool use_hp,
+	      bool check_key)
 {
     assert(mask != 0);
     //Do full checks for all matches one by one
@@ -443,14 +445,25 @@ check_matches(p64_cuckooht_t *ht,
 	    atomic_load_acquire(&bkt->elems[i],
 				hazpp,
 				~BITS_ALL,
-				ht->use_hp);
+				use_hp);
 	elem = CLR_ALL(elem);
-	if (elem != NULL && elem->hash == hash && ht->cf(elem, key) == 0)
+	if (elem != NULL && elem->hash == hash)
 	{
-	    //Found our element
-	    return elem;
+	    if (check_key)
+	    {
+		if (ht->cf(elem, key) == 0)
+		{
+		    //Found our element
+		    return elem;
+		}
+		//Else false positive signature match
+	    }
+	    else//Check key later
+	    {
+		PREFETCH_FOR_READ(elem);
+		return elem;
+	    }
 	}
-	//Else false positive signature match
 	mask &= ~(MASK_ONE << (i << MASK_SHIFT));
     }
     while (mask != 0);
@@ -462,7 +475,9 @@ static p64_cuckooelem_t *
 search_cellar(p64_cuckooht_t *ht,
 	      const void *key,
 	      p64_cuckoohash_t hash,
-	      p64_hazardptr_t *hazpp)
+	      p64_hazardptr_t *hazpp,
+	      bool use_hp,
+	      bool check_key)
 {
     if (UNLIKELY(ht->ncells == 0))
     {
@@ -479,11 +494,23 @@ search_cellar(p64_cuckooht_t *ht,
 		atomic_load_acquire(&ht->cellar[idx].elem,
 				    hazpp,
 				    ~BITS_ALL,
-				    hazpp != NULL && ht->use_hp);
-	    if (elem != NULL && ht->cf(elem, key) == 0)
+				    use_hp);
+	    if (elem != NULL)
 	    {
-		//Found our element
-		return elem;
+		if (check_key)
+		{
+		    if (ht->cf(elem, key) == 0)
+		    {
+			//Found our element
+			return elem;
+		    }
+		    //Else false positive
+		}
+		else//Check key later
+		{
+		    PREFETCH_FOR_READ(elem);
+		    return elem;
+		}
 	    }
 	}
 	idx = ring_add(idx, 1, ht->ncells);
@@ -499,7 +526,9 @@ lookup(p64_cuckooht_t *ht,
        p64_cuckoohash_t hash,
        struct bucket *bkt0,
        struct bucket *bkt1,
-       p64_hazardptr_t *hazpp)
+       p64_hazardptr_t *hazpp,
+       bool use_hp,
+       bool check_key)
 {
     uint32_t chgcnt;
     p64_cuckooelem_t *elem;
@@ -511,7 +540,7 @@ lookup(p64_cuckooht_t *ht,
 	if (LIKELY(mask0 != 0))
 	{
 	    //Perform complete checks for any matches
-	    elem = check_matches(ht, bkt0, mask0, key, hash, hazpp);
+	    elem = check_matches(ht, bkt0, mask0, key, hash, hazpp, use_hp, check_key);
 	    if (elem != NULL)
 	    {
 		return elem;
@@ -520,7 +549,7 @@ lookup(p64_cuckooht_t *ht,
 	mask_t mask1 = find_sig(bkt1->sigs, hash >> 16);
 	if (LIKELY(mask1 != 0))
 	{
-	    elem = check_matches(ht, bkt1, mask1, key, hash, hazpp);
+	    elem = check_matches(ht, bkt1, mask1, key, hash, hazpp, use_hp, check_key);
 	    if (elem != NULL)
 	    {
 		return elem;
@@ -535,7 +564,7 @@ lookup(p64_cuckooht_t *ht,
     //present in the cellar
     if ((chgcnt & CELLAR_BIT) != 0)
     {
-	elem = search_cellar(ht, key, hash, hazpp);
+	elem = search_cellar(ht, key, hash, hazpp, use_hp, check_key);
 	if (elem != NULL)
 	{
 	    return elem;
@@ -561,7 +590,7 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
     }
     struct bucket *bkt1 = &ht->buckets[bix1];
     PREFETCH_FOR_READ(bkt1);
-    p64_cuckooelem_t *elem = lookup(ht, key, hash, bkt0, bkt1, hazpp);
+    p64_cuckooelem_t *elem = lookup(ht, key, hash, bkt0, bkt1, hazpp, ht->use_hp, true);
     return elem;
 }
 
@@ -596,7 +625,17 @@ p64_cuckooht_lookup_vec(p64_cuckooht_t *ht,
     {
 	struct bucket *bkt0 = &ht->buckets[bix0[i]];
 	struct bucket *bkt1 = &ht->buckets[bix1[i]];
-	result[i] = lookup(ht, keys[i], hashes[i], bkt0, bkt1, NULL);
+	result[i] = lookup(ht, keys[i], hashes[i], bkt0, bkt1, NULL, false, false);
+    }
+    for (uint32_t i = 0; i < num; i++)
+    {
+	if (LIKELY(result[i] != NULL))
+	{
+	    if (ht->cf(result[i], keys[i]) != 0)
+	    {
+		result[i] = p64_cuckooht_lookup(ht, keys[i], hashes[i], NULL);
+	    }
+	}
     }
 }
 
