@@ -973,6 +973,7 @@ parse_data(unsigned long mask,
 	size_t i = __builtin_ctzl(mask);
 	unsigned long bit = 1UL << i;
 	mask &= ~bit;
+	ptrs[i] = (void *)__atomic_load_n(ptrs[i], __ATOMIC_ACQUIRE);
 	void *ptr = ptrs[i];
 	if (IS_VECTOR(ptr))
 	{
@@ -983,7 +984,8 @@ parse_data(unsigned long mask,
 	    size_t idx = prefix_to_index(keys[i], mbt->strides[depth + 1]);
 	    void **vec = CLR_ALL(ptr);
 	    //Follow pointer in trie table
-	    ptrs[i] = (void **)__atomic_load_n(&vec[idx], __ATOMIC_ACQUIRE);
+	    ptrs[i] = &vec[idx];
+	    PREFETCH_FOR_READ(ptrs[i]);
 	}
 	//Else leaf found, stop here (don't update next_mask)
 	else if (LIKELY(ptr != NULL))
@@ -1038,7 +1040,7 @@ p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
     {
 	return 0;
     }
-    //First read all pointers to first level in order to utilise
+    //First prefetch all pointers to first level in order to utilise
     //memory level parallelism and overlap cache misses
     uint32_t stride = mbt->strides[0];
     void **base = mbt->base;
@@ -1055,9 +1057,11 @@ p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
 	    uint64x2_t vidx = vandq_u64(vshrq_n_u64(vkey, 64 - stride), vmask);
 	    uint64x2_t vptr = vaddq_u64(vqshlq_n_u64(vidx, 3), vbase);
 	    uint64_t ptr0 = vgetq_lane_u64(vptr, 0);
-	    results[i + 0] = __atomic_load_n((void **)ptr0, __ATOMIC_RELAXED);
+	    results[i + 0] = (void *)ptr0;
+	    PREFETCH_FOR_READ(results[i + 0]);
 	    uint64_t ptr1 = vgetq_lane_u64(vptr, 1);
-	    results[i + 1] = __atomic_load_n((void **)ptr1, __ATOMIC_ACQUIRE);
+	    results[i + 1] = (void *)ptr1;
+	    PREFETCH_FOR_READ(results[i + 1]);
 	}
     }
     //Do small vectors and any trailing odd element the scalar way
@@ -1065,14 +1069,16 @@ p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
     for (; i < num; i++)
     {
 	size_t idx = prefix_to_index(keys[i], stride);
-	results[i] = (void *)__atomic_load_n(&base[idx], __ATOMIC_ACQUIRE);
+	results[i] = (void *)&base[idx];
+	PREFETCH_FOR_READ(results[i]);
     }
     unsigned long mask = num == long_bits ? ~0UL : (1UL << num) - 1;
     unsigned long bm = 0;//Success bitmap
     uint32_t depth = 0;
     do
     {
-	//Then parse returned data, potentially stalling for cache misses
+	//Then perform actual loads and parse returned data
+	//Prefetch any pointers to next level
 	mask = parse_data(mask,
 			  mbt,
 			  depth,
