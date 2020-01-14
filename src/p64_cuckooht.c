@@ -1033,13 +1033,9 @@ find_null(p64_cuckooelem_t **elems, uint32_t *count)
     uint16x4_t vmatch16 = vmovn_u32(vmatch32);
     //Combine vmatch16 with 0 to get 8 8-bit lanes
     uint8x8_t vmatch8 = vmovn_u16(vcombine_u16(vmatch16, vdup_n_u16(0)));
-    uint8x8_t vcnt8 = vcnt_u8(vmatch8);
-    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
-    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
-    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
-    *count = vget_lane_u8(vcnt8, 0);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
+    *count = ((matches & 0x0101010101010101UL) * 0x0101010101010101UL) >> 56;
 #elif BKT_SIZE == 8
     uint32x4_t velemsA = vld1q_u32((uint32_t *)&elems[0]);
     uint32x4_t velemsB = vld1q_u32((uint32_t *)&elems[4]);
@@ -1049,13 +1045,9 @@ find_null(p64_cuckooelem_t **elems, uint32_t *count)
     uint16x4_t vmatch16B = vmovn_u32(vmatch32B);
     uint16x8_t vmatch16 = vcombine_u16(vmatch16A, vmatch16B);
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
-    uint8x8_t vcnt8 = vcnt_u8(vmatch8);
-    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
-    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
-    vcnt8 = vpadd_u8(vcnt8, vdup_n_u8(0));
-    *count = vget_lane_u8(vcnt8, 0);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
+    *count = ((matches & 0x0101010101010101UL) * 0x0101010101010101UL) >> 56;
 #endif
 #elif defined __ARM_NEON && defined __aarch64__
     static_assert(BKT_SIZE == 6 || BKT_SIZE == 8,
