@@ -243,7 +243,8 @@ bucket_lookup(p64_hashtable_t *ht,
 		return he;
 	    }
 	}
-	mask &= ~(1U << i);
+	//Clear least significant bit
+	mask &= mask - 1;
     }
     return NULL;
 }
@@ -451,7 +452,8 @@ bucket_insert(struct hash_bucket *bkt,
 	    //Success
 	    return true;
 	}
-	mask &= ~(1U << i);
+	//Clear least significant bit
+	mask &= mask - 1;
     }
     return false;
 }
@@ -710,7 +712,8 @@ bucket_remove_by_key(p64_hashtable_t *ht,
 		return he;
 	    }
 	}
-	mask &= ~(1U << i);
+	//Clear least significant bit
+	mask &= mask - 1;
     }
     return NULL;
 }

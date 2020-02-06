@@ -236,7 +236,8 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
 	while (bix_bm != 0)
 	{
 	    uint32_t bit = __builtin_ctz(bix_bm);
-	    bix_bm &= ~(1U << bit);
+	    //Clear least significant bit
+	    bix_bm &= bix_bm - 1;
 	    dist_hg[bit]++;
 	}
     }
@@ -443,7 +444,8 @@ lookup(p64_hopscotch_t *ht,
 	    }
 	}
 	//Else element just re/moved
-	cur.bitmap &= ~(1U << bit);
+	//Clear least significant bit
+	cur.bitmap &= cur.bitmap - 1;
 	//Else false positive or element has been moved or replaced
 	if (cur.bitmap == 0)
 	{
@@ -934,7 +936,8 @@ remove_bkt_by_ptr(p64_hopscotch_t *ht,
 		//Else bitmap changed
 		break;//Quit inner loop early
 	    }
-	    cur.bitmap &= ~(1U << bit);
+	    //Clear least significant bit
+	    cur.bitmap &= cur.bitmap - 1;
 	}
 	prev_count = cur.count;
 	//Prevent re-load of bmc from moving up
@@ -1063,7 +1066,8 @@ remove_bkt_by_key(p64_hopscotch_t *ht,
 		    //Else false positive
 		}
 	    }
-	    cur.bitmap &= ~(1U << bit);
+	    //Clear least significant bit
+	    cur.bitmap &= cur.bitmap - 1;
 	}
 	prev_count = cur.count;
 	//Prevent re-load of bmc from moving up

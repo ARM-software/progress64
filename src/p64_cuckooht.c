@@ -366,20 +366,16 @@ p64_cuckooht_free(p64_cuckooht_t *ht)
 #if BKT_SIZE == 4
 typedef uint32_t mask_t;
 #define MASK_SHIFT 3 //8 bits per boolean flag
-#define MASK_ONE UINT32_C(0xFF)
 #elif BKT_SIZE == 8
 typedef uint64_t mask_t;
-#define MASK_ONE UINT64_C(0xFF)
 #define MASK_SHIFT 3 //8 bits per boolean flag
 #endif
 #elif defined __ARM_NEON && defined __aarch64__ && (BKT_SIZE == 6 || BKT_SIZE == 8)
 typedef uint64_t mask_t;
 #define MASK_SHIFT 3 //8 bits per boolean flag
-#define MASK_ONE UINT64_C(0xFF)
 #else
 typedef uint32_t mask_t;
 #define MASK_SHIFT 0 //1 bit per boolean flag
-#define MASK_ONE UINT32_C(1)
 #endif
 
 UNROLL_LOOPS ALWAYS_INLINE
@@ -395,6 +391,8 @@ find_sig(const sig_t sigs[BKT_SIZE], sig_t sig)
     //compare sigs: equality => ~0 (per lane), inequality => 0
     uint16x8_t vmatch16 = vceqq_u16(vsigs, vsig);
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     //Cast will mask off upper bits which were based on non-existent sigs[4..7]
     matches = (mask_t)vget_lane_u64(vmatch, 0);
@@ -406,11 +404,16 @@ find_sig(const sig_t sigs[BKT_SIZE], sig_t sig)
     //compare sigs: equality => ~0 (per lane), inequality => 0
     uint16x8_t vmatch16 = vceqq_u16(vsigs, vsig);
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+#if BKT_SIZE == 8
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
+#endif
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
 #if BKT_SIZE == 6
     //Mask off upper 16 bits which were based on non-existent sigs[6..7]
-    matches &= ((1UL << 48) - 1);
+    //Generate 1-bit boolean mask
+    matches &= 0x010101010101;
 #endif
 #else
     matches = 0;
@@ -418,7 +421,7 @@ find_sig(const sig_t sigs[BKT_SIZE], sig_t sig)
     {
 	if (sigs[i] == sig)
 	{
-	    matches |= MASK_ONE << (i << MASK_SHIFT);
+	    matches |= 1U << (i << MASK_SHIFT);
 	}
     }
 #endif
@@ -464,7 +467,8 @@ check_matches(p64_cuckooht_t *ht,
 		return elem;
 	    }
 	}
-	mask &= ~(MASK_ONE << (i << MASK_SHIFT));
+	//Clear least significant bit
+	mask &= mask - 1;
     }
     while (mask != 0);
     return NULL;
@@ -700,7 +704,8 @@ bucket_insert(struct bucket *bkt,
 	    write_sig(bkt, i, oldsig, elem, hash >> 16);
 	    return true;
 	}
-	mask &= ~(MASK_ONE << (i << MASK_SHIFT));
+	//Clear least significant bit
+	mask &= mask - 1;
     }
     return false;
 }
@@ -1033,6 +1038,8 @@ find_null(p64_cuckooelem_t **elems, uint32_t *count)
     uint16x4_t vmatch16 = vmovn_u32(vmatch32);
     //Combine vmatch16 with 0 to get 8 8-bit lanes
     uint8x8_t vmatch8 = vmovn_u16(vcombine_u16(vmatch16, vdup_n_u16(0)));
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
     *count = ((matches & 0x0101010101010101UL) * 0x0101010101010101UL) >> 56;
@@ -1045,6 +1052,8 @@ find_null(p64_cuckooelem_t **elems, uint32_t *count)
     uint16x4_t vmatch16B = vmovn_u32(vmatch32B);
     uint16x8_t vmatch16 = vcombine_u16(vmatch16A, vmatch16B);
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
     *count = ((matches & 0x0101010101010101UL) * 0x0101010101010101UL) >> 56;
@@ -1073,6 +1082,8 @@ find_null(p64_cuckooelem_t **elems, uint32_t *count)
     uint16x8_t vmatch16 = vpmaxq_u16(vreinterpretq_u16_u32(vmatch32AB),
 				     vreinterpretq_u16_u32(vmatch32CD));
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
     uint8x8_t vcnt = vcnt_u8(vmatch8);
     *count = vaddv_u8(vcnt);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
@@ -1083,7 +1094,7 @@ find_null(p64_cuckooelem_t **elems, uint32_t *count)
     {
 	if (elems[i] == NULL)
 	{
-	    matches |= MASK_ONE << (i << MASK_SHIFT);
+	    matches |= 1U << (i << MASK_SHIFT);
 	}
     }
     *count = __builtin_popcountll(matches);
@@ -1198,7 +1209,8 @@ bucket_remove(p64_cuckooht_t *ht,
 	    write_sig(bkt, i, oldsig, NULL, elem->hash >> 16);
 	    return true;
 	}
-	mask &= ~(MASK_ONE << (i << MASK_SHIFT));
+	//Clear least significant bit
+	mask &= mask - 1;
     }
     while (mask != 0);
     return false;
@@ -1211,7 +1223,7 @@ update_cellar(p64_cuckooht_t *ht,
     uint32_t old, new;
     do
     {
-	old  = __atomic_load_n(&ht->buckets[bix].chgcnt, __ATOMIC_ACQUIRE);
+	old = __atomic_load_n(&ht->buckets[bix].chgcnt, __ATOMIC_ACQUIRE);
 	new = old;
 	new &= ~CELLAR_BIT;
 	for (bix_t i = 0; i < ht->ncells; i++)
@@ -1295,6 +1307,8 @@ find_elem(p64_cuckooelem_t **elems, p64_cuckooelem_t *elem)
     uint16x4_t vmatch16 = vmovn_u32(vmatch32);
     //Combine vmatch16 with itself giving 8 lanes of results
     uint8x8_t vmatch8 = vmovn_u16(vcombine_u16(vmatch16, vmatch16));
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     //Cast to uint32_t to mask away bits 32..63
     matches = (uint32_t)vget_lane_u64(vmatch, 0);
@@ -1311,6 +1325,8 @@ find_elem(p64_cuckooelem_t **elems, p64_cuckooelem_t *elem)
     uint16x4_t vmatch16B = vmovn_u32(vmatch32B);
     uint16x8_t vmatch16 = vcombine_u16(vmatch16A, vmatch16B);
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
 #endif
@@ -1346,6 +1362,8 @@ find_elem(p64_cuckooelem_t **elems, p64_cuckooelem_t *elem)
     uint16x8_t vmatch16 = vpmaxq_u16(vreinterpretq_u16_u32(vmatch32AB),
 				     vreinterpretq_u16_u32(vmatch32CD));
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
+    //Generate 1-bit boolean mask
+    vmatch8 = vshr_n_u8(vmatch8, 7);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
 #else
@@ -1354,7 +1372,7 @@ find_elem(p64_cuckooelem_t **elems, p64_cuckooelem_t *elem)
     {
 	if (CLR_ALL(elems[i]) == elem)
 	{
-	    matches |= MASK_ONE << (i << MASK_SHIFT);
+	    matches |= 1U << (i << MASK_SHIFT);
 	}
     }
 #endif
