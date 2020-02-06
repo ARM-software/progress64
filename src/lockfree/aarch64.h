@@ -14,6 +14,42 @@
 ALWAYS_INLINE
 static inline __int128 casp(__int128 *var, __int128 old, __int128 neu, int mo)
 {
+#if __GNUC__ >= 9
+    //GCC-9 is supposed to allocate even/odd register pairs
+    if (mo == __ATOMIC_RELAXED)
+    {
+	__asm __volatile("casp %0, %H0, %1, %H1, [%2]"
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
+    }
+    else if (mo == __ATOMIC_ACQUIRE)
+    {
+	__asm __volatile("caspa %0, %H0, %1, %H1, [%2]"
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
+    }
+    else if (mo == __ATOMIC_ACQ_REL)
+    {
+	__asm __volatile("caspal %0, %H0, %1, %H1, [%2]"
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
+    }
+    else if (mo == __ATOMIC_RELEASE)
+    {
+	__asm __volatile("caspl %0, %H0, %1, %H1, [%2]"
+			: "+r" (old)
+			: "r" (neu), "r" (var)
+			: "memory");
+    }
+    else
+    {
+	abort();
+    }
+    return old;
+#else
     register uint64_t x0 __asm ("x0") = (uint64_t)old;
     register uint64_t x1 __asm ("x1") = (uint64_t)(old >> 64);
     register uint64_t x2 __asm ("x2") = (uint64_t)neu;
@@ -52,6 +88,7 @@ static inline __int128 casp(__int128 *var, __int128 old, __int128 neu, int mo)
 	abort();
     }
     return x0 | ((__int128)x1 << 64);
+#endif
 }
 #endif
 

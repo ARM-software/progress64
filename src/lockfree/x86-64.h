@@ -31,7 +31,7 @@ static inline bool cmpxchg16b(__int128 *src, union u128 *cmp, union u128 with)
 }
 
 ALWAYS_INLINE
-static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128 *exp, register __int128 neu, bool weak, int mo_success, int mo_failure)
+static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128 *exp, __int128 neu, bool weak, int mo_success, int mo_failure)
 {
     (void)weak;
     (void)mo_success;
@@ -39,15 +39,12 @@ static inline bool lockfree_compare_exchange_16(register __int128 *var, __int128
     union u128 cmp, with;
     cmp.ui = *exp;
     with.ui = neu;
-    if (cmpxchg16b(var, &cmp, with))
-    {
-	return true;
-    }
-    else
+    bool ret = cmpxchg16b(var, &cmp, with);
+    if (UNLIKELY(!ret))
     {
 	*exp = cmp.ui;
-	return false;
     }
+    return ret;
 }
 
 ALWAYS_INLINE
