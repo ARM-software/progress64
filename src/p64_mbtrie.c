@@ -1055,7 +1055,7 @@ p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
 	{
 	    uint64x2_t vkey = vld1q_u64(&keys[i]);
 	    uint64x2_t vidx = vandq_u64(vshrq_n_u64(vkey, 64 - stride), vmask);
-	    uint64x2_t vptr = vaddq_u64(vqshlq_n_u64(vidx, 3), vbase);
+	    uint64x2_t vptr = vaddq_u64(vshlq_n_u64(vidx, 3), vbase);
 	    uint64_t ptr0 = vgetq_lane_u64(vptr, 0);
 	    results[i + 0] = (void *)ptr0;
 	    PREFETCH_FOR_READ(results[i + 0]);
