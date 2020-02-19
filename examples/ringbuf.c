@@ -31,11 +31,11 @@ error_handler(const char *module, const char *error, uintptr_t val)
 static void
 test_rb(uint32_t flags)
 {
-    uintptr_t vec[4];
+    uintptr_t vec[6];
     int ret;
     uint32_t index;
 
-    p64_ringbuf_uip_t *rb = p64_ringbuf_uip_alloc(2, flags);
+    p64_ringbuf_uip_t *rb = p64_ringbuf_uip_alloc(5, flags);
     if (flags == (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ))
     {
 	EXPECT(rb == NULL);
@@ -56,18 +56,21 @@ test_rb(uint32_t flags)
     ret = p64_ringbuf_uip_dequeue(rb, vec, 1, &index);
     EXPECT(ret == 0);
 
-    ret = p64_ringbuf_uip_enqueue(rb, (uintptr_t[]){ 2, 3, 4 }, 3);
-    EXPECT(ret == 2);
+    ret = p64_ringbuf_uip_enqueue(rb, (uintptr_t[]){ 2, 3, 4, 5, 6, 7 }, 6);
+    EXPECT(ret == 5);
 
     ret = p64_ringbuf_uip_dequeue(rb, vec, 1, &index);
     EXPECT(ret == 1);
     EXPECT(index == 1);
     EXPECT(vec[0] == 2);
 
-    ret = p64_ringbuf_uip_dequeue(rb, vec, 4, &index);
-    EXPECT(ret == 1);
+    ret = p64_ringbuf_uip_dequeue(rb, vec, 6, &index);
+    EXPECT(ret == 4);
     EXPECT(index == 2);
     EXPECT(vec[0] == 3);
+    EXPECT(vec[1] == 4);
+    EXPECT(vec[2] == 5);
+    EXPECT(vec[3] == 6);
 
     p64_ringbuf_uip_free(rb);
 }

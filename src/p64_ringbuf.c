@@ -35,6 +35,7 @@
 #define FLAG_CLRSLOTS 0x0008
 
 typedef uint32_t ringidx_t;
+#define MAXELEMS 0xFFFFFFFF
 
 struct idxpair
 {
@@ -55,6 +56,7 @@ struct headtail
     ringidx_t tail;//head for consumer
 #endif
     ringidx_t mask;
+    ringidx_t capacity;
     uint32_t flags;
 };
 
@@ -68,8 +70,7 @@ struct p64_ringbuf
 p64_ringbuf_t *
 p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 {
-    unsigned long ringsz = ROUNDUP_POW2(nelems);
-    if (nelems == 0 || ringsz == 0 || ringsz > 0x80000000)
+    if (nelems == 0 || nelems > MAXELEMS)
     {
 	report_error("ringbuf", "invalid number of elements", nelems);
 	return NULL;
@@ -92,6 +93,7 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	report_error("ringbuf", "invalid flags", flags);
 	return NULL;
     }
+    uint64_t ringsz = ROUNDUP_POW2(nelems);
     size_t nbytes = sizeof(p64_ringbuf_t) + ringsz * esize;
     p64_ringbuf_t *rb = p64_malloc(nbytes, CACHE_LINE);
     if (rb != NULL)
@@ -100,6 +102,7 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	rb->prod.head.pend = 0;
 	rb->prod.tail = 0;
 	rb->prod.mask = ringsz - 1;
+	rb->prod.capacity = nelems;
 	rb->prod.flags = (flags & P64_RINGBUF_F_SPENQ) ? 0 ://SPENQ
 			 (flags & P64_RINGBUF_F_NBENQ) ? FLAG_NONBLK ://NBENQ
 			 FLAG_BLK;//MPENQ
@@ -107,6 +110,7 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	rb->cons.head.pend = 0;
 	rb->cons.tail = 0;
 	rb->cons.mask = ringsz - 1;
+	rb->cons.capacity = 0;//Not really used
 	rb->cons.flags = (flags & P64_RINGBUF_F_SCDEQ) ? 0 ://SCDEQ
 			 (flags & P64_RINGBUF_F_NBDEQ) ? FLAG_NONBLK ://NBDEQ
 			 FLAG_BLK;//MCDEQ
@@ -171,12 +175,11 @@ acquire_slots(const ringidx_t *headp,
 	      ringidx_t *tailp,
 	      ringidx_t mask,
 	      int n,
-	      bool enqueue)
+	      ringidx_t capacity)
 {
-    ringidx_t ring_size = enqueue ? /*enqueue*/mask + 1 : /*dequeue*/0;
     ringidx_t tail = __atomic_load_n(tailp, __ATOMIC_RELAXED);
     ringidx_t head = __atomic_load_n(headp, __ATOMIC_ACQUIRE);
-    int actual = MIN(n, (int)(ring_size + head - tail));
+    int actual = MIN(n, (int)(capacity + head - tail));
     if (UNLIKELY(actual <= 0))
     {
 	return (p64_ringbuf_result_t){ .index = 0, .actual = 0, .mask = 0 };
@@ -188,10 +191,9 @@ acquire_slots(const ringidx_t *headp,
 static inline p64_ringbuf_result_t
 acquire_slots_mtsafe(struct headtail *rb,
 		     int n,
-		     bool enqueue)
+		     ringidx_t capacity)
 {
     ringidx_t tail;
-    ringidx_t ring_size = enqueue ? /*enqueue*/rb->mask + 1 : /*dequeue*/0;
     int actual;
 #ifndef USE_LDXSTX
     tail = __atomic_load_n(&rb->tail, __ATOMIC_RELAXED);
@@ -202,7 +204,7 @@ acquire_slots_mtsafe(struct headtail *rb,
 #ifdef USE_LDXSTX
 	tail = ldx(&rb->tail, __ATOMIC_RELAXED);
 #endif
-	actual = MIN(n, (int)(ring_size + head - tail));
+	actual = MIN(n, (int)(capacity + head - tail));
 	if (UNLIKELY(actual <= 0))
 	{
 	    return (p64_ringbuf_result_t){ .index = 0, .actual = 0, .mask = 0 };
@@ -449,12 +451,12 @@ p64_ringbuf_acquire_(void *ptr,
 	    //Consumer metadata is swapped: cons.tail<->cons.head
 	    r = acquire_slots(&rb->prod.head.cur,
 			      &rb->cons.head/*tail*/.cur,
-			      mask, num, true);
+			      mask, num, rb->prod.capacity);
 	}
 	else
 	{
 	    //MT-safe multi producer code
-	    r = acquire_slots_mtsafe(&rb->prod, num, true);
+	    r = acquire_slots_mtsafe(&rb->prod, num, rb->prod.capacity);
 	}
     }
     else //dequeue
@@ -490,12 +492,12 @@ p64_ringbuf_acquire_(void *ptr,
 	    //Consumer metadata is swapped: cons.tail<->cons.head
 	    r = acquire_slots(&rb->cons.head/*tail*/.cur,
 			      &rb->prod.head.cur,
-			      mask, num, false);
+			      mask, num, 0);
 	}
 	else
 	{
 	    //MT-safe multi consumer code
-	    r = acquire_slots_mtsafe(&rb->cons, num, false);
+	    r = acquire_slots_mtsafe(&rb->cons, num, 0);
 	}
     }
     return r;
@@ -587,12 +589,12 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 	//Consumer metadata is swapped: cons.tail<->cons.head
 	r = acquire_slots(&rb->prod.head.cur,
 			  &rb->cons.head/*tail*/.cur,
-			  mask, num, true);
+			  mask, num, rb->prod.capacity);
     }
     else//MPENQ or NBENQ
     {
 	//MT-safe multi producer code
-	r = acquire_slots_mtsafe(&rb->prod, num, true);
+	r = acquire_slots_mtsafe(&rb->prod, num, rb->prod.capacity);
     }
     if (UNLIKELY(r.actual == 0))
     {
@@ -712,12 +714,12 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	//Consumer metadata is swapped: cons.tail<->cons.head
 	r = acquire_slots(&rb->cons.head/*tail*/.cur,
 			  &rb->prod.head.cur,
-			  mask, num, false);
+			  mask, num, 0);
     }
     else//MCDEQ or NBDEQ
     {
 	//MT-safe multi consumer code
-	r = acquire_slots_mtsafe(&rb->cons, num, false);
+	r = acquire_slots_mtsafe(&rb->cons, num, 0);
     }
     if (UNLIKELY(r.actual == 0))
     {
