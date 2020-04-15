@@ -56,8 +56,24 @@ xorshift64(uint64_t x)
     _Generic((x), uint32_t:xorshift32, uint64_t:xorshift64)((x))
 #endif
 
+static inline uint32_t
+scramble_hash(p64_cuckoohash_t h)
+{
+static_assert(sizeof(p64_cuckoohash_t) == sizeof(uint64_t) ||
+	      sizeof(p64_cuckoohash_t) == sizeof(uint32_t),
+	      "Unsupported size of p64_cuckoohash_t");
+    if (sizeof(p64_cuckoohash_t) == sizeof(uint64_t))
+    {
+	return scramble((uint64_t)h);
+    }
+    else
+    {
+	return scramble((uint32_t)h);
+    }
+}
+
 //Signatures are truncated hashes used for fast matching
-typedef uint16_t sig_t;
+typedef uint16_t sign_t;
 #define SIZEOF_SIG 2
 
 //Number of slots per bucket (cache line)
@@ -114,7 +130,7 @@ union cellpp
 struct bucket
 {
     uint32_t chgcnt;
-    sig_t sigs[BKT_SIZE];//Truncated hashes
+    sign_t sigs[BKT_SIZE];//Truncated hashes
     //Elems last so that we can SIMD-read beyond the end of sigs[]
     p64_cuckooelem_t *elems[BKT_SIZE];
 } ALIGNED(CACHE_LINE);
@@ -380,7 +396,7 @@ typedef uint32_t mask_t;
 
 UNROLL_LOOPS ALWAYS_INLINE
 static inline mask_t
-find_sig(const sig_t sigs[BKT_SIZE], sig_t sig)
+find_sig(const sign_t sigs[BKT_SIZE], sign_t sig)
 {
     mask_t matches;
 #if defined __ARM_NEON && defined __arm__
@@ -587,7 +603,7 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -617,7 +633,7 @@ p64_cuckooht_lookup_vec(p64_cuckooht_t *ht,
 	bix0[i] = ring_mod(hashes[i], ht->nbkts);
 	struct bucket *bkt0 = &ht->buckets[bix0[i]];
 	PREFETCH_FOR_READ(bkt0);
-	bix1[i] = ring_mod(scramble(hashes[i]), ht->nbkts);
+	bix1[i] = ring_mod(scramble_hash(hashes[i]), ht->nbkts);
 	if (UNLIKELY(bix1[i] == bix0[i]))
 	{
 	    bix1[i] = ring_add(bix1[i], 1, ht->nbkts);
@@ -647,9 +663,9 @@ p64_cuckooht_lookup_vec(p64_cuckooht_t *ht,
 static inline void
 write_sig(struct bucket *bkt,
 	  uint32_t idx,
-	  sig_t oldsig,
+	  sign_t oldsig,
 	  p64_cuckooelem_t *elem,
-	  sig_t newsig)
+	  sign_t newsig)
 {
     for (;;)
     {
@@ -690,7 +706,7 @@ bucket_insert(struct bucket *bkt,
     while (mask != 0)
     {
 	uint32_t i = __builtin_ctzll(mask) >> MASK_SHIFT;
-	sig_t oldsig = __atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
+	sign_t oldsig = __atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
 	p64_cuckooelem_t *old = NULL;
 	//Try to grab slot
 	if (atomic_cmpxchg(&bkt->elems[i],
@@ -724,7 +740,7 @@ sibling_bix(p64_cuckooht_t *ht,
     }
     else
     {
-	bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
+	bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
 	if (UNLIKELY(bix1 == bix0))
 	{
 	    bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -817,7 +833,7 @@ move_elem(p64_cuckooht_t *ht,
     assert(!HAS_ANY(elem));
     //Write element to destination slot together with info about source slot
     struct bucket *dst_bkt = &ht->buckets[dst_bix];
-    sig_t oldsig = __atomic_load_n(&dst_bkt->sigs[dst_idx], __ATOMIC_RELAXED);
+    sign_t oldsig = __atomic_load_n(&dst_bkt->sigs[dst_idx], __ATOMIC_RELAXED);
     p64_cuckooelem_t *old = SET_DST(NULL);
     if (atomic_cmpxchg(&dst_bkt->elems[dst_idx],
 		       &old,
@@ -1117,7 +1133,7 @@ p64_cuckooht_insert(p64_cuckooht_t *ht,
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -1197,7 +1213,7 @@ bucket_remove(p64_cuckooht_t *ht,
 	}
 	atomic_ptr_release(&hp, ht->use_hp);
 	//Replace clean element with NULL
-	sig_t oldsig = __atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
+	sign_t oldsig = __atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
 	old = elem;
 	if (atomic_cmpxchg(&bkt->elems[i],
 			   &old,
@@ -1393,7 +1409,7 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
