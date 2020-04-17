@@ -45,6 +45,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | rwsync | lightweight reader/writer synchronisation aka 'seqlock' (writer preference) | rw |
 | rwsync\_r | recursive version of rwsync | rw, recursive |
 | semaphore | counting semaphore | rw, fcfs |
+| skiplock | skippable ticket-like lock | mutex |
 | spinlock | basic CAS-based spin lock | mutex |
 | tfrwlock | task fair reader/writer lock | rw, fcfs |
 | tfrwlock\_r | recursive version of tfrw lock | rw, fcfs, recursive |
@@ -83,6 +84,7 @@ Use library through the provided C header files. Or copy source files into your 
 * The hopscotch hash table is experimental and has not yet endured stress testing.
 * The cuckooht hash table is experimental and has not yet endured stress testing.
 * When using Safe Memory Reclamation as ABA workaround with the Treiber stack, LIFO order is not guaranteed (so not really a LIFO stack...)
+* The skiplock is a simplified version of a ring buffer based ticket-like lock.
 
 ## TODO
 * Some missing examples

@@ -5,6 +5,7 @@ antireplay
 bm_hashtab
 bm_ringbuf
 bm_smr
+bm_skiplock
 buckring
 buckrob
 clhlock
@@ -29,6 +30,7 @@ rwlock
 rwlock_r
 rwsync
 rwsync_r
+skiplock
 stack
 tfrwlock
 tfrwlock_r
