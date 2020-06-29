@@ -79,17 +79,24 @@ endif
 endif
 CCFLAGS += -std=c11
 LDFLAGS += -std=c11
-#Enable when compiling for Armv7ve (make ARMV7VE=yes)
-ifeq ($(ARMV7VE),yes)
-CCFLAGS += -march=armv7ve
-endif
 #Enable when compiling for Armv8.1a (make ARMV81A=yes)
 ifeq ($(ARMV81A),yes)
 CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
 endif
+ifneq ($(ARCH),)
+#GCC target architecture
+CCFLAGS += -march=$(ARCH)
+endif
+ifneq ($(TARGET),)
+#LLVM/Clang target architecture
+CCFLAGS += --target=$(TARGET)
+LDFLAGS += --target=$(TARGET)
+endif
 CCFLAGS += -g -ggdb -Wall -Wextra
 CCFLAGS += -fomit-frame-pointer
+ifneq ($(CLANG),yes)
 CCFLAGS += -falign-loops=32 -falign-jumps=32 -falign-functions=32
+endif
 CCFLAGS += -fstrict-aliasing -fno-stack-check -fno-stack-protector
 LDFLAGS += -g -ggdb -pthread
 

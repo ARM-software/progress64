@@ -110,22 +110,6 @@ prefix_to_index(uint64_t pfx, uint32_t stride)
     return (pfx >> (64 - stride)) & mask;
 }
 
-static inline bool
-inside(uint64_t pfx_inner,
-       uint32_t pfxlen_inner,
-       uint64_t pfx_outer,
-       uint32_t pfxlen_outer)
-{
-    uint64_t size_inner = ~pfxlen_to_mask(pfxlen_inner);
-    uint64_t size_outer = ~pfxlen_to_mask(pfxlen_outer);
-    if (pfx_inner >= pfx_outer &&
-	pfx_inner + size_inner <= pfx_outer + size_outer)
-    {
-	return true;
-    }
-    return false;
-}
-
 static inline void *
 atomic_load_acquire(void **pptr,
 		    p64_hazardptr_t *hp,

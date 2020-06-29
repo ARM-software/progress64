@@ -114,6 +114,7 @@ p64_buckrob_acquire(p64_buckrob_t *rob,
     return actual;
 }
 
+#if defined __aarch64__ && !defined __ARM_FEATURE_ATOMICS
 static inline void
 atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
 {
@@ -142,6 +143,7 @@ atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
 					__ATOMIC_RELAXED));
 #endif
 }
+#endif
 
 static inline bool
 AFTER(uint32_t x, uint32_t y)

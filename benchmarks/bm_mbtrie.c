@@ -649,24 +649,15 @@ comph(const void *he,
     return as->asn < k ? -1 : as->asn > k ? 1 : 0;
 }
 
-//Some magic to define CRC32C intrinsics
-#ifdef __aarch64__
-#ifndef __ARM_FEATURE_CRC32
-#pragma GCC target("+crc")
-#endif
+#if defined __aarch64__ && defined __ARM_FEATURE_CRC32
 #include <arm_acle.h>
 #define CRC32C(x, y) __crc32cw((x), (y))
-#endif
-#if defined __x86_64__
-#ifndef __SSE4_2__
-#pragma GCC target("sse4.2")
-#endif
+#elif defined __x86_64__ && defined __SSE4_2__
 #include <x86intrin.h>
 //x86 crc32 intrinsics seem to compute CRC32C (not CRC32)
 #define CRC32C(x, y) __crc32d((x), (y))
-#endif
-#ifdef __arm__
-//ARMv7 does not have a CRC instruction
+#else
+//E.g. ARMv7 does not have a CRC instruction
 //Use a pseudo RNG instead
 static inline uint32_t
 xorshift32(uint32_t x)
@@ -929,6 +920,7 @@ ht_free_cb(void *arg,
     }
 }
 
+#ifndef NDEBUG
 static void
 hs_count_cb(void *arg,
 	    void *he,
@@ -966,6 +958,7 @@ ht_count_elems(p64_hashtable_t *ht)
     p64_hashtable_traverse(ht, ht_count_cb, &nelems);
     return nelems;
 }
+#endif
 
 int main(int argc, char *argv[])
 {

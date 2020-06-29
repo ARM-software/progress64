@@ -181,6 +181,7 @@ atomic_rb_acquire(const ringidx_t *read_ptr,
     return (struct result){ .index = tail, .actual = actual };
 }
 
+#if defined __aarch64__ && !defined __ARM_FEATURE_ATOMICS
 static inline void
 atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
 {
@@ -209,6 +210,7 @@ atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
 					__ATOMIC_RELAXED));
 #endif
 }
+#endif
 
 #ifndef ATOMIC_AND_OR
 //Atomic blend operation
