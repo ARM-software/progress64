@@ -72,7 +72,7 @@ barrier_thr_begin(uint32_t idx)
 {
     uint64_t thrmask = 1UL << idx;
     SEVL();
-    while (WFE() && (ldx(&THREAD_BARRIER, __ATOMIC_ACQUIRE) & thrmask) == 0)
+    while (WFE() && (LDX(&THREAD_BARRIER, __ATOMIC_ACQUIRE) & thrmask) == 0)
     {
 	DOZE();
     }
@@ -109,7 +109,7 @@ barrier_all_wait(uint32_t numthreads)
 {
     (void)numthreads;
     SEVL();
-    while (WFE() && ldx(&THREAD_BARRIER, __ATOMIC_ACQUIRE) != 0)
+    while (WFE() && LDX(&THREAD_BARRIER, __ATOMIC_ACQUIRE) != 0)
     {
 	DOZE();
     }
