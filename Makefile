@@ -17,13 +17,13 @@ endif
 
 #List of executable files to build
 #TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock lfring qsbr tfrwlock tfrwlock_r pfrwlock stack msqueue counter mbtrie buckring buckrob skiplock
-TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock lfring qsbr tfrwlock tfrwlock_r pfrwlock stack msqueue counter mbtrie buckrob skiplock
+TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock mcslock lfring qsbr tfrwlock tfrwlock_r pfrwlock stack msqueue counter mbtrie buckrob skiplock
 #The following targets require pthreads and Linux support
 ifeq ($(UNAME),Linux)
 TARGETS += bm_ringbuf bm_smr bm_mbtrie bm_rob bm_hashtab bm_lock bm_skiplock
 endif
 #List object files for each target
-OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tfrwlock_r.o p64_tktlock.o p64_pfrwlock.o p64_semaphore.o p64_rwclhlock.o p64_stack.o p64_msqueue.o p64_counter.o p64_errhnd.o p64_mbtrie.o p64_hopscotch.o p64_buckrob.o p64_buckring.o p64_cuckooht.o p64_skiplock.o
+OBJECTS_libprogress64.a = p64_ringbuf.o p64_spinlock.o p64_rwlock.o p64_barrier.o p64_hazardptr.o p64_hashtable.o p64_timer.o p64_rwsync.o p64_antireplay.o p64_reorder.o p64_reassemble.o p64_laxrob.o p64_clhlock.o p64_lfring.o p64_rwsync_r.o p64_rwlock_r.o os_abstraction.o thr_idx.o p64_qsbr.o p64_tfrwlock.o p64_tfrwlock_r.o p64_tktlock.o p64_pfrwlock.o p64_semaphore.o p64_rwclhlock.o p64_stack.o p64_msqueue.o p64_counter.o p64_errhnd.o p64_mbtrie.o p64_hopscotch.o p64_buckrob.o p64_buckring.o p64_cuckooht.o p64_skiplock.o p64_mcslock.o
 OBJECTS_hashtable = hashtable.o
 OBJECTS_timer = timer.o
 OBJECTS_rwlock = rwlock.o
@@ -36,6 +36,7 @@ OBJECTS_reassemble = reassemble.o
 OBJECTS_laxrob = laxrob.o
 OBJECTS_ringbuf = ringbuf.o
 OBJECTS_clhlock = clhlock.o
+OBJECTS_mcslock = mcslock.o
 OBJECTS_lfring = lfring.o
 OBJECTS_qsbr = qsbr.o
 OBJECTS_tfrwlock = tfrwlock.o

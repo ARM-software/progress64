@@ -38,6 +38,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | ---- | ---- | :----: |
 | barrier | thread barrier | blocking |
 | clhlock | CLH queue lock | mutex, fcfs, queue |
+| mcslock | MCS queue lock | mutex, fcfs, queue |
 | pfrwlock | phase fair reader/writer lock | rw, fcfs |
 | rwclhlock | reader/writer CLH queue lock | rw, fcfs, queue, sleep |
 | rwlock | reader/writer lock (writer preference) | rw |
