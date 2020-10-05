@@ -13,10 +13,12 @@ core
 counter
 hashtable
 mbtrie
+mcas
 msqueue
 laxrob
 lfring
 libprogress64.a
+bm_mcas
 bm_lock
 bm_mbtrie
 bm_rob
