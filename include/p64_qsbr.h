@@ -60,7 +60,7 @@ void p64_qsbr_release(void);
 bool p64_qsbr_retire(void *ptr, void (*callback)(void *ptr));
 
 //Force garbage reclamation
-//Return number of remaining unreclamined objects
+//Return number of remaining unreclaimed objects
 uint32_t p64_qsbr_reclaim(void);
 
 #ifdef __cplusplus

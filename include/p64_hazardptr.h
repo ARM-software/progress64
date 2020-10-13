@@ -109,7 +109,7 @@ void p64_hazptr_release_ro(p64_hazardptr_t *hp);
 bool p64_hazptr_retire(void *ptr, void (*callback)(void *ptr));
 
 //Force garbage reclamation
-//Return number of remaining unreclamined objects
+//Return number of remaining unreclaimed objects
 uint32_t p64_hazptr_reclaim(void);
 
 //Debugging support
