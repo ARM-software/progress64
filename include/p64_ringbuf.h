@@ -7,8 +7,8 @@
 //SP/SC modes are also supported
 //The element size must be sizeof(void *)
 
-#ifndef _P64_RINGBUF_H
-#define _P64_RINGBUF_H
+#ifndef P64_RINGBUF_H
+#define P64_RINGBUF_H
 
 #include <stdbool.h>
 #include <stddef.h>

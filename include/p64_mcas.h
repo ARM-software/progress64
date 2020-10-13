@@ -5,8 +5,8 @@
 //Non-blocking CAS-N
 //See "A practical multi-word compare-and-swap" by Harris, Fraser & Pratt
 
-#ifndef _P64_MCAS
-#define _P64_MCAS
+#ifndef P64_MCAS_H
+#define P64_MCAS_H
 
 #include <stdbool.h>
 #include <stdint.h>

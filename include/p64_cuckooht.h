@@ -4,8 +4,8 @@
 
 //Non-blocking cuckoo hash table with overflow cellar using linear probing
 
-#ifndef _P64_CUCKOOHT_H
-#define _P64_CUCKOOHT_H
+#ifndef P64_CUCKOOHT_H
+#define P64_CUCKOOHT_H
 
 #include <stdint.h>
 #include <stdbool.h>

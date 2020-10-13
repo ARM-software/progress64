@@ -4,8 +4,8 @@
 
 //Shared counters using per-thread stashes
 
-#ifndef _P64_COUNTER_H
-#define _P64_COUNTER_H
+#ifndef P64_COUNTER_H
+#define P64_COUNTER_H
 
 #include <stdint.h>
 

@@ -5,8 +5,8 @@
 //Reader/writer version of CLH queue lock
 //Optional sleep (yield to OS) after configurable timeout
 
-#ifndef _P64_RWCLHLOCK
-#define _P64_RWCLHLOCK
+#ifndef P64_RWCLHLOCK_H
+#define P64_RWCLHLOCK_H
 
 #include <stdint.h>
 

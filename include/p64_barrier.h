@@ -4,8 +4,8 @@
 
 //Simple sense-reversal centralized thread barrier
 
-#ifndef _P64_BARRIER_H
-#define _P64_BARRIER_H
+#ifndef P64_BARRIER_H
+#define P64_BARRIER_H
 
 #include <stdint.h>
 

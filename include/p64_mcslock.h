@@ -4,8 +4,8 @@
 
 //MCS queue lock
 
-#ifndef _P64_MCSLOCK
-#define _P64_MCSLOCK
+#ifndef P64_MCSLOCK_H
+#define P64_MCSLOCK_H
 
 #include <stdint.h>
 

@@ -4,8 +4,8 @@
 
 //A scalable non-blocking reorder buffer using pass-the-buck algorithm
 
-#ifndef _P64_BUCKROB_H
-#define _P64_BUCKROB_H
+#ifndef P64_BUCKROB_H
+#define P64_BUCKROB_H
 
 #include <stdint.h>
 #include <stdbool.h>

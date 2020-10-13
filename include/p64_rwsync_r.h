@@ -4,8 +4,8 @@
 
 //Recursive version of read/write synchroniser
 
-#ifndef _P64_RWSYNC_R_H
-#define _P64_RWSYNC_R_H
+#ifndef P64_RWSYNC_R_H
+#define P64_RWSYNC_R_H
 
 #include <stdint.h>
 #include "p64_rwsync.h"

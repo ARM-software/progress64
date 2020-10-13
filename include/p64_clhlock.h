@@ -4,8 +4,8 @@
 
 //CLH queue lock
 
-#ifndef _P64_CLHLOCK
-#define _P64_CLHLOCK
+#ifndef P64_CLHLOCK_H
+#define P64_CLHLOCK_H
 
 #include <stdint.h>
 

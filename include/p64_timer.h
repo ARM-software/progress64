@@ -2,8 +2,8 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-#ifndef _P64_TIMER_H
-#define _P64_TIMER_H
+#ifndef P64_TIMER_H
+#define P64_TIMER_H
 
 #include <stdbool.h>
 #include <stdint.h>

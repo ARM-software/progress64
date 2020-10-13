@@ -7,8 +7,8 @@
 //This is similar to a ticket lock where the ticket is acquired separately
 //A ticket can also be skipped in advance, potentially without blocking
 
-#ifndef _P64_SKIPLOCK_H
-#define _P64_SKIPLOCK_H
+#ifndef P64_SKIPLOCK_H
+#define P64_SKIPLOCK_H
 
 #include <assert.h>
 #include <stdint.h>

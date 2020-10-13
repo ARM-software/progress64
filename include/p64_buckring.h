@@ -4,8 +4,8 @@
 //
 //Non-blocking ring buffer using pass-the-buck algorithm
 
-#ifndef _P64_BUCKRING_H
-#define _P64_BUCKRING_H
+#ifndef P64_BUCKRING_H
+#define P64_BUCKRING_H
 
 #include <stdint.h>
 

@@ -8,8 +8,8 @@
 //See "Reader-Writer Synchronization for Shared-Memory Multiprocessor
 //Real-Time Systems" by Björn B. Brandenburg and James H. Anderson
 
-#ifndef _P64_PFRWLOCK_H
-#define _P64_PFRWLOCK_H
+#ifndef P64_PFRWLOCK_H
+#define P64_PFRWLOCK_H
 
 #include <stdint.h>
 

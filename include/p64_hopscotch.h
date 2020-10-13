@@ -5,8 +5,8 @@
 //Non-blocking hopscotch hash table with overflow cellar using linear probing
 //Original hopscotch design from Herlihy, Shavit, Tzafrir: "Hopscotch Hashing"
 
-#ifndef _P64_HOPSCOTCH_H
-#define _P64_HOPSCOTCH_H
+#ifndef P64_HOPSCOTCH_H
+#define P64_HOPSCOTCH_H
 
 #include <stdint.h>
 #include <stdbool.h>

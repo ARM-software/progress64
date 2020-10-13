@@ -6,8 +6,8 @@
 //Lax means 'inexact' behaviour, i.e. retiring holes (empty ROB slots) is
 //supported and any stragglers will be retired out-of-order
 
-#ifndef _P64_LAXROB_H
-#define _P64_LAXROB_H
+#ifndef P64_LAXROB_H
+#define P64_LAXROB_H
 
 #include <stdint.h>
 

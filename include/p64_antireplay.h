@@ -6,8 +6,8 @@
 //Replay protection detects duplicate ("replayed") and stale events
 //Sequence numbers are 64-bit
 
-#ifndef _P64_ANTIREPLAY_H
-#define _P64_ANTIREPLAY_H
+#ifndef P64_ANTIREPLAY_H
+#define P64_ANTIREPLAY_H
 
 #include <stdbool.h>
 #include <stdint.h>

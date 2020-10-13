@@ -6,8 +6,8 @@
 //Different ABA workarounds are supported: lock, tagged pointers, safe memory
 //reclamation (SMR) and LL/SC (exclusives on Arm)
 
-#ifndef _P64_STACK_H
-#define _P64_STACK_H
+#ifndef P64_STACK_H
+#define P64_STACK_H
 
 #include <stdint.h>
 

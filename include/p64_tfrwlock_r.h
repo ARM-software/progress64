@@ -4,8 +4,8 @@
 
 //Recursive version of task-fair reader/writer lock
 
-#ifndef _P64_TFRWLOCK_R_H
-#define _P64_TFRWLOCK_R_H
+#ifndef P64_TFRWLOCK_R_H
+#define P64_TFRWLOCK_R_H
 
 #include <stdbool.h>
 #include <stdint.h>

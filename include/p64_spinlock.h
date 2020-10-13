@@ -4,8 +4,8 @@
 
 //Basic spin lock
 
-#ifndef _P64_SPINLOCK_H
-#define _P64_SPINLOCK_H
+#ifndef P64_SPINLOCK_H
+#define P64_SPINLOCK_H
 
 #include <stdbool.h>
 #include <stdint.h>

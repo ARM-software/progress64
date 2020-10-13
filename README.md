@@ -92,7 +92,6 @@ Use library through the provided C header files. Or copy source files into your 
 * Some missing examples
 * Multithreaded stress test programs for e.g. hash tables, reassembly, mbtrie
 * Use C11 features instead of GNU extensions and other non-standard features
-* Remove "_" from P64 defines
 
 ## License
 SPDX BSD-3-Clause

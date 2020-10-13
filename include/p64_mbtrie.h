@@ -8,8 +8,8 @@
 //Elements must be 64B-aligned as 6 lsb are used internally
 //Elements represent next-hop information
 
-#ifndef _P64_MBTRIE_H
-#define _P64_MBTRIE_H
+#ifndef P64_MBTRIE_H
+#define P64_MBTRIE_H
 
 #include <stdbool.h>
 #include <stddef.h>

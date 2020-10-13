@@ -4,8 +4,8 @@
 
 //Lock-free IP reassembly using bespoke hash table
 
-#ifndef _P64_REASSEMBLE_H
-#define _P64_REASSEMBLE_H
+#ifndef P64_REASSEMBLE_H
+#define P64_REASSEMBLE_H
 
 #include <stdbool.h>
 #include <stdint.h>

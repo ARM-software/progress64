@@ -6,8 +6,8 @@
 //"Safe Memory Reclamation for Dynamic Lock-Free Objects Using Atomic Reads
 //and Writes".
 
-#ifndef _P64_HAZARDPTR_H
-#define _P64_HAZARDPTR_H
+#ifndef P64_HAZARDPTR_H
+#define P64_HAZARDPTR_H
 
 #include <stdbool.h>
 #include <stddef.h>

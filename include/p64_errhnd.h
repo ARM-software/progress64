@@ -4,8 +4,8 @@
 
 //Error handler API for Progress64
 
-#ifndef _P64_ERRHND_H
-#define _P64_ERRHND_H
+#ifndef P64_ERRHND_H
+#define P64_ERRHND_H
 
 #include <inttypes.h>
 

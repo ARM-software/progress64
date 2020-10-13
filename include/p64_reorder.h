@@ -4,8 +4,8 @@
 
 //Non-blocking 'strict' reorder buffer
 
-#ifndef _P64_REORDER_H
-#define _P64_REORDER_H
+#ifndef P64_REORDER_H
+#define P64_REORDER_H
 
 #include <stdint.h>
 #include <stdbool.h>

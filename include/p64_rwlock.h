@@ -4,8 +4,8 @@
 
 //Reader/writer lock with writer preference
 
-#ifndef _P64_RWLOCK_H
-#define _P64_RWLOCK_H
+#ifndef P64_RWLOCK_H
+#define P64_RWLOCK_H
 
 #include <stdbool.h>
 #include <stdint.h>

@@ -5,8 +5,8 @@
 //Task fair reader/writer lock
 //Task fairness interleaves reader and writer phases so avoids starvation
 
-#ifndef _P64_TFRWLOCK_H
-#define _P64_TFRWLOCK_H
+#ifndef P64_TFRWLOCK_H
+#define P64_TFRWLOCK_H
 
 #include <stdint.h>
 

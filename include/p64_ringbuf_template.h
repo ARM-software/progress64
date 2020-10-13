@@ -5,8 +5,8 @@
 //Blocking ring buffer with user defined element type
 //Supports blocking MP/MC and SP/SC modes, also lock-free MC dequeue
 
-#ifndef _P64_RINGBUF_TEMPLATE_H
-#define _P64_RINGBUF_TEMPLATE_H
+#ifndef P64_RINGBUF_TEMPLATE_H
+#define P64_RINGBUF_TEMPLATE_H
 
 #include "p64_ringbuf.h"
 

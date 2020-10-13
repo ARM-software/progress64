@@ -4,8 +4,8 @@
 
 //Read/write synchroniser aka 'seqlock'
 
-#ifndef _P64_RWSYNC_H
-#define _P64_RWSYNC_H
+#ifndef P64_RWSYNC_H
+#define P64_RWSYNC_H
 
 #include <stdbool.h>
 #include <stddef.h>

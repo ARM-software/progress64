@@ -4,8 +4,8 @@
 
 //Fair counting semaphore
 
-#ifndef _P64_SEMAPHORE_H
-#define _P64_SEMAPHORE_H
+#ifndef P64_SEMAPHORE_H
+#define P64_SEMAPHORE_H
 
 #include <stdint.h>
 

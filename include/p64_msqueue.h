@@ -6,8 +6,8 @@
 //Different ABA workarounds are supported: locks (head & tail), tagged pointers
 //and safe memory reclamation (SMR)
 
-#ifndef _P64_MSQUEUE_H
-#define _P64_MSQUEUE_H
+#ifndef P64_MSQUEUE_H
+#define P64_MSQUEUE_H
 
 #include <stddef.h>
 #include <stdint.h>

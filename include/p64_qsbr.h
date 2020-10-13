@@ -4,8 +4,8 @@
 
 //Safe memory reclamation using quiescent state based reclamation
 
-#ifndef _P64_QSBR_H
-#define _P64_QSBR_H
+#ifndef P64_QSBR_H
+#define P64_QSBR_H
 
 #include <stdbool.h>
 #include <stddef.h>

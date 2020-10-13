@@ -7,8 +7,8 @@
 //This is essentially a variation of the hash table described in Michael:
 //"High Performance Dynamic Lock-Free Hash Tables and List-Based Sets"
 
-#ifndef _P64_HASHTABLE_H
-#define _P64_HASHTABLE_H
+#ifndef P64_HASHTABLE_H
+#define P64_HASHTABLE_H
 
 #include <stdint.h>
 #include <stdbool.h>

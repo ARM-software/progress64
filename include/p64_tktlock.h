@@ -4,8 +4,8 @@
 
 //Ticket lock
 
-#ifndef _P64_TKTLOCK_H
-#define _P64_TKTLOCK_H
+#ifndef P64_TKTLOCK_H
+#define P64_TKTLOCK_H
 
 #include <stdint.h>
 

@@ -5,8 +5,8 @@
 //Lock-free MP/MC ring buffer
 //SP/SC modes are also supported
 
-#ifndef _P64_LFRING_H
-#define _P64_LFRING_H
+#ifndef P64_LFRING_H
+#define P64_LFRING_H
 
 #include <stddef.h>
 #include <stdint.h>
