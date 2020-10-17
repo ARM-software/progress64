@@ -251,6 +251,8 @@ thr_execute(uint32_t tidx)
 	    }
 	    while (obj == NULL);
 	    delay_loop(10);
+	    //Prevent load below from moving up
+	    __atomic_thread_fence(__ATOMIC_ACQUIRE);
 	    uint32_t obj_idx = __atomic_load_n(&obj->idx, __ATOMIC_RELAXED);
 	    if (obj_idx != idx)
 	    {

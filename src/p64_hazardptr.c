@@ -514,12 +514,12 @@ p64_hazptr_acquire_mask(void **pptr,
 	    }
 	}
 	//Step 2b: Initialise hazard pointer with reference
-	__atomic_store_n(*hp, masked_ptr, __ATOMIC_SEQ_CST);
+	__atomic_store_n(*hp, masked_ptr, __ATOMIC_RELAXED);
 
-	//Sequential consistency will separate the store and the load
+	__atomic_thread_fence(__ATOMIC_SEQ_CST);//A: Synchronizes with B
 
 	//Step 3: Verify reference by re-reading and comparing
-	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_SEQ_CST) == ptr))
+	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_ACQUIRE) == ptr))
 	{
 	    return ptr;//Success
 	}
@@ -603,6 +603,7 @@ collect_refs(userptr_t refs[],
 	     uint32_t nthreads,
 	     uint32_t maxrefs)
 {
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);//B: Synchronizes with A
     uint32_t nrefs = 0;
     uint32_t nrefs_rounded = roundup(maxrefs);
     uint32_t t;
