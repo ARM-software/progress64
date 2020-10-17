@@ -529,6 +529,50 @@ p64_hazptr_acquire_mask(void **pptr,
     }
 }
 
+void
+p64_hazptr_publish(void *ptr, p64_hazardptr_t *hp)
+{
+    if (UNLIKELY(TS == NULL))
+    {
+	report_thread_not_registered();
+	return;
+    }
+#ifdef HP_ZEROREF_QSBR
+    if (HAS_QSBR(TS))
+    {
+	//Allocate hazard pointer only if necessary
+	if (ptr != NULL && *hp == P64_HAZARDPTR_NULL)
+	{
+	    hazptr_qsbr_alloc(hp);
+	}
+	return;
+    }
+#endif
+    //Reset any existing hazard pointer
+    if (*hp != P64_HAZARDPTR_NULL)
+    {
+	if (**hp != NULL)
+	{
+	    //Release MO to let any pending stores complete before the
+	    //reference is abandoned
+	    __atomic_store_n(*hp, NULL, __ATOMIC_RELEASE);
+	}
+    }
+    else//*hp == P64_HAZARDPTR_NULL
+    {
+	//Allocate a hazard pointer
+	*hp = hazptr_alloc();
+	if (UNLIKELY(*hp == P64_HAZARDPTR_NULL))
+	{
+	    //No more hazard pointers available =>
+	    //programming or configuration error
+	    report_error("hazardptr",
+			 "failed to allocate hazard pointer", 0);
+	}
+    }
+    __atomic_store_n(*hp, ptr, __ATOMIC_RELAXED);
+}
+
 void *
 p64_hazptr_acquire(void **pptr, p64_hazardptr_t *hp)
 {

@@ -88,6 +88,11 @@ void *p64_hazptr_acquire_mask(void **pptr, p64_hazardptr_t *hp, uintptr_t mask);
 })
 #endif
 
+//Publish a reference to an object, protecting it from reclamation
+//Re-use the specified hazard pointer (if *hp != P64_HAZARDPTR_NULL)
+//or allocate a new one
+void p64_hazptr_publish(void *ptr, p64_hazardptr_t *hp);
+
 //Release the reference, updates may have been made
 //p64_hazptr_release() has release memory ordering
 void p64_hazptr_release(p64_hazardptr_t *hp);
