@@ -59,7 +59,8 @@ static uint32_t NUMLAPS = 1000000;
 static uint32_t NUMELEMS = 256;
 static p64_mcas_ptr_t *TABLE;
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
-static bool USEHP = false;
+static bool QSBR = false;
+static bool HELP = false;
 static bool VERBOSE = false;
 static sem_t ALL_DONE ALIGNED(CACHE_LINE);
 static struct timespec END_TIME;
@@ -140,8 +141,8 @@ thr_execute(uint32_t tidx)
     uint32_t numcas = 0, numfail = 0;
     p64_hazardptr_t hp0 = P64_HAZARDPTR_NULL;
     p64_hazardptr_t hp1 = P64_HAZARDPTR_NULL;
-    p64_hazardptr_t *hpp0 = USEHP ? &hp0 : NULL;
-    p64_hazardptr_t *hpp1 = USEHP ? &hp1 : NULL;
+    p64_hazardptr_t *hpp0 = QSBR ? NULL : &hp0;
+    p64_hazardptr_t *hpp1 = QSBR ? NULL : &hp1;
     for (uint32_t lap = 0; lap < NUMLAPS; lap++)
     {
 	uint32_t i0, i1;
@@ -151,7 +152,7 @@ thr_execute(uint32_t tidx)
 	    i1 = xorshift64star(xor_state) % NUMELEMS;
 	}
 	while (i1 == i0);
-	if (!USEHP)
+	if (QSBR)
 	{
 	    p64_qsbr_acquire();
 	}
@@ -162,22 +163,22 @@ thr_execute(uint32_t tidx)
 	PREFETCH_FOR_WRITE(loc[1]);
 	do
 	{
-	    exp[0] = p64_mcas_read(loc[0], hpp0);
-	    exp[1] = p64_mcas_read(loc[1], hpp1);
+	    exp[0] = p64_mcas_read(loc[0], hpp0, HELP);
+	    exp[1] = p64_mcas_read(loc[1], hpp1, HELP);
 	    //Swap places
 	    new[0] = exp[1];
 	    new[1] = exp[0];
 	    numfail++;
 	}
-	while (!p64_mcas_casn(2, loc, exp, new, USEHP));
+	while (!p64_mcas_casn(2, loc, exp, new, !QSBR));
 	numfail--;
-	if (!USEHP)
+	if (QSBR)
 	{
 	    p64_qsbr_release();
 	}
 	numcas++;
     }
-    if (USEHP)
+    if (!QSBR)
     {
 	p64_hazptr_release(hpp0);
 	p64_hazptr_release(hpp1);
@@ -190,7 +191,7 @@ static void *
 entrypoint(void *arg)
 {
     unsigned tidx = (uintptr_t)arg;
-    if (USEHP)
+    if (!QSBR)
 	p64_hazptr_register(HPDOM);
     else
 	p64_qsbr_register(QSBRDOM);
@@ -202,7 +203,7 @@ entrypoint(void *arg)
 
     thr_execute(tidx);
 
-    if (USEHP)
+    if (!QSBR)
     {
 	while (p64_hazptr_reclaim() != 0)
 	{
@@ -413,7 +414,7 @@ main(int argc, char *argv[])
     uint32_t NREFS = 10;
     int c;
 
-    while ((c = getopt(argc, argv, "a:e:f:hl:r:t:v")) != -1)
+    while ((c = getopt(argc, argv, "a:e:f:hl:qr:t:v")) != -1)
     {
 	switch (c)
 	{
@@ -455,7 +456,10 @@ main(int argc, char *argv[])
 		    break;
 		}
 	    case 'h' :
-		USEHP = true;
+		HELP = true;
+		break;
+	    case 'q' :
+		QSBR = true;
 		break;
 	    case 'r' :
 		{
@@ -488,8 +492,9 @@ usage :
 			"-a <binmask>     CPU affinity mask (default base 2)\n"
 			"-e <numelems>    Number of elements\n"
 			"-f <cpufreq>     CPU frequency in kHz\n"
-			"-h               Use hazard pointers instead of QSBR\n"
+			"-h               Read will help\n"
 			"-l <numlaps>     Number of laps\n"
+			"-q               Use QSBR (default hazard pointers)\n"
 			"-r <numrefs>     Number of HP references\n"
 			"-t <numthr>      Number of threads\n"
 			"-v               Verbose\n"
@@ -502,17 +507,18 @@ usage :
 	goto usage;
     }
 
-    printf("%s: %u elements, %u laps, %u thread%s, affinity mask=0x%"PRIx64,
-	    USEHP ? "HP" : "QSBR",
+    printf("%s: %u elements, %u laps, %u thread%s, help %s, affinity mask=0x%"PRIx64,
+	    QSBR ? "QSBR" : "HP",
 	    NUMELEMS,
 	    NUMLAPS,
 	    NUMTHREADS,
 	    NUMTHREADS != 1 ? "s" : "",
+	    HELP ? "yes" : "no",
 	    AFFINITY);
     fflush(stdout);
 
     p64_errhnd_install(error_handler);
-    if (USEHP)
+    if (!QSBR)
     {
 	printf(", %u HP/thread", NREFS);
 	HPDOM = p64_hazptr_alloc(NUMRECLAIM, NREFS);
@@ -562,13 +568,13 @@ usage :
     }
     (void)sem_destroy(&ALL_DONE);
     free(TABLE);
-    if (USEHP)
+    if (QSBR)
     {
-	p64_hazptr_free(HPDOM);
+	p64_qsbr_free(QSBRDOM);
     }
     else
     {
-	p64_qsbr_free(QSBRDOM);
+	p64_hazptr_free(HPDOM);
     }
 
     return 0;

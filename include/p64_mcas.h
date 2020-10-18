@@ -30,7 +30,10 @@ void p64_mcas_fini(void);
 
 //Shared locations must be read using p64_mcas_read()
 //Specify valid pointer to hazardptr variable or NULL for QSBR
-p64_mcas_ptr_t p64_mcas_read(p64_mcas_ptr_t *loc, p64_hazardptr_t *hpp);
+//Read can help MCAS operations ongoing for the specified location
+p64_mcas_ptr_t p64_mcas_read(p64_mcas_ptr_t *loc,
+			     p64_hazardptr_t *hpp,
+			     bool help);
 
 //Compare-and-swap on single location
 bool p64_mcas_cas1(p64_mcas_ptr_t *loc,

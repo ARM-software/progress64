@@ -80,13 +80,13 @@ test(bool use_hp)
     }
 
     printf("Test p64_mcas_read()\n");
-    EXPECT(p64_mcas_read(&table[0], hpp0) == NULL);
+    EXPECT(p64_mcas_read(&table[0], hpp0, false) == NULL);
 
     printf("Test p64_mcas_cas1()\n");
     EXPECT(p64_mcas_cas1(&table[0], NULL, &node, hpp0) == true);
     EXPECT(table[0] == &node);
     EXPECT(table[1] == NULL);
-    EXPECT(p64_mcas_read(&table[0], hpp0) == &node);
+    EXPECT(p64_mcas_read(&table[0], hpp0, false) == &node);
 
     printf("Test p64_mcas_casn()\n");
     loc[0] = &table[0];

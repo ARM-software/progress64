@@ -32,7 +32,7 @@ atomic_load_acquire(p64_mcas_ptr_t *pptr,
 		    uintptr_t mask,
 		    bool use_hp)
 {
-    if (UNLIKELY(use_hp))
+    if (use_hp)
     {
 	return p64_hazptr_acquire_mask(pptr, hp, mask);
     }
@@ -45,7 +45,7 @@ atomic_load_acquire(p64_mcas_ptr_t *pptr,
 static inline void
 atomic_ptr_release(p64_hazardptr_t *hp, bool use_hp)
 {
-    if (UNLIKELY(use_hp))
+    if (use_hp)
     {
 	p64_hazptr_release(hp);
     }
@@ -127,7 +127,7 @@ ccas(p64_mcas_ptr_t *loc,
      uint8_t *status,
      p64_hazardptr_t *hpp)
 {
-    if (UNLIKELY(hpp != NULL))
+    if (hpp != NULL)
     {
 	for (;;)
 	{
@@ -189,7 +189,7 @@ ccas(struct mcas_desc *md,
     for (;;)
     {
 	p64_mcas_ptr_t old = cd->exp;
-	if (UNLIKELY(hpp != NULL))
+	if (hpp != NULL)
 	{
 	    old = p64_hazptr_acquire_mask(cd->loc, hpp, ~DESC_BITS);
 	}
@@ -241,7 +241,7 @@ ccas_read(p64_mcas_ptr_t *loc,
 }
 
 static bool
-casn_help(struct mcas_desc *md, bool use_hp)
+mcas_help(struct mcas_desc *md, bool use_hp)
 {
     //'md' is already protected by a hazard pointer
     p64_hazardptr_t hp = P64_HAZARDPTR_NULL;
@@ -271,9 +271,9 @@ casn_help(struct mcas_desc *md, bool use_hp)
 		    status = FAILURE;
 		    goto update_status;
 		}
-		//Found other casn operation in progress, help it
+		//Found other MCAS operation in progress, help it
 		assert(IS_MCAS_DESC(val));
-		casn_help(CLR_DESC(val), use_hp);
+		mcas_help(CLR_DESC(val), use_hp);
 	    }
 	}
 	//Complete success
@@ -298,7 +298,7 @@ update_status: (void)0;
     for (uint32_t i = 0; i < md->n; i++)
     {
 	//Push through or roll back all locations
-	//Remove CASN descriptor
+	//Remove MCAS descriptor
 	p64_mcas_ptr_t exp = SET_MCAS_DESC(md);
 	p64_mcas_ptr_t new = status == SUCCESS ?
 				 md->ccas[i].new :
@@ -319,16 +319,14 @@ static struct mcas_desc *
 alloc_mcas_desc(uint32_t n)
 {
     struct mcas_desc *ptr;
-    while (LIKELY((ptr = stash) != NULL))
+    if (LIKELY((ptr = stash) != NULL))
     {
 	if (LIKELY(ptr->maxn >= n))
 	{
 	    stash = ptr->next;
 	    return ptr;
 	}
-	//Stashed descriptor too small, free it
-	stash = ptr->next;
-	p64_mfree(ptr);
+	//Stashed descriptor too small
     }
     //Stash is empty
     return NULL;
@@ -344,7 +342,8 @@ p64_mcas_init(uint32_t count, uint32_t n)
 		       CACHE_LINE);
 	if (UNLIKELY(ptr == NULL))
 	{
-	    report_error("mcas", "failed to allocate MCAS descriptor", 0);
+	    report_error("mcas", "failed to pre-allocate MCAS descriptors",
+			 count - i);
 	    return;
 	}
 	ptr->maxn = n;
@@ -418,7 +417,7 @@ p64_mcas_casn(uint32_t n,
     struct mcas_desc *md = alloc_mcas_desc(n);
     if (UNLIKELY(md == NULL))
     {
-	report_error("mcas", "failed to allocate MCAS descriptor", 0);
+	report_error("mcas", "failed to allocate MCAS descriptor", n);
 	return false;
     }
     md->status = UNDECIDED;
@@ -439,8 +438,8 @@ p64_mcas_casn(uint32_t n,
 	}
     }
     assert((uint32_t)nn == n);
-    bool success = casn_help(md, use_hp);
-    if (UNLIKELY(use_hp))
+    bool success = mcas_help(md, use_hp);
+    if (use_hp)
     {
 	while (!p64_hazptr_retire(md, free_mcas_desc))
 	{
@@ -470,20 +469,64 @@ p64_mcas_casn(uint32_t n,
 }
 
 p64_mcas_ptr_t
-p64_mcas_read(p64_mcas_ptr_t *loc, p64_hazardptr_t *hpp)
+p64_mcas_read(p64_mcas_ptr_t *loc, p64_hazardptr_t *hpp, bool help)
 {
-    p64_mcas_ptr_t val;
     for (;;)
     {
-	val = ccas_read(loc, hpp);
-	if (!IS_MCAS_DESC(val))
+	p64_mcas_ptr_t val = ccas_read(loc, hpp);
+	if (LIKELY(!IS_MCAS_DESC(val)))
 	{
 	    //Caller must free any hazard pointer
 	    assert(!IS_DESC(val));
 	    return val;
 	}
-	//Found CASN descriptor - must help
-	casn_help(CLR_DESC(val), hpp != NULL);
+	//Found MCAS descriptor
+	if (help)
+	{
+	    //Help alien MCAS operation
+	    mcas_help(CLR_DESC(val), hpp != NULL);
+	    continue;//Restart
+	}
+	//Else return old or new value depending on MCAS operation status
+	struct mcas_desc *md = CLR_DESC(val);
+	uint32_t idx = find_ccas_idx(md, loc);
+	p64_mcas_ptr_t *pptr;
+	if (__atomic_load_n(&md->status, __ATOMIC_ACQUIRE) == SUCCESS)
+	{
+	    pptr = &md->ccas[idx].new;
+	}
+	else//UNDECIDED or FAILURE
+	{
+	    pptr = &md->ccas[idx].exp;
+	}
+	if (hpp != NULL)
+	{
+	    //Need a new hazard pointer, original hazard pointer protects
+	    //MCAS descriptor
+	    p64_hazardptr_t hp2 = P64_HAZARDPTR_NULL;
+	    //Read and publish old/new value from MCAS descriptor
+	    p64_mcas_ptr_t ptr = *pptr;
+	    p64_hazptr_publish(ptr, &hp2);
+	    //Synchronize with p64_hazptr_reclaim (and p64_hazptr_retire)
+	    __atomic_thread_fence(__ATOMIC_SEQ_CST);
+	    //Verify MCAS descriptor is still present at location
+	    if (__atomic_load_n(loc, __ATOMIC_RELAXED) == val)
+	    {
+		//Release hazard pointer for MCAS descriptor
+		p64_hazptr_release_ro(hpp);
+		//Return hazard pointer for returned object
+		*hpp = hp2;
+		return ptr;
+	    }
+	    //MCAS descriptor removed, hazard pointer invalid
+	    p64_hazptr_release_ro(&hp2);
+	    continue;//Restart
+	}
+	else//QSBR
+	{
+	    return *pptr;
+	}
+
     }
 }
 
@@ -502,7 +545,7 @@ p64_mcas_cas1(p64_mcas_ptr_t *loc,
     p64_mcas_ptr_t old;
     do
     {
-	old = p64_mcas_read(loc, use_hp ? &hp : NULL);
+	old = p64_mcas_read(loc, use_hp ? &hp : NULL, true);
 	if (old != exp)
 	{
 	    //Wrong value present
