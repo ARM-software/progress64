@@ -16,6 +16,13 @@
 
 #define RWSYNC_WRITER 1U
 
+#ifndef __aarch64__
+//Be nice to x86
+#define USE_SMP_FENCE
+//Else use proper C11 implementation
+//C11 implementation proven correct using http://svr-pes20-cppmem.cl.cam.ac.uk/cppmem/
+#endif
+
 void
 p64_rwsync_init(p64_rwsync_t *sync)
 {
@@ -26,9 +33,9 @@ static inline p64_rwsync_t
 wait_for_no_writer(const p64_rwsync_t *sync, int mo)
 {
     p64_rwsync_t l;
-    if (((l = __atomic_load_n(sync, mo)) & RWSYNC_WRITER) != 0)
+    SEVL();//Do SEVL early to avoid excessive loop alignment (NOPs)
+    if (UNLIKELY(((l = __atomic_load_n(sync, mo)) & RWSYNC_WRITER) != 0))
     {
-	SEVL();
 	while (WFE() &&
 	       ((l = LDX(sync, mo)) & RWSYNC_WRITER) != 0)
 	{
@@ -43,13 +50,17 @@ p64_rwsync_t
 p64_rwsync_acquire_rd(const p64_rwsync_t *sync)
 {
     //Wait for any present writer to go away
-    return wait_for_no_writer(sync, __ATOMIC_ACQUIRE);
+    return wait_for_no_writer(sync, __ATOMIC_ACQUIRE);//B: Synchronize with A
 }
 
 bool
 p64_rwsync_release_rd(const p64_rwsync_t *sync, p64_rwsync_t prv)
 {
-    smp_fence(LoadLoad);//Load-only barrier due to reader-sync
+#ifdef USE_SMP_FENCE
+    smp_fence(LoadLoad);//Order data loads with later load from '*sync'
+#else
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);//D: Synchronize with C
+#endif
     //Test if sync is unchanged => success
     return __atomic_load_n(sync, __ATOMIC_RELAXED) == prv;
 }
@@ -65,9 +76,17 @@ p64_rwsync_acquire_wr(p64_rwsync_t *sync)
 	l = wait_for_no_writer(sync, __ATOMIC_RELAXED);
 	//Attempt to increment, setting writer flag
     }
+#ifdef USE_SMP_FENCE
     while (!__atomic_compare_exchange_n(sync, &l, l + RWSYNC_WRITER,
 					/*weak=*/true,
 					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
+    smp_fence(StoreStore);//Order '*sync' store with later data stores
+#else
+    while (!__atomic_compare_exchange_n(sync, &l, l + RWSYNC_WRITER,
+					/*weak=*/true,
+					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    __atomic_thread_fence(__ATOMIC_SEQ_CST);//C: Synchronize with D
+#endif
 }
 
 void
@@ -81,12 +100,7 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
     }
 
     //Increment, clearing writer flag
-#ifdef USE_DMB
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(sync, cur + 1, __ATOMIC_RELAXED);
-#else
-    __atomic_store_n(sync, cur + 1, __ATOMIC_RELEASE);
-#endif
+    __atomic_store_n(sync, cur + 1, __ATOMIC_RELEASE);//A: Synchronize with B
 }
 
 #define ATOMIC_COPY(_d, _s, _sz, _type) \
