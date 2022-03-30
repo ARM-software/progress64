@@ -16,13 +16,6 @@
 
 #define RWSYNC_WRITER 1U
 
-#ifndef __aarch64__
-//Be nice to x86
-#define USE_SMP_FENCE
-//Else use proper C11 implementation
-//C11 implementation proven correct using http://svr-pes20-cppmem.cl.cam.ac.uk/cppmem/
-#endif
-
 void
 p64_rwsync_init(p64_rwsync_t *sync)
 {
@@ -56,11 +49,9 @@ p64_rwsync_acquire_rd(const p64_rwsync_t *sync)
 bool
 p64_rwsync_release_rd(const p64_rwsync_t *sync, p64_rwsync_t prv)
 {
-#ifdef USE_SMP_FENCE
-    smp_fence(LoadLoad);//Order data loads with later load from '*sync'
-#else
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);//D: Synchronize with C
-#endif
+    //Enforce Load/Load order as if we are synchronizing with a store-release
+    //or fence-release in some other thread
+    __atomic_thread_fence(__ATOMIC_ACQUIRE);
     //Test if sync is unchanged => success
     return __atomic_load_n(sync, __ATOMIC_RELAXED) == prv;
 }
@@ -76,17 +67,12 @@ p64_rwsync_acquire_wr(p64_rwsync_t *sync)
 	l = wait_for_no_writer(sync, __ATOMIC_RELAXED);
 	//Attempt to increment, setting writer flag
     }
-#ifdef USE_SMP_FENCE
-    while (!__atomic_compare_exchange_n(sync, &l, l + RWSYNC_WRITER,
-					/*weak=*/true,
-					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
-    smp_fence(StoreStore);//Order '*sync' store with later data stores
-#else
     while (!__atomic_compare_exchange_n(sync, &l, l + RWSYNC_WRITER,
 					/*weak=*/true,
 					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);//C: Synchronize with D
-#endif
+    //Enforce Store/Store order as if we are synchronizing with a load-acquire
+    //or fence-acquire in some other thread
+    __atomic_thread_fence(__ATOMIC_RELEASE);
 }
 
 void
