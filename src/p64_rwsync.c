@@ -69,7 +69,8 @@ p64_rwsync_acquire_wr(p64_rwsync_t *sync)
     }
     while (!__atomic_compare_exchange_n(sync, &l, l + RWSYNC_WRITER,
 					/*weak=*/true,
-					__ATOMIC_RELAXED, __ATOMIC_RELAXED));
+					__ATOMIC_ACQUIRE,//C: Synchronize with A
+					__ATOMIC_RELAXED));
     //Enforce Store/Store order as if we are synchronizing with a load-acquire
     //or fence-acquire in some other thread
     __atomic_thread_fence(__ATOMIC_RELEASE);
@@ -86,7 +87,7 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
     }
 
     //Increment, clearing writer flag
-    __atomic_store_n(sync, cur + 1, __ATOMIC_RELEASE);//A: Synchronize with B
+    __atomic_store_n(sync, cur + 1, __ATOMIC_RELEASE);//A: Synchronize with B and C
 }
 
 #define ATOMIC_COPY(_d, _s, _sz, _type) \
