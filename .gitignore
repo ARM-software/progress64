@@ -12,6 +12,7 @@ clhlock
 core
 counter
 hashtable
+hemlock
 mbtrie
 mcas
 mcslock

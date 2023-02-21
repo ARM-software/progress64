@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "p64_mcslock.h"
+#include "p64_hemlock.h"
 #include "p64_clhlock.h"
 #include "p64_rwlock.h"
 #include "p64_spinlock.h"
@@ -75,6 +76,7 @@ sum_x(volatile union x_b *p)
 struct object
 {
     p64_mcslock_t mcsl;//Size 8
+    p64_hemlock_t heml;//Size 8
     p64_rwclhlock_t rwclh;//Size 8
     p64_tfrwlock_t tfrwl;//Size 8
     p64_clhlock_t clhl;//Size 8 (pointer)
@@ -99,7 +101,7 @@ static uint32_t NUMOBJS = 0;
 static struct object *OBJS;//Pointer to array of aligned locks
 static bool VERBOSE = false;
 static bool DOCHECKS = false;
-static enum { PLAIN, RW, TFRW, PFRW, CLH, RWCLH, MCS, TKT, SEM, RWSYNC } LOCKTYPE = -1;
+static enum { PLAIN, RW, TFRW, PFRW, CLH, RWCLH, MCS, HEM, TKT, SEM, RWSYNC } LOCKTYPE = -1;
 static const char *const type_name[] =
 {
     "plain spin",//mutex
@@ -109,13 +111,14 @@ static const char *const type_name[] =
     "CLH",//mutex + FIFO
     "RWCLH",//rw + FIFO + optional sleep
     "MCS",//mutex + FIFO
+    "HEM",//mutex + FIFO
     "ticket",//mutex + FIFO
     "semaphore",//sh/excl + FIFO
     "read/write synchroniser"//sh/excl + FIFO
 };
 static const char *const abbr_name[] =
 {
-    "plain", "rw", "tfrw", "pfrw", "clh", "rwclh", "mcs", "tkt", "sem", "rwsync"
+    "plain", "rw", "tfrw", "pfrw", "clh", "rwclh", "mcs", "hem", "tkt", "sem", "rwsync"
 };
 static volatile bool QUIT = false;
 static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
@@ -232,6 +235,9 @@ restart:
 		case MCS :
 		    p64_mcslock_acquire(&obj->mcsl, &mcsnode);
 		    break;
+		case HEM :
+		    p64_hemlock_acquire(&obj->heml);
+		    break;
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
 		    break;
@@ -286,6 +292,9 @@ restart:
 		case MCS :
 		    p64_mcslock_release(&obj->mcsl, &mcsnode);
 		    break;
+		case HEM :
+		    p64_hemlock_release(&obj->heml);
+		    break;
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
 		    break;
@@ -329,6 +338,9 @@ restart:
 		    break;
 		case MCS :
 		    p64_mcslock_acquire(&obj->mcsl, &mcsnode);
+		    break;
+		case HEM :
+		    p64_hemlock_acquire(&obj->heml);
 		    break;
 		case TKT :
 		    p64_tktlock_acquire(&obj->tktl, &tkt);
@@ -387,6 +399,9 @@ restart:
 		    break;
 		case MCS :
 		    p64_mcslock_release(&obj->mcsl, &mcsnode);
+		    break;
+		case HEM :
+		    p64_hemlock_release(&obj->heml);
 		    break;
 		case TKT :
 		    p64_tktlock_release(&obj->tktl, tkt);
@@ -737,6 +752,7 @@ usage :
 	p64_clhlock_init(&OBJS[i].clhl);
 	p64_rwclhlock_init(&OBJS[i].rwclh, P64_RWCLHLOCK_SPIN_FOREVER);
 	p64_mcslock_init(&OBJS[i].mcsl);
+	p64_hemlock_init(&OBJS[i].heml);
 	p64_tktlock_init(&OBJS[i].tktl);
 	p64_rwsync_init(&OBJS[i].rws);
 	p64_sem_init(&OBJS[i].sem, NUMTHREADS);
