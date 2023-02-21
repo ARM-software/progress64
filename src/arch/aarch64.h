@@ -15,13 +15,13 @@
 static inline void *
 addr_dep(const void *ptr, uintptr_t dep)
 {
-    __asm__ volatile("add %x0, %x0, %x1\n"
-		     "sub %x0, %x0, %x1\n"
-		     : "+&r" (ptr)
-		     : "r" (dep)
+    void *res;
+    __asm__ volatile("eor %x0, %x1, %x2\n"
+		     "eor %x0, %x0, %x2\n"
+		     : "=&r" (res)
+		     : "r" (ptr), "r" (dep)
 		     : );
-    //Cast to remove const'ness of void ptr
-    return (union { const void *cvp; void *vp; }){ .cvp = ptr }.vp;
+    return res;
 }
 
 #define addr_dep(ptr, dep) \
