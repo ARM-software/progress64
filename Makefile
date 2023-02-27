@@ -86,9 +86,10 @@ endif
 endif
 CCFLAGS += -std=c11
 LDFLAGS += -std=c11
-#Enable when compiling for Armv8.1a (make ARMV81A=yes)
-ifeq ($(ARMV81A),yes)
-CCFLAGS += -march=armv8.1-a+lse -D__ARM_FEATURE_ATOMICS
+#Enable when compiling for Armv8.1a (make ATOMICS=yes)
+ifeq ($(ATOMICS),yes)
+ARCH ?= armv8.1-a
+CCFLAGS += -march=$(ARCH)+lse -D__ARM_FEATURE_ATOMICS
 endif
 ifneq ($(ARCH),)
 #GCC target architecture
