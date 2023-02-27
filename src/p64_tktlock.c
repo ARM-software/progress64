@@ -31,10 +31,5 @@ void
 p64_tktlock_release(p64_tktlock_t *lock, uint16_t tkt)
 {
     //Release ticket
-#ifdef USE_DMB
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    (void)__atomic_store_n(&lock->leave, tkt + 1, __ATOMIC_RELAXED);
-#else
     (void)__atomic_store_n(&lock->leave, tkt + 1, __ATOMIC_RELEASE);
-#endif
 }

@@ -139,10 +139,5 @@ p64_rwlock_release_wr(p64_rwlock_t *lock)
 	return;
     }
     //Clear writer flag
-#ifdef USE_DMB
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(lock, 0, __ATOMIC_RELAXED);
-#else
     __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
-#endif
 }

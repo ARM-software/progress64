@@ -24,11 +24,6 @@
 #define USE_WFE
 #endif
 
-//Use DMB;STR which is faster than STLR on e.g. Cortex-A57
-#ifdef __aarch64__
-#define USE_DMB
-#endif
-
 #ifdef __aarch64__
 //Use PREFETCH_ATOMIC() before __atomic calls when not generating ARMv8.1 LSE
 //instructions (i.e. __atomic calls implemented using exclusives)

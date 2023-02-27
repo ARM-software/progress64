@@ -247,12 +247,7 @@ release_slots(ringidx_t *loc,
     }
     else
     {
-#ifdef USE_DMB
-	__atomic_thread_fence(__ATOMIC_RELEASE);//Order both loads and stores
-	__atomic_store_n(loc, idx + n, __ATOMIC_RELAXED);
-#else
 	__atomic_store_n(loc, idx + n, __ATOMIC_RELEASE);
-#endif
     }
 }
 
