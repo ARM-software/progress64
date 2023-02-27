@@ -67,7 +67,7 @@ enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
     node->wait = CLH_WAIT;
 
     //Insert our node last in queue, get back previous last (tail) node
-    PREFETCH_ATOMIC(lock);
+    //A0: Synchronize with A0
     p64_clhnode_t *prev = __atomic_exchange_n(&lock->tail,
 					      node,
 					      __ATOMIC_ACQ_REL);
@@ -83,6 +83,7 @@ p64_clhlock_acquire(p64_clhlock_t *lock, p64_clhnode_t **nodep)
     p64_clhnode_t *prev = enqueue(lock, nodep);
 
     //Wait for previous thread to signal us (using their node)
+    //B0: Synchronize with B1
     wait_until_equal(&prev->wait, CLH_GO, __ATOMIC_ACQUIRE);
     //Now we own the previous node
 }
@@ -95,12 +96,8 @@ p64_clhlock_release(p64_clhnode_t **nodep)
 
     //Signal any (current or future) thread that waits for us using "our"
     //old node
-#ifdef USE_DMB
-    __atomic_thread_fence(__ATOMIC_RELEASE);
-    __atomic_store_n(&(*nodep)->wait, CLH_GO, __ATOMIC_RELAXED);
-#else
+    //B1: Synchronize with B0
     __atomic_store_n(&(*nodep)->wait, CLH_GO, __ATOMIC_RELEASE);
-#endif
     //Now when we have signaled the next thread, it will own "our" old node
 
     //Save our new node for later use
