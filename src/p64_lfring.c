@@ -185,10 +185,7 @@ restart:
 	} old, neu;
 	void *elem = elems[actual];
 	struct element *slot = &lfr->ring[tail & mask];
-#ifdef USE_LDXSTX
-	PREFETCH_LDXSTX(slot);
-#else
-	PREFETCH_ATOMIC(slot);
+#ifndef USE_LDXSTX
 	old.e.ptr = __atomic_load_n(&slot->ptr, __ATOMIC_RELAXED);
 	old.e.idx = __atomic_load_n(&slot->idx, __ATOMIC_RELAXED);
 #endif

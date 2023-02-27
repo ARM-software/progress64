@@ -93,7 +93,6 @@ p64_reorder_acquire(p64_reorder_t *rob,
 {
     uint32_t head, tail;
     int32_t actual;
-    PREFETCH_ATOMIC(&rob->tail);
     tail = __atomic_load_n(&rob->tail, __ATOMIC_RELAXED);
     do
     {

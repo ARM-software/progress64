@@ -184,7 +184,6 @@ signal_next(int *loc, int sig, int mo, uint32_t spin_tmo)
 	__atomic_store_n(loc, sig, mo);
 	return;
     }
-    PREFETCH_ATOMIC(loc);
     int old = __atomic_load_n(loc, __ATOMIC_RELAXED);
     do
     {
@@ -227,7 +226,6 @@ enqueue(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep, bool reader)
     node->reader = reader;
 
     //Insert our node last in queue, get back previous last (tail) node
-    PREFETCH_ATOMIC(lock);
     p64_rwclhnode_t *prev = __atomic_exchange_n(&lock->tail,
 						node,
 						__ATOMIC_ACQ_REL);

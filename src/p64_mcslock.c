@@ -22,7 +22,6 @@ void
 p64_mcslock_acquire(p64_mcslock_t *lock, p64_mcsnode_t *node)
 {
     node->next = NULL;
-    PREFETCH_ATOMIC(lock);
     //A0: Synchronizes with A0 and A1
     p64_mcsnode_t *prev = __atomic_exchange_n(lock, node, __ATOMIC_ACQ_REL);
     if (LIKELY(prev == NULL))

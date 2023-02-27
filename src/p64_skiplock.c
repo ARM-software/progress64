@@ -64,7 +64,6 @@ p64_skiplock_release(p64_skiplock_t *sl, uint32_t tkt)
 	p64_skiplock_t sl;
 	ptrpair_t pp;
     } old, new;
-    PREFETCH_ATOMIC(sl);
     do
     {
 	old.sl = *sl;//Non-atomic read

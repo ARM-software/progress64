@@ -150,9 +150,6 @@ atomic_rb_acquire(const ringidx_t *read_ptr,
 {
     ringidx_t tail;
     int actual;
-#ifdef USE_LDXSTX
-    PREFETCH_LDXSTX(write_ptr);
-#endif
 #ifndef USE_LDXSTX
     tail = __atomic_load_n(write_ptr, __ATOMIC_RELAXED);
 #endif
@@ -222,9 +219,6 @@ atomic_blend(uintptr_t *loc,
 	     int mm)
 {
     uintptr_t old, neu;
-#ifdef USE_LDXSTX
-    PREFETCH_LDXSTX(loc);
-#endif
     new_val &= ~preserve_mask;//Hoist this before critical section
     do
     {

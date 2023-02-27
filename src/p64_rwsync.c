@@ -60,7 +60,6 @@ void
 p64_rwsync_acquire_wr(p64_rwsync_t *sync)
 {
     p64_rwsync_t l;
-    PREFETCH_ATOMIC(sync);
     do
     {
 	//Wait for any present writer to go away
