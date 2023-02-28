@@ -167,7 +167,6 @@ static void
 thr_execute(uint32_t tidx)
 {
     uint32_t otkt = 0;
-    uint16_t tkt;
     uint32_t numfailwr_wr = 0;
     uint32_t lap;
     uint64_t xor_state[] = { tidx + 1 };//Must be != 0
@@ -187,8 +186,8 @@ thr_execute(uint32_t tidx)
 		    break;
 		case TKT :
 		    //With ticket lock, we need to acquire & release the lock
-		    p64_tktlock_acquire(&obj->tktl, &tkt);
-		    p64_tktlock_release(&obj->tktl, tkt);
+		    p64_tktlock_acquire(&obj->tktl);
+		    p64_tktlock_release(&obj->tktl);
 		    break;
 		case SEM :
 		    //With semaphore, we need to acquire & release the semaphore
@@ -207,7 +206,7 @@ thr_execute(uint32_t tidx)
 		    p64_skiplock_acquire(&obj->sl, otkt);
 		    break;
 		case TKT :
-		    p64_tktlock_acquire(&obj->tktl, &tkt);
+		    p64_tktlock_acquire(&obj->tktl);
 		    break;
 		case SEM :
 		    p64_sem_acquire_n(&obj->sem, NUMTHREADS);
@@ -237,7 +236,7 @@ thr_execute(uint32_t tidx)
 		    p64_skiplock_release(&obj->sl, otkt);
 		    break;
 		case TKT :
-		    p64_tktlock_release(&obj->tktl, tkt);
+		    p64_tktlock_release(&obj->tktl);
 		    break;
 		case SEM :
 		    p64_sem_release_n(&obj->sem, NUMTHREADS);

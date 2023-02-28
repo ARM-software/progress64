@@ -239,7 +239,7 @@ restart:
 		    p64_hemlock_acquire(&obj->heml);
 		    break;
 		case TKT :
-		    p64_tktlock_acquire(&obj->tktl, &tkt);
+		    p64_tktlock_acquire(&obj->tktl);
 		    break;
 		case SEM :
 		    p64_sem_acquire(&obj->sem);
@@ -296,7 +296,7 @@ restart:
 		    p64_hemlock_release(&obj->heml);
 		    break;
 		case TKT :
-		    p64_tktlock_release(&obj->tktl, tkt);
+		    p64_tktlock_release(&obj->tktl);
 		    break;
 		case SEM :
 		    p64_sem_release(&obj->sem);
@@ -343,7 +343,7 @@ restart:
 		    p64_hemlock_acquire(&obj->heml);
 		    break;
 		case TKT :
-		    p64_tktlock_acquire(&obj->tktl, &tkt);
+		    p64_tktlock_acquire(&obj->tktl);
 		    break;
 		case SEM :
 		    p64_sem_acquire_n(&obj->sem, NUMTHREADS);
@@ -404,7 +404,7 @@ restart:
 		    p64_hemlock_release(&obj->heml);
 		    break;
 		case TKT :
-		    p64_tktlock_release(&obj->tktl, tkt);
+		    p64_tktlock_release(&obj->tktl);
 		    break;
 		case SEM :
 		    p64_sem_release_n(&obj->sem, NUMTHREADS);

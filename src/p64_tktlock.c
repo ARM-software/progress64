@@ -18,17 +18,17 @@ p64_tktlock_init(p64_tktlock_t *lock)
 }
 
 void
-p64_tktlock_acquire(p64_tktlock_t *lock, uint16_t *tkt)
+p64_tktlock_acquire(p64_tktlock_t *lock)
 {
     //Get a ticket
-    *tkt = __atomic_fetch_add(&lock->enter, 1, __ATOMIC_RELAXED);
+    uint16_t tkt = __atomic_fetch_add(&lock->enter, 1, __ATOMIC_RELAXED);
     //Wait for any previous lockers to go away
-    wait_until_equal(&lock->leave, *tkt, __ATOMIC_ACQUIRE);
+    wait_until_equal(&lock->leave, tkt, __ATOMIC_ACQUIRE);
 }
 
 void
-p64_tktlock_release(p64_tktlock_t *lock, uint16_t tkt)
+p64_tktlock_release(p64_tktlock_t *lock)
 {
     //Release ticket
-    (void)__atomic_store_n(&lock->leave, tkt + 1, __ATOMIC_RELEASE);
+    (void)__atomic_fetch_add(&lock->leave, 1, __ATOMIC_RELEASE);
 }

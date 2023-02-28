@@ -21,9 +21,9 @@ typedef struct
 
 void p64_tktlock_init(p64_tktlock_t *lock);
 
-void p64_tktlock_acquire(p64_tktlock_t *lock, uint16_t *tkt);
+void p64_tktlock_acquire(p64_tktlock_t *lock);
 
-void p64_tktlock_release(p64_tktlock_t *lock, uint16_t tkt);
+void p64_tktlock_release(p64_tktlock_t *lock);
 
 #ifdef __cplusplus
 }
