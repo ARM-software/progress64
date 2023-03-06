@@ -50,12 +50,14 @@ p64_rwlock_acquire_rd(p64_rwlock_t *lock)
     {
 	//Wait for any present writer to go away
 	l = wait_for_no(lock, RWLOCK_WRITER, __ATOMIC_RELAXED);
+	assert((l & RWLOCK_WRITER) == 0);
 
 	//Attempt to increment number of readers
     }
+    //A0: read lock.w, synchronize with A3
     while (!__atomic_compare_exchange_n(lock, &l, l + 1,
 					/*weak=*/true,
-					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
+					__ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE));
 }
 
 bool
@@ -72,9 +74,10 @@ p64_rwlock_try_acquire_rd(p64_rwlock_t *lock)
 	}
 	//Attempt to increment number of readers
     }
+    //A1: read lock.w, synchronize with A3
     while (!__atomic_compare_exchange_n(lock, &l, l + 1,
 					/*weak=*/true,
-					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
+					__ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE));
     return true;
 }
 
@@ -82,11 +85,10 @@ void
 p64_rwlock_release_rd(p64_rwlock_t *lock)
 {
     p64_rwlock_t prevl;
-    smp_fence(LoadStore);//Load-only barrier due to reader-lock
     //Decrement number of readers
-    prevl = __atomic_fetch_sub(lock, 1, __ATOMIC_RELAXED);
+    //B0: write lock.r, synchronize with B1/B2
+    prevl = __atomic_fetch_sub(lock, 1, __ATOMIC_RELEASE);
     //Check after lock is released but use pre-release lock value
-    //if (UNLIKELY((prevl & RWLOCK_WRITER) != 0 || prevl == 0))
     if (UNLIKELY((prevl & RWLOCK_READERS) == 0))
     {
 	report_error("rwlock", "invalid read release", lock);
@@ -102,15 +104,19 @@ p64_rwlock_acquire_wr(p64_rwlock_t *lock)
     {
 	//Wait for any present writer to go away
 	l = wait_for_no(lock, RWLOCK_WRITER, __ATOMIC_RELAXED);
+	assert((l & RWLOCK_WRITER) == 0);
 
 	//Attempt to set writer flag
     }
+    //A2: read lock.w, synchronize with A3
     while (!__atomic_compare_exchange_n(lock, &l, l | RWLOCK_WRITER,
 					/*weak=*/true,
-					__ATOMIC_ACQUIRE, __ATOMIC_RELAXED));
+					__ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE));
 
     //Wait for any present readers to go away
-    (void)wait_for_no(lock, RWLOCK_READERS, __ATOMIC_RELAXED);
+    //B1: read lock.r, synchronize with B0
+    l = wait_for_no(lock, RWLOCK_READERS, __ATOMIC_ACQUIRE);
+    assert(l == RWLOCK_WRITER);//One writer, no readers
 }
 
 bool
@@ -120,9 +126,10 @@ p64_rwlock_try_acquire_wr(p64_rwlock_t *lock)
     //Lock must be completely free, we do not want to wait for any readers
     //to go away
     if (l == 0 &&
+    //B2: read lock.r, synchronize with B0
 	__atomic_compare_exchange_n(lock, &l, RWLOCK_WRITER,
 				    /*weak=*/false,
-				    __ATOMIC_ACQUIRE, __ATOMIC_RELAXED))
+				    __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE))
     {
 	return true;
     }
@@ -138,5 +145,6 @@ p64_rwlock_release_wr(p64_rwlock_t *lock)
 	return;
     }
     //Clear writer flag
+    //A3: write lock.w, synchronize with A0/A1/A2
     __atomic_store_n(lock, 0, __ATOMIC_RELEASE);
 }
