@@ -24,7 +24,7 @@ p64_hemlock_try_acquire(p64_hemlock_t *lock)
     assert(grant == NULL);
     //lock->tail == NULL => lock is free
     struct p64_hemlock **pred = NULL;
-    //A0: Synchronizes with A1
+    //A0: read and write tail, synchronize with A0/A1/A2
     return __atomic_compare_exchange_n(&lock->tail, &pred, &grant, 0,
 				       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
 }
@@ -33,7 +33,7 @@ void
 p64_hemlock_acquire(p64_hemlock_t *lock)
 {
     assert(grant == NULL);
-    //A0: Synchronizes with A1
+    //A1: read and write tail, synchronize with A0/A1/A2
     struct p64_hemlock **pred =
 	__atomic_exchange_n(&lock->tail, &grant, __ATOMIC_ACQ_REL);
     if (LIKELY(pred == NULL))
@@ -44,11 +44,11 @@ p64_hemlock_acquire(p64_hemlock_t *lock)
     //Else lock owned by other thread, we must wait for our turn
 
     //Wait for previous thread to signal us
-    //B0: Synchronizes with B1
+    //B0: read pred, synchronize with B1
     wait_until_equal((uintptr_t *)pred, (uintptr_t)lock, __ATOMIC_ACQUIRE);
 
     //Ack grant, grant can be reused
-    //C0: Signal C1
+    //C0: write pred, signal C1
     __atomic_store_n(pred, NULL, __ATOMIC_RELAXED);
 }
 
@@ -58,7 +58,7 @@ p64_hemlock_release(p64_hemlock_t *lock)
     assert(grant == NULL);
     //Lock->tail == &grant => no waiters
     struct p64_hemlock **v = &grant;
-    //A1: Synchronizes with A0
+    //A2: write tail, synchronize with A0/A1
     if (__atomic_compare_exchange_n(&lock->tail, &v, NULL, 0,
 				    __ATOMIC_RELEASE, __ATOMIC_RELAXED))
     {
@@ -68,14 +68,14 @@ p64_hemlock_release(p64_hemlock_t *lock)
     //Else there is at least one waiting thread
 
     //Signal first waiting thread which is polling our grant
-    //B1: Synchronizes with B0
+    //B1: write pred, synchronize with B0
     __atomic_store_n(&grant, lock, __ATOMIC_RELEASE);
 
     //Wait for thread to ack the grant
     //This should be quick (one round trip), just do a basic pool loop
     //Reading using atomic RMW operation ensures there is only ever one copy of the grant
     //cache line, this improves performance
-    //C1: Wait-for C0
+    //C1: read pred, wait-on C0
     while (__atomic_fetch_add((uintptr_t *)&grant, 0, __ATOMIC_RELAXED) != (uintptr_t)NULL)
     {
     }
