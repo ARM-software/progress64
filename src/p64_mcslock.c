@@ -22,7 +22,7 @@ void
 p64_mcslock_acquire(p64_mcslock_t *lock, p64_mcsnode_t *node)
 {
     node->next = NULL;
-    //A0: Synchronizes with A0 and A1
+    //A0: read and write lock, synchronize with A0/A1
     p64_mcsnode_t *prev = __atomic_exchange_n(lock, node, __ATOMIC_ACQ_REL);
     if (LIKELY(prev == NULL))
     {
@@ -32,11 +32,11 @@ p64_mcslock_acquire(p64_mcslock_t *lock, p64_mcsnode_t *node)
     //Else lock owned by other thread, we must wait for our turn
 
     node->wait = MCS_WAIT;
-    //B0: Synchronizes with B1
+    //B0: write next, synchronize with B1/B2
     __atomic_store_n(&prev->next, node, __ATOMIC_RELEASE);
 
     //Wait for previous thread to signal us (using our node)
-    //C0: Synchronizes with C1
+    //C0: read wait, synchronize with C1
     wait_until_equal(&node->wait, MCS_GO, __ATOMIC_ACQUIRE);
 }
 
@@ -45,12 +45,12 @@ p64_mcslock_release(p64_mcslock_t *lock, p64_mcsnode_t *node)
 {
     p64_mcsnode_t *next;
     //Check if there is any waiting thread
-    //B1: Synchronizes with B0
+    //B1: read next, synchronize with B0
     if ((next = __atomic_load_n(&node->next, __ATOMIC_ACQUIRE)) == NULL)
     {
 	//Seems there are no waiting threads, try to release lock
 	p64_mcsnode_t *tmp = node;//Use temporary variable since it might get overwritten
-	//A1: Synchronizes with A0
+	//A1: write lock, synchronize with A0
 	if (__atomic_compare_exchange_n(lock, &tmp, NULL, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
 	{
 	    //Still no waiters, lock released successfully
@@ -59,13 +59,13 @@ p64_mcslock_release(p64_mcslock_t *lock, p64_mcsnode_t *node)
 	//Else there is at least one waiting thread
 
 	//Wait for first waiting thread to link their node to our node
-	//B1: Synchronizes with B0
+	//B2: read next, synchronize with B0
 	while ((next = __atomic_load_n(&node->next, __ATOMIC_ACQUIRE)) == NULL)
 	{
 	    DOZE();
 	}
     }
     //Signal first waiting thread
-    //C1: Synchronizes with C0
+    //C1: write wait, synchronize with C0
     __atomic_store_n(&next->wait, MCS_GO, __ATOMIC_RELEASE);
 }
