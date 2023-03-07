@@ -1,4 +1,4 @@
-// Copyright (c) 2019 ARM Limited. All rights reserved.
+// Copyright (c) 2019,2023 ARM Limited. All rights reserved.
 // SPDX-License-Identifier: BSD-3-Clause
 
 #ifndef _GNU_SOURCE
@@ -80,7 +80,6 @@ struct p64_rwclhnode
     struct p64_rwclhnode *prev;
     uint32_t spin_tmo;
     int futex;
-    bool reader;
 };
 
 static p64_rwclhnode_t *
@@ -101,11 +100,11 @@ p64_rwclhlock_init(p64_rwclhlock_t *lock, uint32_t spin_tmo_ns)
     lock->tail = alloc_rwclhnode(lock);
     if (lock->tail == NULL)
     {
+	//Error has already been reported
 	return;
     }
     lock->tail->prev = NULL;
     lock->tail->futex = SIGNAL_REL;
-    lock->tail->reader = false;
     uint32_t spin_tmo = spin_tmo_ns;
     if (spin_tmo_ns != P64_RWCLHLOCK_SPIN_FOREVER)
     {
@@ -151,7 +150,7 @@ wait_prev(int *loc, int sig, uint32_t spin_tmo)
 	{
 	    return;
 	}
-	DOZE();
+	doze();
     }
     //Spinning timed out
     //Tell previous thread to wake us up from sleep
@@ -163,32 +162,39 @@ wait_prev(int *loc, int sig, uint32_t spin_tmo)
 					&actual,
 					wakeup,
 					0,//strong
-					__ATOMIC_RELAXED,
-					__ATOMIC_RELAXED))
+					__ATOMIC_ACQUIRE,
+					__ATOMIC_ACQUIRE))
 	{
-	    //CAS succeeded, previous thread must wake us up
+	    //CAS succeeded, previous thread must wake us up so sleep now
 	    futex_wait(loc, wakeup);
+	    //Get fresh value of location
+	    actual = __atomic_load_n(loc, __ATOMIC_ACQUIRE);
 	}
-	//CAS failed
-	actual = __atomic_load_n(loc, __ATOMIC_ACQUIRE);
+	//Else CAS failed, actual updated
     }
     while (actual < sig);
 }
 
 static void
-signal_next(int *loc, int sig, int mo, uint32_t spin_tmo)
+signal_next(int *loc, int sig)
 {
     assert(sig == SIGNAL_ACQ || sig == SIGNAL_REL);
-    if (spin_tmo == P64_RWCLHLOCK_SPIN_FOREVER)
+    int old = WAIT;
+    if (__atomic_compare_exchange_n(loc,
+				    &old,
+				    sig,
+				    0,//strong
+				    __ATOMIC_RELEASE,
+				    __ATOMIC_RELAXED))
     {
-	__atomic_store_n(loc, sig, mo);
 	return;
     }
-    int old = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    //Else old updated
     do
     {
 	if (old == WAKE_REL && sig == SIGNAL_ACQ)
 	{
+	    //Next thread waiting for SIGNAL_REL
 	    //Don't wake up now, wait until we signal SIGNAL_REL
 	    return;
 	}
@@ -197,7 +203,7 @@ signal_next(int *loc, int sig, int mo, uint32_t spin_tmo)
 					&old,
 					sig,
 					0,//strong
-					mo,
+					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
     //CAS succeeded, '*loc' updated
     if (old == WAKE_ACQ || old == WAKE_REL)
@@ -208,74 +214,70 @@ signal_next(int *loc, int sig, int mo, uint32_t spin_tmo)
 }
 
 static p64_rwclhnode_t *
-enqueue(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep, bool reader)
+enqueue(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep)
 {
     p64_rwclhnode_t *node = *nodep;
-    //When called first time, we will not have a node yet so allocate one
+    //When called the first time, we will not yet have a node so allocate one
     if (node == NULL)
     {
 	*nodep = node = alloc_rwclhnode(lock);
 	if (UNLIKELY(node == NULL))
 	{
+	    //Error has already been reported
 	    return NULL;
 	}
 	node->spin_tmo = lock->spin_tmo;
     }
     node->prev = NULL;
     node->futex = WAIT;
-    node->reader = reader;
 
     //Insert our node last in queue, get back previous last (tail) node
+    //Q0: read and write lock.tail, synchronize with Q0
     p64_rwclhnode_t *prev = __atomic_exchange_n(&lock->tail,
 						node,
 						__ATOMIC_ACQ_REL);
 
-    //Save previous node in (what is still) "our" node for later use
-    node->prev = prev;
     return prev;
 }
 
 void
 p64_rwclhlock_acquire_rd(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep)
 {
-    p64_rwclhnode_t *prev = enqueue(lock, nodep, true);
-
-    if (prev->reader)
+    p64_rwclhnode_t *prev = enqueue(lock, nodep);
+    if (UNLIKELY(prev == NULL))
     {
-	p64_rwclhnode_t *node = *nodep;
-
-	//Wait for previous thread to signal us (using their node)
-	wait_prev(&prev->futex, SIGNAL_ACQ, prev->spin_tmo);
-
-	//Signal any later readers
-	signal_next(&node->futex, SIGNAL_ACQ, __ATOMIC_RELAXED, prev->spin_tmo);
+	//Error has already been reported
+	return;
     }
-    else
-    {
-	//Wait for previous writer to signal us (using their node)
-	wait_prev(&prev->futex, SIGNAL_REL, prev->spin_tmo);
-    }
-    //Now we own the previous node
+    //Save previous node in our node for later use
+    p64_rwclhnode_t *node = *nodep;
+    node->prev = prev;
+
+    //Wait for previous thread to signal us
+    //A0: read futex waiting for ACQ (or REL), synchronize with A1/R3
+    wait_prev(&prev->futex, SIGNAL_ACQ, node->spin_tmo);
+
+    //Signal any later readers (using our node)
+    //A1: write futex with ACQ, synchronize with A0
+    signal_next(&node->futex, SIGNAL_ACQ);
 }
 
 void
 p64_rwclhlock_release_rd(p64_rwclhnode_t **nodep)
 {
     p64_rwclhnode_t *node = *nodep;
-
     //Read previous node, it will become our new node
     p64_rwclhnode_t *prev = node->prev;
 
-    if (prev->reader)
-    {
-	//Wait for previous reader to signal us (using their node)
-	wait_prev(&prev->futex, SIGNAL_REL, prev->spin_tmo);
-	//Now we own the previous node
-    }
+    //Wait for previous thread to release the lock
+    //R0: read futex waiting for REL, synchronize with R1
+    wait_prev(&prev->futex, SIGNAL_REL, node->spin_tmo);
+    //Now we own the previous node
 
-    //Signal later readers and writers that we are done
-    signal_next(&node->futex, SIGNAL_REL, __ATOMIC_RELEASE, prev->spin_tmo);
-    //Now when we have signaled the next thread, it will own "our" old node
+    //Signal the next thread that we are done
+    //R1: write futex with REL, synchronize with R0/R2
+    signal_next(&node->futex, SIGNAL_REL);
+    //Now when we have signaled the next thread, it will own our old node
 
     //Save our new node for later use
     *nodep = prev;
@@ -284,9 +286,19 @@ p64_rwclhlock_release_rd(p64_rwclhnode_t **nodep)
 void
 p64_rwclhlock_acquire_wr(p64_rwclhlock_t *lock, p64_rwclhnode_t **nodep)
 {
-    p64_rwclhnode_t *prev = enqueue(lock, nodep, true);
-    //Wait for previous writer to signal us (using their node)
-    wait_prev(&prev->futex, SIGNAL_REL, prev->spin_tmo);
+    p64_rwclhnode_t *prev = enqueue(lock, nodep);
+    if (UNLIKELY(prev == NULL))
+    {
+	//Error has already been reported
+	return;
+    }
+    p64_rwclhnode_t *node = *nodep;
+    //Save previous node in our node for later use
+    node->prev = prev;
+
+    //Wait for previous thread to release the lock
+    //R2: read futex waiting for REL, synchronize with R1/R3
+    wait_prev(&prev->futex, SIGNAL_REL, node->spin_tmo);
     //Now we own the previous node
 }
 
@@ -294,13 +306,13 @@ void
 p64_rwclhlock_release_wr(p64_rwclhnode_t **nodep)
 {
     p64_rwclhnode_t *node = *nodep;
-
     //Read previous node, it will become our new node
     p64_rwclhnode_t *prev = node->prev;
 
-    //Signal later readers and writers that we are done
-    signal_next(&node->futex, SIGNAL_REL, __ATOMIC_RELEASE, prev->spin_tmo);
-    //Now when we have signaled the next thread, it will own "our" old node
+    //Signal next thread that we are done
+    //R3: write futex with REL, synchronize with R2/A0
+    signal_next(&node->futex, SIGNAL_REL);
+    //Now when we have signaled the next thread, it will own our old node
 
     //Save our new node for later use
     *nodep = prev;
