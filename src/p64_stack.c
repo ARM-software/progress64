@@ -13,9 +13,6 @@
 #include "arch.h"
 #include "err_hnd.h"
 #include "lockfree.h"
-#ifdef USE_LDXSTX
-#include "ldxstx.h"
-#endif
 
 #define TAG_INCREMENT 4
 

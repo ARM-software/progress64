@@ -18,9 +18,6 @@
 #include "common.h"
 #include "err_hnd.h"
 #include "../src/lockfree.h"
-#ifdef USE_LDXSTX
-#include "ldxstx.h"
-#endif
 
 //Use atomic_fetch_and/atomic_fetch_or instead of atomic_blend
 #define ATOMIC_AND_OR
@@ -150,31 +147,22 @@ atomic_rb_acquire(const ringidx_t *read_ptr,
 {
     ringidx_t tail;
     int actual;
-#ifndef USE_LDXSTX
     tail = __atomic_load_n(write_ptr, __ATOMIC_RELAXED);
-#endif
     ringidx_t head = __atomic_load_n(read_ptr, __ATOMIC_ACQUIRE);
     do
     {
-#ifdef USE_LDXSTX
-	tail = ldx(write_ptr, __ATOMIC_RELAXED);
-#endif
 	actual = MIN(n, (int)(ring_size + head - tail));
 	if (UNLIKELY(actual <= 0))
 	{
 	    return (struct result){ .index = 0, .actual = 0 };
 	}
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(write_ptr, tail + actual, __ATOMIC_RELAXED)));
-#else
     while (!__atomic_compare_exchange_n(write_ptr,
 					&tail,//Updated on failure
 					tail + actual,
 					/*weak=*/true,
 					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
-#endif
     return (struct result){ .index = tail, .actual = actual };
 }
 
@@ -185,27 +173,19 @@ atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
     uint32_t old;
     do
     {
-#ifdef USE_LDXSTX
-	old = ldx(loc, __ATOMIC_RELAXED);
-#else
 	old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-#endif
 	if ((int32_t)(neu - old) <= 0)//neu <= old
 	{
 	    return;
 	}
 	//Else neu > old, update *loc
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(loc, neu, mo_store)));
-#else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
 					/*weak=*/true,
 					mo_store,
 					__ATOMIC_RELAXED));
-#endif
 }
 #endif
 
@@ -222,24 +202,16 @@ atomic_blend(uintptr_t *loc,
     new_val &= ~preserve_mask;//Hoist this before critical section
     do
     {
-#ifdef USE_LDXSTX
-	old = ldx(loc, MO_LOAD(mm));
-#else
 	old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-#endif
 	//Compute blended value from new_val and kept bits of old value
 	neu = new_val | (old & preserve_mask);
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(loc, neu, MO_STORE(mm))));
-#else
     while (UNLIKELY(!__atomic_compare_exchange_n(loc,
 						 &old,
 						 neu,
 						 /*weak=*/true,
 						 mm,
 						 MO_LOAD(mm))));
-#endif
     return old;
 }
 #endif

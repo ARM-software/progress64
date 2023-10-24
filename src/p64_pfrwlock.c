@@ -9,9 +9,6 @@
 
 #include "arch.h"
 #include "common.h"
-#ifdef USE_LDXSTX
-#include "ldxstx.h"
-#endif
 
 // uint16_t enter_rd;//Bits 0..15
 // uint16_t pend_rd;//Bits 16..31
@@ -53,14 +50,9 @@ static inline uint64_t
 atomic_incr_enter_or_pend(uint64_t *loc)
 {
     uint64_t old, neu;
-#ifndef USE_LDXSTX
     old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-#endif
     do
     {
-#ifdef USE_LDXSTX
-	old = ldx(loc, __ATOMIC_ACQUIRE);
-#endif
 	if (ENTER_WR(old) == LEAVE_WR(old))
 	{
 	    //No writers pending, increment enter_rd
@@ -72,16 +64,12 @@ atomic_incr_enter_or_pend(uint64_t *loc)
 	    neu = add_w_mask(old, PEND_RD_ONE, PEND_RD_MASK);
 	}
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELAXED)));
-#else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
 					/*weak=*/true,
 					__ATOMIC_ACQUIRE,
 					__ATOMIC_ACQUIRE));
-#endif
     return old;
 }
 
@@ -124,14 +112,9 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
 {
     uint64_t *loc = (uint64_t *)lock;
     uint64_t old, neu;
-#ifndef USE_LDXSTX
     old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-#endif
     do
     {
-#ifdef USE_LDXSTX
-	old = ldx(loc, __ATOMIC_RELAXED);
-#endif
 	//Compute new values
 	uint16_t enter_wr = ENTER_WR(old);
 	uint16_t leave_wr = LEAVE_WR(old) + 1;
@@ -141,14 +124,10 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
 	      ((uint64_t)leave_wr << LEAVE_WR_SHIFT) |
 	      ((uint64_t)enter_rd << ENTER_RD_SHIFT);
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELEASE)));
-#else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
 					/*weak=*/true,
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
-#endif
 }

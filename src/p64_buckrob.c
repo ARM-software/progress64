@@ -118,30 +118,21 @@ p64_buckrob_acquire(p64_buckrob_t *rob,
 static inline void
 atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
 {
-#ifndef USE_LDXSTX
     uint32_t old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-#endif
     do
     {
-#ifdef USE_LDXSTX
-	uint32_t old = ldx(loc, __ATOMIC_RELAXED);
-#endif
 	if ((int32_t)(neu - old) <= 0)//neu <= old
 	{
 	    return;
 	}
 	//Else neu > old, update *loc
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(loc, neu, mo_store)));
-#else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
 					/*weak=*/true,
 					mo_store,
 					__ATOMIC_RELAXED));
-#endif
 }
 #endif
 
@@ -150,25 +141,6 @@ AFTER(uint32_t x, uint32_t y)
 {
     return (int32_t)((x) - (y)) > 0;
 }
-
-#ifdef USE_LDXSTX
-ALWAYS_INLINE
-static inline void *
-atomic_compare_swap(void **loc, void *expected, void *neu, int mo_ld, int mo_st)
-{
-    void *old;
-    do
-    {
-	old = ldxptr(loc, mo_ld);
-	if (old != expected)
-	{
-	    break;
-	}
-    }
-    while (UNLIKELY(stxptr(loc, neu, mo_st)));
-    return old;
-}
-#endif
 
 void
 p64_buckrob_release(p64_buckrob_t *rob,
@@ -221,14 +193,6 @@ p64_buckrob_release(p64_buckrob_t *rob,
     assert(elem != NULL && elem != P64_BUCKROB_RESERVED_ELEM);
     //Assume not in-order <=> out-of-order
     //Attempt to release our (first) element
-#ifdef USE_LDXSTX
-    void *old = atomic_compare_swap(&rob->ring[sn & mask],
-				    NULL,
-				    elem,
-				    __ATOMIC_ACQUIRE,
-				    __ATOMIC_RELEASE);
-    if (old == NULL)
-#else
     void *old = NULL;
     if (__atomic_compare_exchange_n(&rob->ring[sn & mask],
 				    &old,
@@ -236,7 +200,6 @@ p64_buckrob_release(p64_buckrob_t *rob,
 				    /*weak=*/false,
 				    __ATOMIC_ACQ_REL,
 				    __ATOMIC_ACQUIRE))
-#endif
     {
 	//Success, out-of-order release
 	return;
@@ -272,24 +235,13 @@ p64_buckrob_release(p64_buckrob_t *rob,
 	}
 	assert(elem == NULL);
 	//Mark next slot as in order - pass the buck
-#ifdef USE_LDXSTX
-	elem = atomic_compare_swap(&rob->ring[sn & mask],
-				   NULL,
-				   THE_BUCK,
-				   __ATOMIC_ACQUIRE,
-				   __ATOMIC_RELEASE);
-#endif
     }
-#ifdef USE_LDXSTX
-    while (elem != NULL);
-#else
     while (!__atomic_compare_exchange_n(&rob->ring[sn & mask],
 				        &elem,//Updated on failure
 				        THE_BUCK,
 				        /*weak=*/true,
 				        __ATOMIC_ACQ_REL,
 				        __ATOMIC_ACQUIRE));
-#endif
     //Finally make all freed slots available for new acquisition
 #if defined __aarch64__ && !defined __ARM_FEATURE_ATOMICS
     //For targets without atomic add to memory, e.g. ARMv8.0

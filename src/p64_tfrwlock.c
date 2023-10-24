@@ -12,9 +12,6 @@
 
 #include "arch.h"
 #include "common.h"
-#ifdef USE_LDXSTX
-#include "ldxstx.h"
-#endif
 
 #define RD_ONE    (1U << 16)
 #define WR_ONE    1
@@ -57,26 +54,17 @@ static inline uint32_t
 atomic_add_w_mask(uint32_t *loc, uint32_t val, uint32_t mask)
 {
     uint32_t old, neu;
-#ifndef USE_LDXSTX
     old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-#endif
     do
     {
-#ifdef USE_LDXSTX
-	old = ldx(loc, __ATOMIC_RELAXED);
-#endif
 	neu = add_w_mask(old, val, mask);
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELAXED)));
-#else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
 					/*weak=*/true,
 					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
-#endif
     return old;
 }
 

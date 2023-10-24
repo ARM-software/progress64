@@ -14,9 +14,6 @@
 #include "arch.h"
 #include "lockfree.h"
 #include "err_hnd.h"
-#ifdef USE_LDXSTX
-#include "ldxstx.h"
-#endif
 
 #define TAG_INC 4
 

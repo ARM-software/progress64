@@ -15,9 +15,6 @@
 #include "arch.h"
 #include "common.h"
 #include "err_hnd.h"
-#ifdef USE_LDXSTX
-#include "ldxstx.h"
-#endif
 
 #if defined USE_SPLIT_HEADTAIL && !defined USE_SPLIT_PRODCONS
 #error USE_SPLIT_HEADTAIL not supported without USE_SPLIT_PRODCONS
@@ -195,31 +192,22 @@ acquire_slots_mtsafe(struct headtail *rb,
 {
     ringidx_t tail;
     int actual;
-#ifndef USE_LDXSTX
     tail = __atomic_load_n(&rb->tail, __ATOMIC_RELAXED);
-#endif
     ringidx_t head = __atomic_load_n(&rb->head.cur, __ATOMIC_ACQUIRE);
     do
     {
-#ifdef USE_LDXSTX
-	tail = ldx(&rb->tail, __ATOMIC_RELAXED);
-#endif
 	actual = MIN(n, (int)(capacity + head - tail));
 	if (UNLIKELY(actual <= 0))
 	{
 	    return (p64_ringbuf_result_t){ .index = 0, .actual = 0, .mask = 0 };
 	}
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(&rb->tail, tail + actual, __ATOMIC_RELAXED)));
-#else
     while (!__atomic_compare_exchange_n(&rb->tail,
 					&tail,//Updated on failure
 					tail + actual,
 					/*weak=*/true,
 					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED));
-#endif
     return (p64_ringbuf_result_t){ .index = tail,
 				   .actual = actual,
 				   .mask = rb->mask };
@@ -282,14 +270,9 @@ atomic_rb_release(struct headtail *rb,
 	struct idxpair p;
 	uint64_t u;
     } old, neu;
-#ifndef USE_LDXSTX
     __atomic_load(&rb->head, &old.p, mo_load);
-#endif
     do
     {
-#ifdef USE_LDXSTX
-	old.u = ldx((uint64_t *)&rb->head, mo_load);
-#endif
 #ifdef USE_CACHED_LIMES
 	ringidx_t mask = rb->mask;//Shouldn't really load in LDX/STX section
 	if (AHEAD(idx, n, old.p.cur))
@@ -340,16 +323,12 @@ atomic_rb_release(struct headtail *rb,
 	}
 #endif
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx((uint64_t *)&rb->head, neu.u, mo_store)));
-#else
     while (!__atomic_compare_exchange(&rb->head,
 				      &old.p,//Updated on failure
 				      &neu.p,
 				      /*weak=*/0,
 				      mo_load | mo_store,//XXX
 				      mo_load));
-#endif
     return old.p;
 }
 

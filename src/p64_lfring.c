@@ -16,9 +16,6 @@
 #include "lockfree.h"
 #include "common.h"
 #include "err_hnd.h"
-#ifdef USE_LDXSTX
-#include "ldxstx.h"
-#endif
 
 #define SUPPORTED_FLAGS (P64_LFRING_F_SPENQ | P64_LFRING_F_MPENQ | \
 			 P64_LFRING_F_SCDEQ | P64_LFRING_F_MCDEQ)
@@ -100,30 +97,21 @@ before(ringidx_t a, ringidx_t b)
 static inline ringidx_t
 cond_update(ringidx_t *loc, ringidx_t neu)
 {
-#ifndef USE_LDXSTX
     ringidx_t old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-#endif
     do
     {
-#ifdef USE_LDXSTX
-	ringidx_t old = ldx(loc, __ATOMIC_RELAXED);
-#endif
 	if (before(neu, old))//neu < old
 	{
 	    return old;
 	}
 	//Else neu > old, need to update *loc
     }
-#ifdef USE_LDXSTX
-    while (UNLIKELY(stx(loc, neu, __ATOMIC_RELEASE)));
-#else
     while (!__atomic_compare_exchange_n(loc,
 					&old,//Updated on failure
 					neu,
 					/*weak=*/true,
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
-#endif
     return neu;
 }
 
@@ -185,15 +173,10 @@ restart:
 	} old, neu;
 	void *elem = elems[actual];
 	struct element *slot = &lfr->ring[tail & mask];
-#ifndef USE_LDXSTX
 	old.e.ptr = __atomic_load_n(&slot->ptr, __ATOMIC_RELAXED);
 	old.e.idx = __atomic_load_n(&slot->idx, __ATOMIC_RELAXED);
-#endif
 	do
 	{
-#ifdef USE_LDXSTX
-	    old.pp = ldx((ptrpair_t *)slot, __ATOMIC_RELAXED);
-#endif
 	    if (UNLIKELY(old.e.idx != tail - size))
 	    {
 		if (old.e.idx != tail)
@@ -214,16 +197,12 @@ restart:
 	    neu.e.ptr = elem;
 	    neu.e.idx = tail;//Set idx on enqueue
 	}
-#ifdef USE_LDXSTX
-	while (UNLIKELY(stx((ptrpair_t *)slot, neu.pp, __ATOMIC_RELEASE)));
-#else
 	while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)slot,
 						   &old.pp,//Updated on failure
 						   neu.pp,
 						   /*weak=*/true,
 						   __ATOMIC_RELEASE,
 						   __ATOMIC_RELAXED));
-#endif
 	//Enqueue succeeded
 	actual++;
 	tail++;//Continue with next slot

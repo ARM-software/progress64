@@ -9,7 +9,7 @@
 
 #include "common.h"
 #include "arch.h"
-#ifdef USE_LDXSTX
+#ifdef __aarch64__
 #include "ldxstx.h"
 #endif
 
@@ -31,7 +31,7 @@ try_lock(p64_spinlock_t *lock, bool weak)
 void
 p64_spinlock_acquire(p64_spinlock_t *lock)
 {
-#ifdef USE_LDXSTX
+#ifdef __aarch64__
     SEVL();
 wait_for_event:
     (void)WFE();
