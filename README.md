@@ -32,8 +32,8 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 "Obstruction-free", "lock-free" and "wait-free" have the standard definitions from computer science.
 
 (1) Non-blocking but not (always) linearizable  
-(2) Blocking (using per-bucket locks) on ARMv7ve due to missing support for 128-bit atomic operations.
-(3) Limited non-blocking
+(2) Blocking (using per-bucket locks) on ARMv7ve due to missing support for 128-bit atomic operations.  
+(3) Non-blocking within a limited window (currently 32 elements)
 
 ### Locks & other blocking functions
 | Name | Description | Properties |

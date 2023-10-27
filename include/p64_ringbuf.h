@@ -3,7 +3,7 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 //Classic blocking MP/MC ring buffer
-//Non-blocking (but not lock-free) MP/MC mode also supported
+//Limited non-blocking (but not lock-free) MP/MC mode also supported
 //SP/SC modes are also supported
 //The element size must be sizeof(void *)
 
@@ -18,9 +18,6 @@
 extern "C"
 {
 #endif
-
-//In non-blocking mode, the following element value is invalid
-#define P64_RINGBUF_INVALID_ELEM NULL
 
 #define P64_RINGBUF_F_MPENQ      0x0000 //Blocking multi producer enqueue
 #define P64_RINGBUF_F_MCDEQ      0x0000 //Blocking multi consumer dequeue
