@@ -25,7 +25,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | qsbr | safe object reclamation using quiescent state based reclamation | reader wait-free, writer blocking
 | reassemble | IP reassembly | lock-free (2), resizeable
 | reorder | 'strict' reorder buffer | non-blocking (1)
-| ringbuf | classic ring buffer, support for user-defined element type | blocking & non-blocking (1), lock-free dequeue
+| ringbuf | classic ring buffer, support for user-defined element type | blocking & non-blocking (3), lock-free dequeue
 | stack | Treiber stack with configurable ABA workaround (lock/tag/smr/llsc) | blocking/lock-free
 | timer | timers | lock-free
 
@@ -33,6 +33,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 
 (1) Non-blocking but not (always) linearizable  
 (2) Blocking (using per-bucket locks) on ARMv7ve due to missing support for 128-bit atomic operations.
+(3) Limited non-blocking
 
 ### Locks & other blocking functions
 | Name | Description | Properties |

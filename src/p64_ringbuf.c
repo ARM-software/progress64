@@ -16,10 +16,6 @@
 #include "common.h"
 #include "err_hnd.h"
 
-#if defined USE_SPLIT_HEADTAIL && !defined USE_SPLIT_PRODCONS
-#error USE_SPLIT_HEADTAIL not supported without USE_SPLIT_PRODCONS
-#endif
-
 #define SUPPORTED_FLAGS (P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_MPENQ | \
 			 P64_RINGBUF_F_SCDEQ | P64_RINGBUF_F_MCDEQ | \
 			 P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_NBDEQ | \
@@ -29,29 +25,23 @@
 #define FLAG_BLK      0x0001
 #define FLAG_LOCKFREE 0x0002
 #define FLAG_NONBLK   0x0004
-#define FLAG_CLRSLOTS 0x0008
 
 typedef uint32_t ringidx_t;
 #define MAXELEMS 0xFFFFFFFF
+#define PENDMAX 32
 
 struct idxpair
 {
+    _Alignas(2 * sizeof(ringidx_t))
     ringidx_t cur;
-    ringidx_t pend;
+    uint32_t pend;
 };
 
-struct headtail
+struct endpoint
 {
-#if defined USE_SPLIT_PRODCONS
-    struct idxpair head ALIGNED(CACHE_LINE);//tail for consumer
-#else
+    _Alignas(4 * sizeof(ringidx_t))
     struct idxpair head;//tail for consumer
-#endif
-#if defined USE_SPLIT_HEADTAIL
-    ringidx_t tail ALIGNED(CACHE_LINE);//head for consumer
-#else
     ringidx_t tail;//head for consumer
-#endif
     ringidx_t mask;
     ringidx_t capacity;
     uint32_t flags;
@@ -59,10 +49,15 @@ struct headtail
 
 struct p64_ringbuf
 {
-    struct headtail prod;
-    struct headtail cons;//head & tail are swapped for consumer metadata
-    void *ring[] ALIGNED(CACHE_LINE);
-} ALIGNED(CACHE_LINE);
+    _Alignas(CACHE_LINE)
+    struct endpoint prod;
+#ifdef USE_SPLIT_PRODCONS
+    _Alignas(CACHE_LINE)
+#endif
+    struct endpoint cons;//head & tail are swapped for consumer metadata
+    _Alignas(CACHE_LINE)
+    void *ring[];
+};
 
 p64_ringbuf_t *
 p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
@@ -72,20 +67,19 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	report_error("ringbuf", "invalid number of elements", nelems);
 	return NULL;
     }
-    //Can't specify both single-producer and non-blocking enqueue
+    //Can't specify both single-producer and MP non-blocking enqueue
     uint32_t invalid_combo0 = P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_NBENQ;
-    //Can't specify both single-consumer and non-blocking dequeue
+    //Can't specify both single-consumer and MP non-blocking dequeue
     uint32_t invalid_combo1 = P64_RINGBUF_F_SCDEQ | P64_RINGBUF_F_NBDEQ;
-    //Can't specify both single-consumer and lock-free dequeue
+    //Can't specify both single-consumer and MP lock-free dequeue
     uint32_t invalid_combo2 = P64_RINGBUF_F_SCDEQ | P64_RINGBUF_F_LFDEQ;
-    //Can't mix lock-free dequeue with non-blocking enqueue
-    uint32_t invalid_combo3 = P64_RINGBUF_F_LFDEQ | P64_RINGBUF_F_NBENQ;
+    //Can't specify both MP non-blocking dequeue and MP lock-free dequeue
+    uint32_t invalid_combo3 = P64_RINGBUF_F_NBDEQ | P64_RINGBUF_F_LFDEQ;
     if ((flags & ~SUPPORTED_FLAGS) != 0 ||
 	(flags & invalid_combo0) == invalid_combo0 ||
 	(flags & invalid_combo1) == invalid_combo1 ||
 	(flags & invalid_combo2) == invalid_combo2 ||
-	(flags & invalid_combo3) == invalid_combo3 ||
-	((flags & (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_NBDEQ)) != 0 && esize != sizeof(void *)))
+	(flags & invalid_combo3) == invalid_combo3)
     {
 	report_error("ringbuf", "invalid flags", flags);
 	return NULL;
@@ -107,23 +101,11 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
 	rb->cons.head.pend = 0;
 	rb->cons.tail = 0;
 	rb->cons.mask = ringsz - 1;
-	rb->cons.capacity = 0;//Not really used
+	rb->cons.capacity = 0;
 	rb->cons.flags = (flags & P64_RINGBUF_F_SCDEQ) ? 0 ://SCDEQ
 			 (flags & P64_RINGBUF_F_NBDEQ) ? FLAG_NONBLK ://NBDEQ
 			 FLAG_BLK;//MCDEQ
 	rb->cons.flags |= (flags & P64_RINGBUF_F_LFDEQ) ? FLAG_LOCKFREE : 0;
-	//For non-blocking enqueue, we need to always clear dequeued slots
-	rb->cons.flags |= (flags & P64_RINGBUF_F_NBENQ) ? FLAG_CLRSLOTS : 0;
-
-	//Check for non-blocking enqueue or dequeue
-	if (flags & (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_NBDEQ))
-	{
-	    //We need to initialise ring slots
-	    for (uint32_t i = 0; i < ringsz; i++)
-	    {
-		rb->ring[i] = P64_RINGBUF_INVALID_ELEM;
-	    }
-	}
 	return rb;
     }
     return NULL;
@@ -186,7 +168,7 @@ acquire_slots(const ringidx_t *headp,
 
 //MT-safe multi producer/consumer code
 static inline p64_ringbuf_result_t
-acquire_slots_mtsafe(struct headtail *rb,
+acquire_slots_mtsafe(struct endpoint *rb,
 		     int n,
 		     ringidx_t capacity)
 {
@@ -213,8 +195,13 @@ acquire_slots_mtsafe(struct headtail *rb,
 				   .mask = rb->mask };
 }
 
+#define LOWER(x) (uint32_t)(x)
+#define TOLOWER(x) (uint32_t)(x)
+#define UPPER(x) (uint32_t)((x) >> 32)
+#define TOUPPER(x) ((uint64_t)(x) << 32)
+
 static inline void
-release_slots(ringidx_t *loc,
+release_slots(struct idxpair *loc,
 	      ringidx_t idx,
 	      uint32_t n,
 	      bool loads_only,
@@ -223,188 +210,73 @@ release_slots(ringidx_t *loc,
     if (flags & FLAG_BLK)
     {
 	//Wait for our turn to signal consumers (producers)
-	wait_until_equal(loc, idx, __ATOMIC_RELAXED);
+	wait_until_equal(&loc->cur, idx, __ATOMIC_RELAXED);
     }
-
-    //Release elements to consumers (producers)
-    //Also enable other producers (consumers) to proceed
-    if (loads_only)
+    if (!(flags & FLAG_NONBLK))
     {
-	smp_fence(LoadStore);//Order loads only
-	__atomic_store_n(loc, idx + n, __ATOMIC_RELAXED);
+	//Release elements to consumers (producers)
+	//Also enable other producers (consumers) to proceed
+	if (loads_only)
+	{
+	    smp_fence(LoadStore);//Order loads only
+	    __atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELAXED);
+	}
+	else
+	{
+	    __atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELEASE);
+	}
+	return;
     }
-    else
+    //Else non-blocking (FLAG_NONBLK)
+    uint64_t old, neu;
+restart:
+    //Attempt in-order release
+    old = TOLOWER(idx);
+    neu = TOLOWER(idx + n);
+    if (UNLIKELY(__atomic_compare_exchange_n((uint64_t *)loc,
+		    &old,
+		    neu,
+		    0,
+		    __ATOMIC_RELEASE,
+		    __ATOMIC_RELAXED)))
     {
-	__atomic_store_n(loc, idx + n, __ATOMIC_RELEASE);
+	return;
     }
-}
-
-#define USE_CACHED_LIMES
-
-#define AHEAD(idx, n, cur) ((int)((idx) - (cur)) > 0)
-#define INORDER(idx, n, cur) ((int)((idx) - (cur)) <= 0 && \
-			      (int)((idx) + (n) - (cur)) > 0)
-#define BEHIND(idx, n, cur) ((int)((idx) + (n) - (cur)) <= 0)
-#ifdef USE_CACHED_LIMES
-#define LIMES(pend, mask) ((pend) & (mask))
-#define CHANGE(pend, mask) ((pend) & ~(mask))
-#define ADD(a, b) ((a) + (b))
-#endif
-
-#if (__ATOMIC_RELAXED | __ATOMIC_ACQUIRE) != __ATOMIC_ACQUIRE
-#error __ATOMIC bit-wise OR hack failed (see XXX)
-#endif
-#if (__ATOMIC_RELEASE | __ATOMIC_ACQUIRE) != __ATOMIC_RELEASE
-#error __ATOMIC bit-wise OR hack failed (see XXX)
-#endif
-
-static inline struct idxpair
-atomic_rb_release(struct headtail *rb,
-		  ringidx_t idx,
-		  uint32_t n,
-		  int mo_load,
-		  int mo_store)
-{
-    union
+    //Else failure, 'old' updated with current value
+    uint32_t delta = LOWER(neu) - LOWER(old);
+    //Check if released slots fit within pending window
+    if (UNLIKELY(delta >= PENDMAX))
     {
-	struct idxpair p;
-	uint64_t u;
-    } old, neu;
-    __atomic_load(&rb->head, &old.p, mo_load);
+	//End index outside of pending mask
+	//Cannot perform update, must block:-(
+	goto restart;
+    }
     do
     {
-#ifdef USE_CACHED_LIMES
-	ringidx_t mask = rb->mask;//Shouldn't really load in LDX/STX section
-	if (AHEAD(idx, n, old.p.cur))
+	if (UNLIKELY(n >= PENDMAX && idx == LOWER(old)))
 	{
-	    //Ahead: all elements will be released by some other thread
-	    ringidx_t ring_size = mask + 1;
-	    ringidx_t new_lim = idx + n - (old.p.cur + 1);
-	    assert(new_lim > 0 && new_lim < ring_size);
-	    neu.p.cur = old.p.cur;
-	    //Increment change indicator, conditionally update 'limes' value
-	    neu.p.pend = ADD(CHANGE(old.p.pend, mask), ring_size) |
-			 MAX( LIMES(old.p.pend, mask), new_lim);
-	    assert(LIMES(neu.p.pend, mask) != 0);
-	    assert(neu.p.pend != old.p.pend);
-	}
-	else if (INORDER(idx, n, old.p.cur) && old.p.pend == 0)
-	{
-	    //In-order with no pending updates
-	    //Release our updates, reset limes/change indicator
-	    neu.p.cur = idx + n;
-	    neu.p.pend = old.p.pend;//0
-	    assert(neu.p.cur != old.p.cur);
+	    //We can only do large releases in-order
+	    neu = TOLOWER(idx + n);
 	}
 	else
 	{
-	    //In-order with pending updates or behind
-	    //In-order: this thread is responsible for releasing any consecutive
-	    //pending updates
-	    //Behind: all elements have already been released
-	    //Don't update 'loc' yet, that would enable other threads to release
-	    return old.p;
+	    uint32_t offset = idx - LOWER(old);//Offset into pending mask
+	    uint32_t mask = (1UL << n) - 1;//Mask of slots to release
+	    uint32_t newmask = UPPER(old) | (mask << offset);//Update pending mask
+	    uint64_t longmask = newmask;
+	    //Find number of in-order slots (count trailing ones of newmask)
+	    // ~longmask can never be zero!
+	    uint32_t inorder = __builtin_ctzl(~longmask); //0..PENDMAX-1
+	    longmask >>= inorder;
+	    neu = TOLOWER(old + inorder) | TOUPPER(longmask);
 	}
-#else
-	if (AHEAD(idx, n, old.p.cur))
-	{
-	    //Ahead: all elements will be released by some other thread
-	    neu.p.cur = old.p.cur;
-	    neu.p.pend = old.p.pend + 1;
-	}
-	else
-	{
-	    //In-order or behind
-	    //In-order: this thread is responsible for releasing any consecutive
-	    //pending updates
-	    //Behind: all elements have already been released
-	    //Don't update 'loc' yet, that would enable other threads to release
-	    return old.p;
-	}
-#endif
     }
-    while (!__atomic_compare_exchange(&rb->head,
-				      &old.p,//Updated on failure
-				      &neu.p,
-				      /*weak=*/0,
-				      mo_load | mo_store,//XXX
-				      mo_load));
-    return old.p;
-}
-
-static inline void
-release_slots_nblk(struct headtail *rb,
-		   ringidx_t idx,
-		   uint32_t n,
-		   ringidx_t *limit,
-		   void **ring,
-		   bool expect_null)
-{
-    struct idxpair old = atomic_rb_release(rb, idx, n,
-					   __ATOMIC_ACQUIRE,
-					   __ATOMIC_RELEASE);
-#ifdef USE_CACHED_LIMES
-    if (INORDER(idx, n, old.cur) && old.pend != 0)
-#else
-    if (INORDER(idx, n, old.cur))
-#endif
-    {
-	ringidx_t mask = rb->mask;
-	//In-order with pending updates that we must attempt to release
-	struct idxpair neu;
-	neu.cur = idx + n;//Skip past our own updates
-	//Scan the ring searching for pending updates
-	do
-	{
-#ifdef USE_CACHED_LIMES
-	    ringidx_t limes = old.cur + 1 + LIMES(old.pend, mask);
-	    assert(limes <= __atomic_load_n(limit, __ATOMIC_RELAXED));
-	    (void)limit;
-#else
-	    ringidx_t limes = __atomic_load_n(limit, __ATOMIC_RELAXED);
-#endif
-	    while (neu.cur - old.cur < limes - old.cur)
-	    {
-		const void *elem = __atomic_load_n(&ring[neu.cur & mask],
-						   __ATOMIC_ACQUIRE);
-		if (expect_null ?
-			elem != P64_RINGBUF_INVALID_ELEM :
-			elem == P64_RINGBUF_INVALID_ELEM)
-		{
-		    //Didn't find expected value
-		    break;
-		}
-		neu.cur++;
-	    }
-	    assert(neu.cur != old.cur);
-#ifdef USE_CACHED_LIMES
-	    //Since 'cur' changed, we need to recompute 'pend'
-	    assert((int)(limes - neu.cur) >= 0);
-	    if (neu.cur == limes)
-	    {
-		neu.pend = 0;
-	    }
-	    else//limes > neu.cur
-	    {
-		ringidx_t new_lim = limes - (neu.cur + 1);
-		assert(new_lim > 0 && new_lim < mask + 1);
-		neu.pend = new_lim;
-	    }
-#else
-	    neu.pend = old.pend;
-#endif
-	}
-	//Release our own updates + any found consecutive updates
-	//Fail if 'loc->pend' has changed => more pending updates => re-scan
-	//'loc->cur' cannot change
-	while (!__atomic_compare_exchange(&rb->head,
-					  &old,//Updated on failure
-					  &neu,
-					  /*weak=*/0,
-					  __ATOMIC_ACQ_REL,
-					  __ATOMIC_ACQUIRE));
-    }
-    //Else ahead or behind: do nothing
+    while (!__atomic_compare_exchange_n((uint64_t *)loc,
+					&old,//Updated on failure
+					neu,
+					/*weak=*/0,
+					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED));
 }
 
 inline p64_ringbuf_result_t
@@ -487,7 +359,7 @@ p64_ringbuf_release_(void *ptr,
     if (enqueue)
     {
 	//Consumer metadata is swapped: cons.tail<->cons.head
-	release_slots(&rb->cons.head/*tail*/.cur, r.index, r.actual,
+	release_slots(&rb->cons.head/*tail*/, r.index, r.actual,
 		      /*loads_only=*/false, rb->prod.flags);
 	return true;//Success
     }
@@ -503,7 +375,7 @@ p64_ringbuf_release_(void *ptr,
 						       __ATOMIC_RELAXED);
 	    return success;
 	}
-	release_slots(&rb->prod.head.cur, r.index, r.actual,
+	release_slots(&rb->prod.head, r.index, r.actual,
 		      /*loads_only=*/true, rb->cons.flags);
 	return true;//Success
     }
@@ -552,6 +424,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 		    void *const *restrict ev,
 		    uint32_t num)
 {
+    PREFETCH_FOR_WRITE(&rb->prod);
     //Step 1: acquire slots
     uint32_t mask = rb->prod.mask;
     uint32_t prod_flags = rb->prod.flags;
@@ -592,17 +465,9 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     }
 
     //Step 3: release slots to consumer
-    if (prod_flags & FLAG_NONBLK)//NBENQ
-    {
-	release_slots_nblk(&rb->cons, r.index, r.actual, &rb->prod.tail,
-			   rb->ring, /*expect_null=*/false);
-    }
-    else//SPENQ or NBENQ
-    {
-	//Consumer metadata is swapped: cons.tail<->cons.head
-	release_slots(&rb->cons.head/*tail*/.cur, r.index, r.actual,
-		      /*loads_only=*/false, prod_flags);
-    }
+    //Consumer metadata is swapped: cons.tail<->cons.head
+    release_slots(&rb->cons.head/*tail*/, r.index, r.actual,
+		  /*loads_only=*/false, prod_flags);
 
     return r.actual;
 }
@@ -650,6 +515,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	//Use prod.head instead of cons.head (which is not used at all)
 	int actual;
 	//Step 1: speculative acquisition of slots
+	PREFETCH_FOR_WRITE(&rb->prod.head);
 	ringidx_t head = __atomic_load_n(&rb->prod.head.cur, __ATOMIC_RELAXED);
 	//Consumer metadata is swapped: cons.tail<->cons.head
 	ringidx_t tail = __atomic_load_n(&rb->cons.head/*tail*/.cur,
@@ -701,32 +567,11 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     }
 
     //Step 2: read slots
-    if (cons_flags & (FLAG_NONBLK | FLAG_CLRSLOTS))//NBDEQ or NBENQ
-    {
-	for (uint32_t i = 0; i < r.actual; i++)
-	{
-	    void **slot = &rb->ring[(r.index + i) & mask];
-	    ev[i] = __atomic_load_n(slot, __ATOMIC_ACQUIRE);
-	    assert(ev[i] != P64_RINGBUF_INVALID_ELEM);
-	    __atomic_store_n(slot, P64_RINGBUF_INVALID_ELEM, __ATOMIC_RELAXED);
-	}
-    }
-    else//SCDEQ or MCDEQ
-    {
-	read_slots(rb->ring, ev, r);
-    }
+    read_slots(rb->ring, ev, r);
 
     //Step 3: release slots to producer
-    if (cons_flags & FLAG_NONBLK)//NBDEQ
-    {
-	release_slots_nblk(&rb->prod, r.index, r.actual, &rb->cons.tail/*head*/,
-			   rb->ring, /*expect_null=*/true);
-    }
-    else//SCDEQ or MCDEQ
-    {
-	release_slots(&rb->prod.head.cur, r.index, r.actual,
-		      /*loads_only=*/true, cons_flags);
-    }
+    release_slots(&rb->prod.head, r.index, r.actual,
+		  /*loads_only=*/true, cons_flags);
 
     *index = r.index;
     return r.actual;

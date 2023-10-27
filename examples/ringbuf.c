@@ -23,7 +23,7 @@ error_handler(const char *module, const char *error, uintptr_t val)
 {
     EXPECT(strcmp(module, "ringbuf") == 0 &&
 	   strcmp(error, "invalid flags") == 0 &&
-	   val == (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ));
+	   val == (P64_RINGBUF_F_NBDEQ | P64_RINGBUF_F_LFDEQ));
     longjmp(jmpbuf, 1);
     //Not reached
 }
@@ -36,7 +36,7 @@ test_rb(uint32_t flags)
     uint32_t index;
 
     p64_ringbuf_uip_t *rb = p64_ringbuf_uip_alloc(5, flags);
-    if (flags == (P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ))
+    if (flags == (P64_RINGBUF_F_NBDEQ | P64_RINGBUF_F_LFDEQ))
     {
 	EXPECT(rb == NULL);
 	return;
@@ -99,11 +99,13 @@ int main(void)
     test_rb(P64_RINGBUF_F_MPENQ | P64_RINGBUF_F_NBDEQ);
     printf("testing SP/NBDEQ ring buffer\n");
     test_rb(P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_NBDEQ);
-    printf("testing NBEBQ/LFDEQ ring buffer\n");//Invalid flags
+    printf("testing NBENQ/LFDEQ ring buffer\n");
+    test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ);
+    printf("testing NBDEQ/LFDEQ ring buffer (invalid)\n");//Invalid flags
     p64_errhnd_install(error_handler);
     if (setjmp(jmpbuf) == 0)
     {
-	test_rb(P64_RINGBUF_F_NBENQ | P64_RINGBUF_F_LFDEQ);
+	test_rb(P64_RINGBUF_F_NBDEQ | P64_RINGBUF_F_LFDEQ);
     }
     //Else longjumped back from error handler
     printf("ringbuf test complete\n");

@@ -6,7 +6,6 @@
 #define _BUILD_CONFIG_H
 
 #define USE_SPLIT_PRODCONS
-//#define USE_SPLIT_HEADTAIL
 
 //Enable hazard pointers with zero references to invoke QSBR
 //#define HP_ZEROREF_QSBR
