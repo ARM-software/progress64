@@ -682,7 +682,7 @@ int main(int argc, char *argv[])
 	    case 'm' :
 		{
 		    rbmode = atoi(optarg);
-		    if (rbmode < 0 || rbmode > 13)
+		    if (rbmode < 0 || rbmode > 14)
 		    {
 			fprintf(stderr, "Invalid ring buffer mode %d\n", rbmode);
 			exit(EXIT_FAILURE);
@@ -745,10 +745,11 @@ usage :
 		fprintf(stderr, "mode 2: non-blocking enqueue/blocking dequeue\n");
 		fprintf(stderr, "mode 3: non-blocking enqueue/non-blocking dequeue\n");
 		fprintf(stderr, "mode 4: blocking enqueue/lock-free dequeue\n");
-		fprintf(stderr, "mode 5: lfring\n");
-		fprintf(stderr, "mode 6: buckring\n");
-		fprintf(stderr, "modes 7-10: Treiber stack\n");
-		fprintf(stderr, "modes 11-13: M&S queue\n");
+		fprintf(stderr, "mode 5: non-blocking enqueue/lock-free dequeue\n");
+		fprintf(stderr, "mode 6: lfring\n");
+		fprintf(stderr, "mode 7: buckring\n");
+		fprintf(stderr, "modes 8-11: Treiber stack\n");
+		fprintf(stderr, "modes 12-14: M&S queue\n");
 		exit(EXIT_FAILURE);
 	}
     }
@@ -764,23 +765,24 @@ usage :
 	case 2 :
 	case 3 :
 	case 4 :
+	case 5 :
 	    RING_IMPL = classic;
 	    break;
-	case 5 :
+	case 6 :
 	    RING_IMPL = lfring;
 	    break;
-	case 6 :
+	case 7 :
 	    RING_IMPL = buckring;
 	    break;
-	case 7 :
 	case 8 :
 	case 9 :
-	case 10:
+	case 10 :
+	case 11:
 	    RING_IMPL = stack;
 	    break;
-	case 11:
 	case 12:
 	case 13:
+	case 14:
 	    RING_IMPL = msqueue;
 	    break;
 	default :
@@ -794,14 +796,14 @@ usage :
     if (RING_IMPL == msqueue)
     {
 	const char *const aba[] = { "lock", "tag", "smr" };
-	printf("M&S queue (aba %s), ", aba[rbmode - 11]);
-	aba_mode = rbmode - 11;
+	printf("M&S queue (aba %s), ", aba[rbmode - 12]);
+	aba_mode = rbmode - 12;
     }
     else if (RING_IMPL == stack)
     {
 	const char *const aba[] = { "lock", "tag", "smr", "llsc" };
-	printf("Treiber stack (aba %s), ", aba[rbmode - 7]);
-	aba_mode = rbmode - 7;
+	printf("Treiber stack (aba %s), ", aba[rbmode - 8]);
+	aba_mode = rbmode - 8;
     }
     else if (RING_IMPL == buckring)
     {
@@ -813,9 +815,9 @@ usage :
     }
     else
     {
-	printf("mode %c/%c, ",
-	       rbmode == 5 ? 'L' : (rbmode & 2) ? 'N' : 'B',
-	       (rbmode & 4) ? 'L' : (rbmode & 1) ? 'N' : 'B');
+	printf("mode enq=%c/deq=%c, ",
+	       (rbmode & 1) ? 'N' : 'B', //Enqueue
+	       (rbmode & 4) ? 'L' : (rbmode & 2) ? 'N' : 'B');//Dequeue
     }
     printf("%u laps, %u thread%s, affinity mask=0x%"PRIx64"\n",
 	    NUMLAPS,
@@ -838,8 +840,8 @@ usage :
     for (unsigned i = 0; i < NUMRINGBUFS; i++)
     {
 	uint32_t flags = 0;
-	flags |= (rbmode & 1) ? P64_RINGBUF_F_NBDEQ : 0;
-	flags |= (rbmode & 2) ? P64_RINGBUF_F_NBENQ : 0;
+	flags |= (rbmode & 1) ? P64_RINGBUF_F_NBENQ : 0;
+	flags |= (rbmode & 2) ? P64_RINGBUF_F_NBDEQ : 0;
 	flags |= (rbmode & 4) ? P64_RINGBUF_F_LFDEQ : 0;
 	void *q = NULL;
 	switch (RING_IMPL)
