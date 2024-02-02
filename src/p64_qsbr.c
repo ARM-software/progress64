@@ -73,11 +73,12 @@ p64_qsbr_alloc(uint32_t maxobjs)
 }
 
 //Find the smallest value in the array
+//Return INFINITE if array is empty
 static uint64_t
 find_min(const uint64_t vec[], uint32_t num)
 {
-    uint64_t min = __atomic_load_n(&vec[0], __ATOMIC_RELAXED);
-    for (uint32_t i = 1; i < num; i++)
+    uint64_t min = INFINITE;
+    for (uint32_t i = 0; i < num; i++)
     {
 	uint64_t t = __atomic_load_n(&vec[i], __ATOMIC_RELAXED);
 	if (t < min)
