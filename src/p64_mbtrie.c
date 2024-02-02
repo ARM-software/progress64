@@ -996,10 +996,7 @@ success:
     return next_mask;
 }
 
-#ifdef __aarch64__
-#ifndef __ARM_NEON
-#pragma GCC target("+simd")
-#endif
+#ifdef __ARM_NEON
 #include <arm_neon.h>
 #endif
 
@@ -1029,7 +1026,7 @@ p64_mbtrie_lookup_vec(p64_mbtrie_t *mbt,
     uint32_t stride = mbt->strides[0];
     void **base = mbt->base;
     uint32_t i = 0;
-#ifdef __aarch64__
+#ifdef __ARM_NEON
     //Only use NEON version when beneficial
     if (LIKELY(num > 8))
     {
