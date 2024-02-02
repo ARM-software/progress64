@@ -160,7 +160,7 @@ static void barrier_thr_done(uint32_t idx)
 //Signal all threads to begin
 static void barrier_all_begin(uint32_t numthreads)
 {
-    uint64_t thrmask = (1UL << numthreads) - 1;
+    uint64_t thrmask = numthreads < 64 ? (1UL << numthreads) - 1 : ~0UL;
     __atomic_store_n(&THREAD_BARRIER, thrmask, __ATOMIC_RELEASE);
     sem_wait(&ALL_DONE);
 }
