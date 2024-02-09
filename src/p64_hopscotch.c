@@ -251,7 +251,7 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
 	    "%zu elements, load=%.2f\n",
 	    ht->nbkts, ht->ncells,
 	    nelems, (float)nelems / (ht->nbkts + ht->ncells));
-    printf("bitmap utilisation histogram:\n");
+    printf("Bitmap utilisation histogram:\n");
     for (uint32_t i = 0; i < BITMAP_BITS / 2; i++)
     {
 	printf("%2u: %7zu (%.3f)\t\t%2u: %7zu (%.3f)\n",
@@ -262,7 +262,7 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
     printf("%2u: %7zu (%.3f)\n",
 	   BITMAP_BITS / 2,
 	   full_hg[BITMAP_BITS / 2], full_hg[BITMAP_BITS / 2] / (float)nelems);
-    printf("Cellar utilisation: %zu (%.3f)\n", ncellar, ncellar / (float)nelems);
+    printf("Cellar: %zu (%.3f)\n", ncellar, ncellar / (float)ht->ncells);
     printf("Distances from home bucket:\n");
     size_t sum = 0;
     for (uint32_t i = 0; i < BITMAP_BITS / 2; i++)
@@ -275,7 +275,7 @@ p64_hopscotch_check(p64_hopscotch_t *ht)
 		dist_hg[i + BITMAP_BITS / 2] / (float)nelems);
     }
     printf("Avg distance: %.2f\n", sum / (float)nelems);
-    printf("%zu neighbourhoods are completely full\n", nfull);
+    printf("%zu (%.3f) neighbourhoods are completely full\n", nfull, nfull / (float)ht->nbkts);
 }
 
 #define VALID_FLAGS P64_HOPSCOTCH_F_HP
