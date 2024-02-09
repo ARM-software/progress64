@@ -141,6 +141,12 @@ xorshift32(uint32_t x)
 #define CRC32C(x, y) xorshift32((y))
 #endif
 
+static inline uint64_t
+compute_hash(uint32_t key)
+{
+    return (uint64_t)CRC32C(0, key);
+}
+
 static void
 thr_insert(uint32_t tidx)
 {
@@ -149,7 +155,7 @@ thr_insert(uint32_t tidx)
 	struct object *obj = &OBJS[idx];
 	uint32_t key = idx;//Keys are unique
 	assert(obj->key == key);
-	uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+	uintptr_t hash = compute_hash(key);//Hashes may not be unique
 	bool success;
 	if (HOPSCOTCH)
 	{
@@ -166,7 +172,17 @@ thr_insert(uint32_t tidx)
 	}
 	if (!success)
 	{
-	    fprintf(stderr, "Failed to insert key %u\n", key);
+	    fprintf(stderr, "Failed to insert key %u (hash=%lx)\n", key, hash);
+	    if (HOPSCOTCH)
+	    {
+		void p64_hopscotch_check(p64_hopscotch_t *ht);
+		p64_hopscotch_check(HT);
+	    }
+	    else if (CUCKOOHT)
+	    {
+		void p64_cuckooht_check(p64_cuckooht_t *ht);
+		p64_cuckooht_check(HT);
+	    }
 	    exit(EXIT_FAILURE);
 	}
     }
@@ -180,7 +196,7 @@ thr_remove(uint32_t tidx)
 	struct object *obj = &OBJS[idx];
 	uint32_t key = idx;//Keys are unique
 	assert(obj->key == key);
-	uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+	uintptr_t hash = compute_hash(key);//Hashes may not be unique
 	bool success;
 	if (HOPSCOTCH)
 	{
@@ -228,7 +244,7 @@ thr_lookup_hit(uint32_t tidx)
 		for (uint32_t j = 0; j < vecsize; j++)
 		{
 		    k[j] = i + j; //Keys are unique
-		    hashes[j] = CRC32C(0, k[j]);//Hashes may not be unique
+		    hashes[j] = compute_hash(k[j]);//Hashes may not be unique
 		}
 		if (HOPSCOTCH)
 		{
@@ -279,7 +295,7 @@ thr_lookup_hit(uint32_t tidx)
 	    {
 		struct object *obj = NULL;
 		uint32_t key = idx;//Keys are unique
-		uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+		uintptr_t hash = compute_hash(key);//Hashes may not be unique
 		if (HOPSCOTCH)
 		{
 		    //UBSAN complains if &hp is not specified
@@ -349,7 +365,7 @@ thr_lookup_miss(uint32_t tidx)
 		for (uint32_t j = 0; j < vecsize; j++)
 		{
 		    k[j] = numkeys + i + j;
-		    hashes[j] = CRC32C(0, k[j]);//Hashes may not be unique
+		    hashes[j] = compute_hash(k[j]);//Hashes may not be unique
 		}
 		if (HOPSCOTCH)
 		{
@@ -379,7 +395,7 @@ thr_lookup_miss(uint32_t tidx)
 	    {
 		struct object *obj = NULL;
 		uint32_t key = numkeys + idx;
-		uintptr_t hash = CRC32C(0, key);//Hashes may not be unique
+		uintptr_t hash = compute_hash(key);//Hashes may not be unique
 		if (HOPSCOTCH)
 		{
 		    //UBSAN complains if &hp is not specified
@@ -782,6 +798,8 @@ usage :
     {
 	create_threads(NUMTHREADS, AFFINITY);
 	benchmark(NUMTHREADS, Insert);
+	benchmark(NUMTHREADS, LookupHit);
+	benchmark(NUMTHREADS, LookupMiss);
 	if (VERBOSE)
 	{
 	    if (HOPSCOTCH)
@@ -795,8 +813,6 @@ usage :
 		p64_cuckooht_check(HT);
 	    }
 	}
-	benchmark(NUMTHREADS, LookupHit);
-	benchmark(NUMTHREADS, LookupMiss);
 	benchmark(NUMTHREADS, Remove);
     }
 
