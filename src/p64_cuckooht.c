@@ -1,6 +1,16 @@
-//Copyright (c) 2020, ARM Limited. All rights reserved.
+//Copyright (c) 2020-2024, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
+
+#define CRC 0
+#define XORSHIFT 1
+#define PHIMUL 2
+#define MURMUR3 3
+#define SCRAMBLE PHIMUL
+#define FASTRANGE //5 cycles faster than modulo and seems to distribute better (?)
+//Statistics are not multithread-safe
+//#define STATS(x) x
+#define STATS(x)
 
 #include <assert.h>
 #include <inttypes.h>
@@ -23,6 +33,7 @@
 #include <arm_neon.h>
 #endif
 
+#if SCRAMBLE == CRC
 #if defined __ARM_FEATURE_CRC32
 #include <arm_acle.h>
 #define scramble(x) \
@@ -31,46 +42,61 @@
 #include <x86intrin.h>
 #define scramble(x) _Generic((x), uint32_t:__crc32d, uint64_t:__crc32q)(0, (x))
 #else
+#error HW CRC not available
+#endif
+#else
+static inline uint32_t
+scramble32(uint32_t x)
+{
+#if SCRAMBLE == PHIMUL
+    return x * 2654435769U;//2^32 / phi
+#elif SCRAMBLE == MURMUR3
+    //fmix32 from Murmurhash3
+    x ^= (x >> 16);
+    x *= 0x85ebca6b;
+    x ^= (x >> 13);
+    x *= 0xc2b2ae35;
+    x ^= (x >> 16);
+    return x;
+#elif SCRAMBLE == XORSHIFT
 //Algorithm "xor" from p. 4 of Marsaglia, "Xorshift RNGs"
 //Scrambling using xorshift seems to create a high probability of false
 //positives in the signature matching when number of buckets is a power of two
-static inline uint32_t
-xorshift32(uint32_t x)
-{
     //x == 0 will return 0
     x ^= x << 13;
     x ^= x >> 17;
     x ^= x << 5;
     return x;
+#else
+#error
+#endif
 }
 static inline uint64_t
-xorshift64(uint64_t x)
+scramble64(uint64_t x)
 {
+#if SCRAMBLE == PHIMUL
+    return x * 11400714819323198485UL;//2^64 / phi
+#elif SCRAMBLE == MURMUR3
+    //fmix64 from Murmurhash3
+    x ^= (x >> 33);
+    x *= 0xff51afd7ed558ccd;
+    x ^= (x >> 33);
+    x *= 0xc4ceb9fe1a85ec53;
+    x ^= (x >> 33);
+    return x;
+#elif SCRAMBLE == XORSHIFT
     //x == 0 will return 0
     x ^= x << 13;
     x ^= x >> 7;
     x ^= x << 17;
     return x;
+#else
+#error
+#endif
 }
 #define scramble(x) \
-    _Generic((x), uint32_t:xorshift32, uint64_t:xorshift64)((x))
+    _Generic((x), uint32_t:scramble32, uint64_t:scramble64)((x))
 #endif
-
-static inline uint32_t
-scramble_hash(p64_cuckoohash_t h)
-{
-static_assert(sizeof(p64_cuckoohash_t) == sizeof(uint64_t) ||
-	      sizeof(p64_cuckoohash_t) == sizeof(uint32_t),
-	      "Unsupported size of p64_cuckoohash_t");
-    if (sizeof(p64_cuckoohash_t) == sizeof(uint64_t))
-    {
-	return scramble((uint64_t)h);
-    }
-    else
-    {
-	return scramble((uint32_t)h);
-    }
-}
 
 //Signatures are truncated hashes used for fast matching
 typedef uint16_t sign_t;
@@ -154,10 +180,26 @@ ring_add(bix_t a, bix_t b, bix_t modulo)
     return sum;
 }
 
+#ifdef FASTRANGE
+static inline uint32_t
+fastrange32(uint32_t word, uint32_t p)
+{
+    return (uint32_t)(((uint64_t)word * (uint64_t)p) >> 32);
+}
+#endif
+
 static inline bix_t
 ring_mod(p64_cuckoohash_t hash, bix_t modulo)
 {
+#ifdef FASTRANGE
+    //fastrange needs some extra scrambling
+    hash ^= hash << 13;
+    hash ^= hash >> 7;
+    hash ^= hash << 17;
+    bix_t rem = fastrange32((uint32_t)hash, modulo);
+#else
     bix_t rem = hash % modulo;
+#endif
     assert(rem < modulo);
     return rem;
 }
@@ -192,6 +234,10 @@ struct p64_cuckooht
     p64_cuckooht_compare cf;
     bix_t nbkts;
     bix_t ncells;
+    STATS(uint32_t hit[3];)
+    STATS(uint32_t misses;)
+    STATS(uint32_t insert[2];)
+    STATS(uint32_t move[2];)
     uint8_t use_hp;//Use hazard pointers for safe memory reclamation
     struct cell *cellar;//Pointer to cell array
     struct bucket buckets[] ALIGNED(CACHE_LINE);
@@ -274,9 +320,9 @@ p64_cuckooht_check(p64_cuckooht_t *ht)
     size_t ncellar = 0;
     for (bix_t i = 0; i < ht->ncells; i++)
     {
-	nelems += (ht->cellar[i].elem != NULL);
 	ncellar += (ht->cellar[i].elem != NULL);
     }
+    nelems += ncellar;
     assert(ncellbits <= ncellar);
     assert(IMPLIES(ncellbits == 0, ncellar == 0));
     printf("Cuckoo hash table: %u buckets @ %u slots, %u cells, "
@@ -288,7 +334,25 @@ p64_cuckooht_check(p64_cuckooht_t *ht)
     {
 	printf("%u: %7u (%.3f)\n", i, histo[i], histo[i] / (float)ht->nbkts);
     }
-    printf("Cellar: %zu\n", ncellar);
+    printf("Cellar: %zu (%.3f)\n", ncellar, ncellar / (float)ht->ncells);
+    STATS(uint32_t inserts = ht->insert[0] + ht->insert[1];)
+    STATS(printf("Insert[0]: %u (%.3f)\n", ht->insert[0], (double)ht->insert[0] / inserts);)
+    STATS(printf("Insert[1]: %u (%.3f)\n", ht->insert[1], (double)ht->insert[1] / inserts);)
+    STATS(printf("Move[0]: %u (%.3f)\n", ht->move[0], (double)ht->move[0] / inserts);)
+    STATS(printf("Move[1]: %u (%.3f)\n", ht->move[1], (double)ht->move[1] / inserts);)
+    STATS(uint32_t hits = ht->hit[0] + ht->hit[1] + ht->hit[2];)
+    STATS(printf("Hit[0]: %u (%.3f)\n", ht->hit[0], (double)ht->hit[0] / hits);)
+    STATS(printf("Hit[1]: %u (%.3f)\n", ht->hit[1], (double)ht->hit[1] / hits);)
+    STATS(printf("Hit[C]: %u (%.3f)\n", ht->hit[2], (double)ht->hit[2] / hits);)
+    STATS(printf("Misses: %u\n", ht->misses);)
+#ifdef FASTRANGE
+#define RINGMOD "fastrange"
+#else
+#define RINGMOD "modulo"
+#endif
+    printf("ring_mod: %s\n", RINGMOD);
+    static const char *const scramble_str[] = { "crc", "xorshift", "phimul", "murmur3" };
+    printf("scramble: %s\n", scramble_str[SCRAMBLE]);
 }
 
 #define VALID_FLAGS P64_CUCKOOHT_F_HP
@@ -563,6 +627,7 @@ lookup(p64_cuckooht_t *ht,
 	    elem = check_matches(ht, bkt0, mask0, key, hash, hazpp, use_hp, check_key);
 	    if (elem != NULL)
 	    {
+		STATS(ht->hit[0]++;)
 		return elem;
 	    }
 	}
@@ -572,6 +637,7 @@ lookup(p64_cuckooht_t *ht,
 	    elem = check_matches(ht, bkt1, mask1, key, hash, hazpp, use_hp, check_key);
 	    if (elem != NULL)
 	    {
+		STATS(ht->hit[1]++;)
 		return elem;
 	    }
 	}
@@ -587,9 +653,11 @@ lookup(p64_cuckooht_t *ht,
 	elem = search_cellar(ht, key, hash, hazpp, use_hp, check_key);
 	if (elem != NULL)
 	{
+	    STATS(ht->hit[2]++;)
 	    return elem;
 	}
     }
+    STATS(ht->misses++;)
     return NULL;
 }
 
@@ -603,7 +671,7 @@ p64_cuckooht_lookup(p64_cuckooht_t *ht,
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -633,7 +701,7 @@ p64_cuckooht_lookup_vec(p64_cuckooht_t *ht,
 	bix0[i] = ring_mod(hashes[i], ht->nbkts);
 	struct bucket *bkt0 = &ht->buckets[bix0[i]];
 	PREFETCH_FOR_READ(bkt0);
-	bix1[i] = ring_mod(scramble_hash(hashes[i]), ht->nbkts);
+	bix1[i] = ring_mod(scramble(hashes[i]), ht->nbkts);
 	if (UNLIKELY(bix1[i] == bix0[i]))
 	{
 	    bix1[i] = ring_add(bix1[i], 1, ht->nbkts);
@@ -740,7 +808,7 @@ sibling_bix(p64_cuckooht_t *ht,
     }
     else
     {
-	bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
+	bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
 	if (UNLIKELY(bix1 == bix0))
 	{
 	    bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -918,7 +986,7 @@ find_empty(p64_cuckooht_t *ht,
 
 //Attempt to move one of the elements in the source bucket to its sibling
 //(destination) bucket, thus freeing up a slot in this bucket
-static bool
+static mask_t
 make_room(p64_cuckooht_t *ht,
 	  bix_t src_bix)
 {
@@ -933,7 +1001,8 @@ make_room(p64_cuckooht_t *ht,
 	if (UNLIKELY(elem == NULL))
 	{
 	    //Slot unexpectedly became empty (great!)
-	    return true;
+	    assert(bkt->elems[src_idx] == NULL);
+	    return (mask_t)1 << (src_idx << MASK_SHIFT);
 	}
 	else if (UNLIKELY(HAS_ANY(elem)))
 	{
@@ -962,7 +1031,8 @@ make_room(p64_cuckooht_t *ht,
 		//Move started!
 		//Let's try to complete the move ourselves
 		move_elem(ht, elem, src_bix, src_idx, dst_bix, dst_idx);
-		return true;
+		assert(bkt->elems[src_idx] == NULL);
+		return (mask_t)1 << (src_idx << MASK_SHIFT);
 	    }
 	    //Else slot changed
 	    //Undo reservation
@@ -985,7 +1055,7 @@ make_room(p64_cuckooht_t *ht,
     }
     //No element in source bucket can be moved
     atomic_ptr_release(&hp, ht->use_hp);
-    return false;
+    return 0;
 }
 
 NO_INLINE
@@ -1100,10 +1170,9 @@ find_null(p64_cuckooelem_t **elems, uint32_t *count)
     uint8x8_t vmatch8 = vmovn_u16(vmatch16);
     //Generate 1-bit boolean mask
     vmatch8 = vshr_n_u8(vmatch8, 7);
-    uint8x8_t vcnt = vcnt_u8(vmatch8);
-    *count = vaddv_u8(vcnt);
     uint64x1_t vmatch = vreinterpret_u64_u8(vmatch8);
     matches = vget_lane_u64(vmatch, 0);
+    *count = ((matches & 0x0101010101010101UL) * 0x0101010101010101UL) >> 56;
 #else
     matches = 0;
     for (uint32_t i = 0; i < BKT_SIZE; i++)
@@ -1133,7 +1202,7 @@ p64_cuckooht_insert(p64_cuckooht_t *ht,
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
@@ -1150,32 +1219,56 @@ p64_cuckooht_insert(p64_cuckooht_t *ht,
 	//Also compute emptiness of the two buckets
 	uint32_t numempt0, numempt1;
 	mask_t empty0 = find_null(bkt0->elems, &numempt0);
+	assert(numempt0 == __builtin_popcountll(empty0));
+	if (empty0 != 0)
+	{
+	    success = bucket_insert(bkt0, empty0, elem, hash);
+	    if (success)
+	    {
+		STATS(ht->insert[0]++;)
+		break;
+	    }
+	}
 	mask_t empty1 = find_null(bkt1->elems, &numempt1);
-	success = bucket_insert(numempt0 > numempt1 ? bkt0 : bkt1,
-				numempt0 > numempt1 ? empty0 : empty1,
-				elem, hash);
-	if (success)
+	assert(numempt1 == __builtin_popcountll(empty1));
+	if (empty1 != 0)
 	{
-	    break;
+	    success = bucket_insert(bkt1, empty1, elem, hash);
+	    if (success)
+	    {
+		STATS(ht->insert[1]++;)
+		break;
+	    }
 	}
-	success = bucket_insert(numempt0 > numempt1 ? bkt1 : bkt0,
-				numempt0 > numempt1 ? empty1 : empty0,
-				elem, hash);
-	if (success)
+	//Else some other thread(s) stole all the empty slots
+	if ((empty0 = make_room(ht, bix0)))
 	{
-	    break;
-	}
-	if (make_room(ht, bix0))
-	{
+	    STATS(ht->move[0]++;)
+	    success = bucket_insert(bkt0, empty0, elem, hash);
+	    if (success)
+	    {
+		STATS(ht->insert[0]++;)
+		break;
+	    }
+	    //Else some other thread stole our slot
 	    continue;
 	}
-	if (make_room(ht, bix1))
+	if ((empty1 = make_room(ht, bix1)))
 	{
+	    STATS(ht->move[1]++;)
+	    success = bucket_insert(bkt1, empty1, elem, hash);
+	    if (success)
+	    {
+		STATS(ht->insert[1]++;)
+		break;
+	    }
+	    //Else some other thread stole our slot
 	    continue;
 	}
 	//Could not make room in any of the buckets
 	//Try to insert in cellar
 	success = insert_cell(ht, elem, hash, bkt0);
+	//If also the cellar is full, we give up
 	break;
     }
     if (LIKELY(!ht->use_hp))
@@ -1409,7 +1502,7 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
     bix_t bix0 = ring_mod(hash, ht->nbkts);
     struct bucket *bkt0 = &ht->buckets[bix0];
     PREFETCH_FOR_READ(bkt0);
-    bix_t bix1 = ring_mod(scramble_hash(hash), ht->nbkts);
+    bix_t bix1 = ring_mod(scramble(hash), ht->nbkts);
     if (UNLIKELY(bix1 == bix0))
     {
 	bix1 = ring_add(bix1, 1, ht->nbkts);
