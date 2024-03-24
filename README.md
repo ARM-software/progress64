@@ -1,7 +1,7 @@
 # PROGRESS64
 Progress by Design
 ## Purpose
-PROGRESS64 is a C library of scalable functions for concurrent programs. It provides functionality which is often required in multithreaded networking applications. The general goal is to provide primitives which enable scalable and preferably non-blocking concurrent applications.
+PROGRESS64 is a C library of scalable functions for parallel and concurrent programs. It provides functionality which is often required in multithreaded networking applications. The general goal is to provide primitives which enable scalable and preferably non-blocking concurrent applications.
 
 A secondary purpose is to inform and inspire the use of the C11-based memory model (especially Release Consistency i.e. using load-acquire/store-release) for multithreaded programming.
 
@@ -61,6 +61,11 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 "queue" - each waiting thread spins on a separate location. Queue locks generally scale better with high lock contention.  
 "recursive" - the same thread can re-acquire the lock when it is already acquired.  
 "sleep" - waiting thread will sleep after spinning has timed out.
+
+### Concurrency support
+| Name | Description | Properties |
+| coroutine | coroutines using "crosscall" | aarch64 only |
+| fiber | fibers using "crosscall" | aarch64 only |
 
 ## Requirements
 * A C11 compiler (e.g. GCC or Clang) which supports the '\_\_atomic' builtins and inline assembler. Several other GCC'isms are used as well.

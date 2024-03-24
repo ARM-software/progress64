@@ -2,6 +2,8 @@
 *.o
 *.swp
 antireplay
+bm_coroutine
+bm_fiber
 bm_hashtab
 bm_ringbuf
 bm_smr
@@ -10,7 +12,9 @@ buckring
 buckrob
 clhlock
 core
+coroutine
 counter
+fiber
 hashtable
 hemlock
 mbtrie
