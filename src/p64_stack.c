@@ -16,6 +16,12 @@
 
 #define TAG_INCREMENT 4
 
+#ifdef __ARM_FEATURE_ATOMICS
+#define EXTRACHK(x) (x)
+#else
+#define EXTRACHK(x) 0
+#endif
+
 //Use last byte of stack data structure (tag) for spin lock
 #if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
 #define STK_TO_LOCK(stk) &((p64_spinlock_t *)((stk) + 1))[-1]
@@ -53,6 +59,20 @@ enqueue_lock(p64_stack_t *stk, p64_stack_elem_t *elem)
     p64_spinlock_release(lock);
 }
 
+static inline
+p64_stack_t
+atomic_load_stk(p64_stack_t *stk, int mo)
+{
+    p64_stack_t old;
+    do
+    {
+        old.tag = __atomic_load_n(&stk->tag, mo);
+        old.head = __atomic_load_n(addr_dep(&stk->head, old.tag), __ATOMIC_RELAXED);
+    }
+    while (__atomic_load_n(addr_dep(&stk->tag, old.head), __ATOMIC_RELAXED) != old.tag);
+    return old;
+}
+
 static void
 enqueue_tag(p64_stack_t *stk, p64_stack_elem_t *elem)
 {
@@ -63,19 +83,22 @@ enqueue_tag(p64_stack_t *stk, p64_stack_elem_t *elem)
     } old, neu;
     do
     {
-	__atomic_load(&stk->head, &old.st.head, __ATOMIC_RELAXED);
-	__atomic_load(&stk->tag, &old.st.tag, __ATOMIC_RELAXED);
+#ifdef __ARM_FEATURE_ATOMICS
+	old.pp = casp((__int128 *)stk, 0, 0, __ATOMIC_RELAXED);
+#else
+	old.st = atomic_load_stk(stk, __ATOMIC_RELAXED);
+#endif
 	elem->next = old.st.head;
 	neu.st.head = elem;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
+    while (EXTRACHK(__atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != old.st.tag) ||
+	   !lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
 					       &old.pp,
 					       neu.pp,
 					       /*weak=*/true,
 					       __ATOMIC_RELEASE,
 					       __ATOMIC_RELAXED));
-
 }
 
 //Call-back function invoked when object is guaranteed not to be referenced
@@ -185,9 +208,8 @@ dequeue_tag(p64_stack_t *stk)
     } old, neu;
     do
     {
-	__atomic_load(&stk->head, &old.st.head, __ATOMIC_ACQUIRE);
-	__atomic_load(&stk->tag, &old.st.tag, __ATOMIC_RELAXED);
-	if (old.st.head == NULL)
+	old.st = atomic_load_stk(stk, __ATOMIC_ACQUIRE);
+	if (UNLIKELY(old.st.head == NULL))
 	{
 	    return NULL;
 	}
@@ -196,12 +218,13 @@ dequeue_tag(p64_stack_t *stk)
 	neu.st.head = old.st.head->next;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
+    while (UNLIKELY(EXTRACHK(__atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != old.st.tag) ||
+	   !lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
 					       &old.pp,//Updated on failure
 					       neu.pp,
 					       /*weak=*/true,
 					       __ATOMIC_RELAXED,
-					       __ATOMIC_RELAXED));
+					       __ATOMIC_RELAXED)));
 
     return old.st.head;
 }
