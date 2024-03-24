@@ -900,7 +900,7 @@ usage :
 	{
 	    printf("%u%c",
 		   RESULT_OPS[numthr - 1],
-		   numthr < MAXNUMTHREADS ? ' ' : '\n');
+		   numthr < MAXNUMTHREADS ? ',' : '\n');
 	}
 	if (CPUFREQ != 0)
 	{
@@ -914,7 +914,7 @@ usage :
 	{
 	    printf("%u%c",
 		   RESULT_OVH[numthr - 1],
-		   numthr < MAXNUMTHREADS ? ' ' : '\n');
+		   numthr < MAXNUMTHREADS ? ',' : '\n');
 	}
     }
     else if (NUMTHREADS != 0)
