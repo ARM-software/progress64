@@ -26,6 +26,7 @@
 #include "p64_lfring.h"
 #include "p64_buckring.h"
 #include "p64_stack.h"
+#include "p64_lfstack.h"
 #include "p64_hazardptr.h"
 #include "p64_msqueue.h"
 #include "build_config.h"
@@ -47,6 +48,7 @@
 struct element_s
 {
     p64_stack_elem_t *elem;
+    p64_lfstack_elem_t *lfelem;
     uint32_t lap;
     uint32_t number;
 };
@@ -81,7 +83,7 @@ static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static sem_t ALL_DONE;
 static struct timespec END_TIME;
 static bool VERBOSE = false;
-enum { classic, lfring, buckring, stack, msqueue } RING_IMPL;
+enum { classic, lfring, buckring, stack, lfstack, msqueue } RING_IMPL;
 
 static p64_stack_t *
 stack_alloc(uint32_t aba)
@@ -97,6 +99,24 @@ stack_alloc(uint32_t aba)
 
 static void
 stack_free(p64_stack_t *stk)
+{
+    free(stk);
+}
+
+static p64_lfstack_t *
+lfstack_alloc(void)
+{
+     p64_lfstack_t *stk = aligned_alloc(CACHE_LINE, sizeof(p64_lfstack_t));
+     if (stk == NULL)
+     {
+	 perror("malloc"), abort();
+     }
+     p64_lfstack_init(stk);
+     return stk;
+}
+
+static void
+lfstack_free(p64_lfstack_t *stk)
 {
     free(stk);
 }
@@ -192,6 +212,9 @@ enqueue(void *rb, void *elem)
 	case stack :
 	    p64_stack_enqueue((p64_stack_t *)rb, elem);
 	    return true;
+	case lfstack :
+	    p64_lfstack_enqueue((p64_lfstack_t *)rb, elem);
+	    return true;
 	case msqueue :
 	{
 	    p64_msqueue_elem_t *node = msq_freelist;
@@ -247,6 +270,8 @@ dequeue(void *rb)
 	    break;
 	case stack :
 	    return p64_stack_dequeue((p64_stack_t *)rb);
+	case lfstack :
+	    return p64_lfstack_dequeue((p64_lfstack_t *)rb);
 	case msqueue :
 	{
 	    struct msqueue *msq = (struct msqueue *)rb;
@@ -682,7 +707,7 @@ int main(int argc, char *argv[])
 	    case 'm' :
 		{
 		    rbmode = atoi(optarg);
-		    if (rbmode < 0 || rbmode > 14)
+		    if (rbmode < 0 || rbmode > 15)
 		    {
 			fprintf(stderr, "Invalid ring buffer mode %d\n", rbmode);
 			exit(EXIT_FAILURE);
@@ -748,8 +773,9 @@ usage :
 		fprintf(stderr, "mode 5: non-blocking enqueue/lock-free dequeue\n");
 		fprintf(stderr, "mode 6: lfring\n");
 		fprintf(stderr, "mode 7: buckring\n");
-		fprintf(stderr, "modes 8-11: Treiber stack\n");
+		fprintf(stderr, "modes 8-11: Treiber stack w. aba workarounds\n");
 		fprintf(stderr, "modes 12-14: M&S queue\n");
+		fprintf(stderr, "mode 15: Treiber lfstack w. backoff\n");
 		exit(EXIT_FAILURE);
 	}
     }
@@ -785,6 +811,9 @@ usage :
 	case 14:
 	    RING_IMPL = msqueue;
 	    break;
+	case 15:
+	    RING_IMPL = lfstack;
+	    break;
 	default :
 	    abort();
     }
@@ -804,6 +833,10 @@ usage :
 	const char *const aba[] = { "lock", "tag", "smr", "llsc" };
 	printf("Treiber stack (aba %s), ", aba[rbmode - 8]);
 	aba_mode = rbmode - 8;
+    }
+    else if (RING_IMPL == lfstack)
+    {
+	printf("lfstack+backoff, ");
     }
     else if (RING_IMPL == buckring)
     {
@@ -857,6 +890,9 @@ usage :
 		break;
 	    case stack :
 		q = stack_alloc(aba_mode);
+		break;
+	    case lfstack :
+		q = lfstack_alloc();
 		break;
 	    case msqueue :
 		q = msqueue_alloc(aba_mode);
@@ -948,6 +984,9 @@ usage :
 		break;
 	    case stack :
 		stack_free(RINGBUFS[i]);
+		break;
+	    case lfstack :
+		lfstack_free(RINGBUFS[i]);
 		break;
 	    case msqueue :
 		msqueue_free(RINGBUFS[i]);

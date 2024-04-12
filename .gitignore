@@ -23,6 +23,7 @@ mcslock
 msqueue
 laxrob
 lfring
+lfstack
 libprogress64.a
 bm_mcas
 bm_lock
