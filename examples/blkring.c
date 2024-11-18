@@ -36,7 +36,8 @@ test_rb(void)
     EXPECT(vec[0] == (void *)3);
     EXPECT(vec[1] == (void *)4);
 
-    p64_blkring_dequeue_nblk(rb, vec, 3, &index);
+    int32_t ret = p64_blkring_dequeue_nblk(rb, vec, 3, &index);
+    EXPECT(ret == 2);
     EXPECT(index == 4);
     EXPECT(vec[0] == (void *)5);
     EXPECT(vec[1] == (void *)6);
