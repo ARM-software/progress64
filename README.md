@@ -10,6 +10,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | Name | Description | Properties |
 | ---- | ---- | :----: |
 | antireplay | replay protection | lock-free/wait-free
+| blkring | ring buffer with blocking enqueue & dequeue | blocking
 | buckring | ring buffer using pass-the-buck algorithm | non-blocking (1)
 | buckrob | reorder buffer using pass-the-buck algorithm | non-blocking (1)
 | counter | shared counters | reader obstruction-free, writer wait-free

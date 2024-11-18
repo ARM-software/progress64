@@ -29,6 +29,7 @@
 #include "p64_lfstack.h"
 #include "p64_hazardptr.h"
 #include "p64_msqueue.h"
+#include "p64_blkring.h"
 #include "build_config.h"
 #include "common.h"
 #include "arch.h"
@@ -83,7 +84,7 @@ static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static sem_t ALL_DONE;
 static struct timespec END_TIME;
 static bool VERBOSE = false;
-enum { classic, lfring, buckring, stack, lfstack, msqueue } RING_IMPL;
+enum { classic, lfring, buckring, stack, lfstack, blkring, msqueue } RING_IMPL;
 
 static p64_stack_t *
 stack_alloc(uint32_t aba)
@@ -215,6 +216,9 @@ enqueue(void *rb, void *elem)
 	case lfstack :
 	    p64_lfstack_enqueue((p64_lfstack_t *)rb, elem);
 	    return true;
+	case blkring :
+	    p64_blkring_enqueue(rb, &elem, 1);
+	    return true;
 	case msqueue :
 	{
 	    p64_msqueue_elem_t *node = msq_freelist;
@@ -272,6 +276,9 @@ dequeue(void *rb)
 	    return p64_stack_dequeue((p64_stack_t *)rb);
 	case lfstack :
 	    return p64_lfstack_dequeue((p64_lfstack_t *)rb);
+	case blkring :
+	    p64_blkring_dequeue(rb, &elem, 1, &idx);
+	    return elem;
 	case msqueue :
 	{
 	    struct msqueue *msq = (struct msqueue *)rb;
@@ -338,6 +345,12 @@ static void thr_execute(uint32_t tidx)
 	for (;;)
 	{
 	    elem = dequeue(RINGBUFS[q]);
+	    if (elem == (void *)1)
+	    {
+		if (__atomic_load_n(&NUMCOMPLETED, __ATOMIC_RELAXED) == NUMELEMS)
+		    goto done;
+		continue;
+	    }
 	    if (elem != NULL)
 		break;
 	    if (__atomic_load_n(&NUMCOMPLETED, __ATOMIC_RELAXED) == NUMELEMS)
@@ -388,6 +401,14 @@ static void thr_execute(uint32_t tidx)
 done:
     FAILENQ[tidx] = failenq;
     FAILDEQ[tidx] = faildeq;
+    if (RING_IMPL == blkring)
+    {
+	for (uint32_t i = 0; i < NUMRINGBUFS; i++)
+	{
+	    void *elem = (void *)1;
+	    p64_blkring_enqueue(RINGBUFS[0], &elem, 1);
+	}
+    }
 }
 
 static void *entrypoint(void *arg)
@@ -569,6 +590,16 @@ static void benchmark(uint32_t numthreads, uint64_t affinity)
     //Read end time
     ts = END_TIME;
 
+    if (RING_IMPL == blkring)
+    {
+	for (unsigned i = 0; i < NUMRINGBUFS; i++)
+	{
+	    uint32_t index;
+	    void *ev[NUMTHREADS];
+	    //Free any remaining sentinels
+	    p64_blkring_dequeue_nblk(RINGBUFS[i], ev, NUMTHREADS, &index);
+	}
+    }
     if (affinity != 0 && CPUFREQ == 0)
     {
 	unsigned long cpufreq[MAXTHREADS];
@@ -707,7 +738,7 @@ int main(int argc, char *argv[])
 	    case 'm' :
 		{
 		    rbmode = atoi(optarg);
-		    if (rbmode < 0 || rbmode > 15)
+		    if (rbmode < 0 || rbmode > 16)
 		    {
 			fprintf(stderr, "Invalid ring buffer mode %d\n", rbmode);
 			exit(EXIT_FAILURE);
@@ -776,6 +807,7 @@ usage :
 		fprintf(stderr, "modes 8-11: Treiber stack w. aba workarounds\n");
 		fprintf(stderr, "modes 12-14: M&S queue\n");
 		fprintf(stderr, "mode 15: Treiber lfstack w. backoff\n");
+		fprintf(stderr, "mode 16: blocking ring buffer\n");
 		exit(EXIT_FAILURE);
 	}
     }
@@ -814,6 +846,9 @@ usage :
 	case 15:
 	    RING_IMPL = lfstack;
 	    break;
+	case 16:
+	    RING_IMPL = blkring;
+	    break;
 	default :
 	    abort();
     }
@@ -845,6 +880,10 @@ usage :
     else if (RING_IMPL == lfring)
     {
 	printf("lfring, ");
+    }
+    else if (RING_IMPL == blkring)
+    {
+	printf("blkring, ");
     }
     else
     {
@@ -893,6 +932,9 @@ usage :
 		break;
 	    case lfstack :
 		q = lfstack_alloc();
+		break;
+	    case blkring :
+		q = p64_blkring_alloc(RINGSIZE);
 		break;
 	    case msqueue :
 		q = msqueue_alloc(aba_mode);
@@ -988,6 +1030,15 @@ usage :
 	    case lfstack :
 		lfstack_free(RINGBUFS[i]);
 		break;
+	    case blkring :
+		{
+		    uint32_t index;
+		    void *ev[64];
+		    //Free any remaining sentinels
+		    p64_blkring_dequeue_nblk(RINGBUFS[i], ev, 64, &index);
+		    p64_blkring_free(RINGBUFS[i]);
+		    break;
+		}
 	    case msqueue :
 		msqueue_free(RINGBUFS[i]);
 		break;
