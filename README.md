@@ -66,6 +66,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 
 ### Concurrency support
 | Name | Description | Properties |
+| ---- | ---- | :----: |
 | coroutine | coroutines using "crosscall" | aarch64 only |
 | fiber | fibers using "crosscall" | aarch64 only |
 
