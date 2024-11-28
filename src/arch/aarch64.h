@@ -12,6 +12,58 @@
 #include "ldxstx.h"
 #endif
 
+#ifdef __ARM_FEATURE_ATOMICS
+//Identity-CAS - atomic 128-bit read before write (CAS)
+static inline __int128
+icas16(__int128 *ptr, int mo)
+{
+    __int128 old = 0;
+    if (mo == __ATOMIC_RELAXED)
+    {
+	__asm __volatile("casp %0, %H0, %0, %H0, [%1]"
+		: "+r" (old)
+		: "r" (ptr)
+		: "memory");
+    }
+    else if (mo == __ATOMIC_ACQUIRE)
+    {
+	__asm __volatile("caspa %0, %H0, %0, %H0, [%1]"
+		: "+r" (old)
+		: "r" (ptr)
+		: "memory");
+    }
+    else
+    {
+	abort();
+    }
+    return old;
+}
+
+static inline __int128
+cas16(__int128 *ptr, __int128 cmp, __int128 swp, int mo)
+{
+    if (mo == __ATOMIC_RELAXED)
+    {
+	__asm __volatile("casp %0, %H0, %1, %H1, [%2]"
+		: "+r" (cmp)
+		: "r" (swp), "r" (ptr)
+		: "memory");
+    }
+    else if (mo == __ATOMIC_ACQUIRE)
+    {
+	__asm __volatile("caspa %0, %H0, %1, %H1, [%2]"
+		: "+r" (cmp)
+		: "r" (swp), "r" (ptr)
+		: "memory");
+    }
+    else
+    {
+	abort();
+    }
+    return cmp;
+}
+#endif
+
 static inline void *
 addr_dep(const void *ptr, uintptr_t dep)
 {
