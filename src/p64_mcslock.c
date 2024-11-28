@@ -62,7 +62,7 @@ p64_mcslock_release(p64_mcslock_t *lock, p64_mcsnode_t *node)
 	//B2: read next, synchronize with B0
 	while ((next = __atomic_load_n(&node->next, __ATOMIC_ACQUIRE)) == NULL)
 	{
-	    DOZE();
+	    doze();
 	}
     }
     //Signal first waiting thread

@@ -31,11 +31,9 @@ p64_rwlock_t wait_for_no(p64_rwlock_t *lock,
     p64_rwlock_t l;
     if (((l = __atomic_load_n(lock, mo)) & mask) != 0)
     {
-	SEVL();
-	while (WFE() &&
-	       ((l = LDX(lock, mo)) & mask) != 0)
+	while (((l = LDX(lock, mo)) & mask) != 0)
 	{
-	    DOZE();
+	    WFE();
 	}
     }
     assert((l & mask) == 0);//No threads present

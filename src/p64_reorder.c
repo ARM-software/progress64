@@ -147,11 +147,9 @@ p64_reorder_release(p64_reorder_t *rob,
 	{
 	    //We must wait for in-order elements to be retired so that our SN
 	    //will fit inside the ROB window
-	    SEVL();
-	    while (WFE() && AFTER(sn + nelems,
-				  LDX(&rob->hi.head, __ATOMIC_ACQUIRE) + sz))
+	    while (AFTER(sn + nelems, LDX(&rob->hi.head, __ATOMIC_ACQUIRE) + sz))
 	    {
-		DOZE();
+		WFE();
 	    }
 	}
     }

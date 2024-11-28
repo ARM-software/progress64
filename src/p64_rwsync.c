@@ -26,13 +26,11 @@ static inline p64_rwsync_t
 wait_for_no_writer(const p64_rwsync_t *sync, int mo)
 {
     p64_rwsync_t l;
-    SEVL();//Do SEVL early to avoid excessive loop alignment (NOPs)
     if (UNLIKELY(((l = __atomic_load_n(sync, mo)) & RWSYNC_WRITER) != 0))
     {
-	while (WFE() &&
-	       ((l = LDX(sync, mo)) & RWSYNC_WRITER) != 0)
+	while (((l = LDX(sync, mo)) & RWSYNC_WRITER) != 0)
 	{
-	    DOZE();
+	    WFE();
 	}
     }
     assert((l & RWSYNC_WRITER) == 0);//No writer in progress

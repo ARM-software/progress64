@@ -106,10 +106,8 @@ wait_until_equal2_32(uint32_t *loc, uint32_t val0, uint32_t val1, int mm)
     return v;
 }
 
-#define SEVL() (void)0
-#define WFE() 1
+#define WFE() doze()
 #define LDX(a, b)  __atomic_load_n((a), (b))
 #define LDXPTR(a, b)  __atomic_load_n((a), (b))
-#define DOZE() doze()
 
 #endif

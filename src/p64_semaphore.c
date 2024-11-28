@@ -21,10 +21,9 @@ p64_sem_init(p64_semaphore_t *sem, uint32_t count)
 static inline void
 wait_until_gteq32(uint32_t *loc, uint32_t a)
 {
-    SEVL();
-    while(WFE() && (int32_t)(LDX(loc, __ATOMIC_ACQUIRE) - a) < 0)
+    while((int32_t)(LDX(loc, __ATOMIC_ACQUIRE) - a) < 0)
     {
-	DOZE();
+	WFE();
     }
 }
 

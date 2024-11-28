@@ -166,11 +166,9 @@ p64_buckrob_release(p64_buckrob_t *rob,
 	{
 	    //We must wait for enough elements to be retired so that our SN
 	    //fits inside the ROB window
-	    SEVL();
-	    while (WFE() && AFTER(sn + nelems,
-				  LDX(&rob->head, __ATOMIC_ACQUIRE) + sz))
+	    while (AFTER(sn + nelems, LDX(&rob->head, __ATOMIC_ACQUIRE) + sz))
 	    {
-		DOZE();
+		WFE();
 	    }
 	}
     }

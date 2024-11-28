@@ -248,7 +248,8 @@ restart:
     if (UNLIKELY(delta >= PENDMAX))
     {
 	//End index outside of pending mask
-	//Cannot perform update, must block:-(
+	//Cannot perform update now, must wait
+	doze();
 	goto restart;
     }
     do

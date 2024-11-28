@@ -32,16 +32,12 @@ void
 p64_spinlock_acquire(p64_spinlock_t *lock)
 {
 #ifdef __aarch64__
-    SEVL();
-wait_for_event:
-    (void)WFE();
     do
     {
-	if (ldx(lock, __ATOMIC_ACQUIRE) != 0)
+	while (ldx(lock, __ATOMIC_ACQUIRE) != 0)
 	{
 	    //Lock already taken, wait until updated
-	    DOZE();
-	    goto wait_for_event;
+	    WFE();
 	}
     }
     while (UNLIKELY(stx(lock, 1, __ATOMIC_RELAXED)));
