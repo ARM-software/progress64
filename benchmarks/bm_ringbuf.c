@@ -84,6 +84,7 @@ static uint64_t THREAD_BARRIER ALIGNED(CACHE_LINE);
 static sem_t ALL_DONE;
 static struct timespec END_TIME;
 static bool VERBOSE = false;
+static uint32_t WORKCYCLES = 400;
 enum { classic, lfring, buckring, stack, lfstack, blkring, msqueue } RING_IMPL;
 
 static p64_stack_t *
@@ -308,6 +309,22 @@ dequeue(void *rb)
     return NULL;
 }
 
+static inline void
+work(uint32_t iter)
+{
+#ifdef __aarch64__
+    uint32_t one = 1;
+    __asm __volatile("   cbz %0,1f;"
+		     "   .align 4;"
+		     "0: sub %0,%0,%1;"
+		     "   cbnz %0,0b;"
+		     "1:"
+		     : "+r" (iter)
+		     : "r" (one)
+		     : "cc");
+#endif
+}
+
 static void thr_execute(uint32_t tidx)
 {
     if (tidx == 0)
@@ -367,6 +384,7 @@ static void thr_execute(uint32_t tidx)
 	}
 	assert(elem != NULL);
 
+	work(WORKCYCLES);
 	if (++elem->lap != NUMLAPS)
 	{
 	    q = randtable[ptr];
@@ -395,6 +413,7 @@ static void thr_execute(uint32_t tidx)
 	{
 	    __atomic_fetch_add(&NUMCOMPLETED, 1, __ATOMIC_RELAXED);
 	}
+	work(WORKCYCLES);
     }
 done:
     FAILENQ[tidx] = failenq;
@@ -689,7 +708,7 @@ int main(int argc, char *argv[])
     int rbmode = 0;
     int c;
 
-    while ((c = getopt(argc, argv, "A:a:e:f:l:m:pr:t:T:v")) != -1)
+    while ((c = getopt(argc, argv, "A:a:e:f:l:m:pr:t:T:vw:")) != -1)
     {
 	switch (c)
 	{
@@ -781,6 +800,17 @@ int main(int argc, char *argv[])
 	    case 'v' :
 		VERBOSE = true;
 		break;
+	    case 'w' :
+		{
+		    int workcycl = atoi(optarg);
+		    if (workcycl < 0)
+		    {
+			fprintf(stderr, "Invalid number of work cycles %d\n", workcycl);
+			exit(EXIT_FAILURE);
+		    }
+		    WORKCYCLES = (unsigned)workcycl;
+		    break;
+		}
 	    default :
 usage :
 		fprintf(stderr, "Usage: bm_ringbuf <options>\n"
@@ -793,6 +823,7 @@ usage :
 			"-t <numthr>      Number of threads\n"
 			"-T <numthr>      Iterate over 1..T number of threads\n"
 			"-v               Verbose\n"
+			"-w <workcycles>  Number of work cycles\n"
 		       );
 		fprintf(stderr, "mode 0: blocking enqueue/blocking dequeue\n");
 		fprintf(stderr, "mode 1: blocking enqueue/non-blocking dequeue\n");
@@ -889,8 +920,9 @@ usage :
 	       (rbmode & 1) ? 'N' : 'B', //Enqueue
 	       (rbmode & 4) ? 'L' : (rbmode & 2) ? 'N' : 'B');//Dequeue
     }
-    printf("%u laps, %u thread%s, affinity mask=0x%"PRIx64"\n",
+    printf("%u laps, %u work cycles, %u thread%s, affinity mask=0x%"PRIx64"\n",
 	    NUMLAPS,
+	    WORKCYCLES,
 	    NUMTHREADS,
 	    NUMTHREADS != 1 ? "s" : "",
 	    AFFINITY);
