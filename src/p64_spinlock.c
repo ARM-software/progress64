@@ -9,9 +9,6 @@
 
 #include "common.h"
 #include "arch.h"
-#ifdef __aarch64__
-#include "ldxstx.h"
-#endif
 
 void
 p64_spinlock_init(p64_spinlock_t *lock)
@@ -31,24 +28,12 @@ try_lock(p64_spinlock_t *lock, bool weak)
 void
 p64_spinlock_acquire(p64_spinlock_t *lock)
 {
-#ifdef __aarch64__
-    do
-    {
-	while (ldx(lock, __ATOMIC_ACQUIRE) != 0)
-	{
-	    //Lock already taken, wait until updated
-	    WFE();
-	}
-    }
-    while (UNLIKELY(stx(lock, 1, __ATOMIC_RELAXED)));
-#else
     do
     {
 	//Wait until lock is available
 	wait_until_equal(lock, 0, __ATOMIC_RELAXED);
     }
     while (!try_lock(lock, /*weak=*/true));
-#endif
 }
 
 bool
