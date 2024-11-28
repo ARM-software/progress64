@@ -8,7 +8,7 @@
 #include <stdbool.h>
 #include "common.h"
 
-#include "ldxstx.h"
+#include "arch/ldxstx.h"
 
 #ifdef __ARM_FEATURE_ATOMICS
 ALWAYS_INLINE
