@@ -406,7 +406,7 @@ done:
 	for (uint32_t i = 0; i < NUMRINGBUFS; i++)
 	{
 	    void *elem = (void *)1;
-	    p64_blkring_enqueue(RINGBUFS[0], &elem, 1);
+	    p64_blkring_enqueue(RINGBUFS[i], &elem, 1);
 	}
     }
 }
