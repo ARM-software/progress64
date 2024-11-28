@@ -95,17 +95,6 @@ wait_until_equal64(uint64_t *loc, uint64_t val, int mm)
     }
 }
 
-static inline uint32_t
-wait_until_equal2_32(uint32_t *loc, uint32_t val0, uint32_t val1, int mm)
-{
-    uint32_t v;
-    while ((v = __atomic_load_n(loc, mm)) != val0 && v != val1)
-    {
-	doze();
-    }
-    return v;
-}
-
 #define WFE() doze()
 #define LDX(a, b)  __atomic_load_n((a), (b))
 #define LDXPTR(a, b)  __atomic_load_n((a), (b))
