@@ -21,11 +21,6 @@
 #include "err_hnd.h"
 #include "arch.h"
 
-#ifdef __aarch64__DONTUSE
-#include "ldxstx.h"
-#define USE_LLSC
-#endif
-
 static inline p64_mcas_ptr_t
 atomic_load_acquire(p64_mcas_ptr_t *pptr,
 		    p64_hazardptr_t *hp,
@@ -119,67 +114,6 @@ ccas_help(struct mcas_desc *md, uint32_t i)
     }
 }
 
-#ifdef USE_LLSC
-static inline p64_mcas_ptr_t
-ccas(p64_mcas_ptr_t *loc,
-     const p64_mcas_ptr_t exp,
-     const p64_mcas_ptr_t new,
-     uint8_t *status,
-     p64_hazardptr_t *hpp)
-{
-    if (hpp != NULL)
-    {
-	for (;;)
-	{
-	    p64_mcas_ptr_t old = p64_hazptr_acquire_mask(loc, hpp, ~DESC_BITS);
-	    //'old' saved in hazard pointer
-	    if (UNLIKELY(old != exp))
-	    {
-		return old;//HP OK
-	    }
-	    //'old' equals 'exp'
-	    uint32_t st;
-	    //Exclusives section with a memory read in it...
-	    //Need inline asm to avoid stack accesses in exclusives section
-	    __asm volatile("2: ldaxr %0,[%2];"//Read *loc
-			   "   ldrb %w1,[%4];"//Read *status
-			   "   tst %w1,#0xff;"//*status == UNDECIDED ?
-			   "   ccmp %3,%0,#0x0,eq;"//old == exp ?
-			   "   bne 1f;"//No
-			   "   stlxr %w1,%5,[%2];"//Update *loc
-			   "   cbnz %w1,2b;"//Retry on failure
-			   "1:"
-			   : "=r" (old), "=r" (st)
-			   : "r" (loc), "r" (exp), "r" (status), "r" (new)
-			   : "memory");
-	    if (LIKELY(old == exp))
-	    {
-		//'old' still equals 'exp' => HP OK
-		//Status changed or CCAS succeeded
-		return old;//HP OK
-	    }
-	    //Else 'old' differs from 'exp' => HP not OK!
-	    //Restart from beginning so we can re-acquire hazard pointer
-	}
-    }
-    else//QSBR
-    {
-	p64_mcas_ptr_t old;
-	do
-	{
-	    old = ldxptr(loc, __ATOMIC_ACQUIRE);
-	    uint32_t st = __atomic_load_n(status, __ATOMIC_RELAXED);
-	    if (UNLIKELY(old != exp || st != UNDECIDED))
-	    {
-		//Not expected value or status changed
-		return old;
-	    }
-	}
-	while (UNLIKELY(stxptr(loc, new, __ATOMIC_RELEASE)));
-	return old;
-    }
-}
-#else
 static inline p64_mcas_ptr_t
 ccas(struct mcas_desc *md,
      uint32_t i,
@@ -220,7 +154,6 @@ ccas(struct mcas_desc *md,
 	ccas_help(alien, find_ccas_idx(alien, cd->loc));
     }
 }
-#endif
 
 static inline p64_mcas_ptr_t
 ccas_read(p64_mcas_ptr_t *loc,
@@ -255,12 +188,7 @@ mcas_help(struct mcas_desc *md, bool use_hp)
 	    //Install descriptor into *md->ccas[i].loc;
 	    for (;;)
 	    {
-#ifdef USE_LLSC
-		p64_mcas_ptr_t val = ccas(md->ccas[i].loc, md->ccas[i].exp,
-				     SET_MCAS_DESC(md), &md->status, hpp);
-#else
 		p64_mcas_ptr_t val = ccas(md, i, hpp);
-#endif
 		if (LIKELY(val == md->ccas[i].exp || val == SET_MCAS_DESC(md)))
 		{
 		    break;//Partial success, next location
