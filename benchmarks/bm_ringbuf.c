@@ -327,25 +327,17 @@ work(uint32_t iter)
 
 static void thr_execute(uint32_t tidx)
 {
-    if (tidx == 0)
+    //Enqueue elements from elems array onto ringbuf 0
+    for (unsigned i = tidx; i < NUMELEMS; i+= NUMTHREADS)
     {
-	//Enqueue elements from elems array onto ringbuf 0
-	for (unsigned i = 0; i < NUMELEMS; i++)
+	struct element_s *elem = ELEMS[i];
+	elem->lap = 0;
+	elem->number = i;
+	if (!enqueue(RINGBUFS[0], ELEMS[i]))
 	{
-	    struct element_s *elem = ELEMS[i];
-	    elem->lap = 0;
-	    elem->number = i;
-	    unsigned j;
-	    for (j = 0; j < 100000; j++)
-	    {
-		bool success = enqueue(RINGBUFS[0], ELEMS[i]);
-		if (success)
-		    break;
-		doze();
-	    }
-	    //printf("enqueue(%u) on ringbuf %u\n", elem->number, 0);
-	    if (j == 1000000)
-		fprintf(stderr, "Failed initial enqueue\n"), fflush(NULL), abort();
+	    fprintf(stderr, "Failed initial enqueue of element %u\n", i);
+	    fflush(NULL);
+	    abort();
 	}
     }
 
@@ -595,6 +587,7 @@ static void benchmark(uint32_t numthreads, uint64_t affinity)
 {
     struct timespec ts;
 
+    NUMTHREADS = numthreads;
     NUMCOMPLETED = 0;
 
     //Read starting time
