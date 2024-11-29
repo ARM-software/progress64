@@ -34,6 +34,7 @@ typedef struct p64_ringbuf_result
     uint32_t actual;
     uint32_t index;
     uint32_t mask;
+    void *ring;
 } p64_ringbuf_result_t;
 
 //Allocate ring buffer with space for at least 'nelems' elements
@@ -59,17 +60,17 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb, void *ev[], uint32_t num,
 		    uint32_t *index);
 
 //Special functions used by templates
-void *
+p64_ringbuf_t *
 p64_ringbuf_alloc_(uint32_t nelems, uint32_t flags, size_t esize);
 
 void
-p64_ringbuf_free_(void *ptr);
+p64_ringbuf_free_(p64_ringbuf_t *ptr);
 
 p64_ringbuf_result_t
-p64_ringbuf_acquire_(void *ptr, uint32_t num, bool enqueue);
+p64_ringbuf_acquire_(p64_ringbuf_t *ptr, uint32_t num, bool enqueue);
 
 bool
-p64_ringbuf_release_(void *ptr, p64_ringbuf_result_t, bool enqueue);
+p64_ringbuf_release_(p64_ringbuf_t *ptr, p64_ringbuf_result_t, bool enqueue);
 
 #ifdef __cplusplus
 }

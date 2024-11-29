@@ -125,15 +125,11 @@ p64_ringbuf_alloc(uint32_t nelems, uint32_t flags, size_t esize)
     return NULL;
 }
 
-void *
+p64_ringbuf_t *
 p64_ringbuf_alloc_(uint32_t nelems, uint32_t flags, size_t esize)
 {
     p64_ringbuf_t *rb = p64_ringbuf_alloc(nelems, flags, esize);
-    if (rb != NULL)
-    {
-	return &RB(rb)->ring;
-    }
-    return NULL;
+    return rb;
 }
 
 void
@@ -151,17 +147,10 @@ p64_ringbuf_free(p64_ringbuf_t *rb)
     }
 }
 
-#define container_of(pointer, type, member) \
-    ((type *)(void *)(((char *)pointer) - offsetof(type, member)))
-
 void
-p64_ringbuf_free_(void *ptr)
+p64_ringbuf_free_(p64_ringbuf_t *rb)
 {
-    if (ptr != NULL)
-    {
-	ptr = RB(ptr);
-	p64_ringbuf_free(container_of(ptr, p64_ringbuf_t, ring));
-    }
+    p64_ringbuf_free(rb);
 }
 
 //MT-unsafe single producer/consumer code
@@ -328,11 +317,10 @@ restart:
 }
 
 inline p64_ringbuf_result_t
-p64_ringbuf_acquire_(void *ptr,
+p64_ringbuf_acquire_(p64_ringbuf_t *rb,
 		     uint32_t num,
 		     bool enqueue)
 {
-    p64_ringbuf_t *rb = container_of(ptr, p64_ringbuf_t, ring);
     uint32_t prod_flags = PROD_FLAGS(rb);
     uint32_t cons_flags = CONS_FLAGS(rb);
     rb = RB(rb);
@@ -372,11 +360,13 @@ p64_ringbuf_acquire_(void *ptr,
 	    {
 		return (p64_ringbuf_result_t){ .index = 0,
 					       .actual = 0,
-					       .mask = 0 };
+					       .mask = 0,
+					       .ring = NULL };
 	    }
 	    return (p64_ringbuf_result_t){ .index = head,
 					   .actual = actual,
-					   .mask = mask };
+					   .mask = mask,
+					   .ring = rb->ring };
 	}
 
 	if (!(cons_flags & (FLAG_BLK | FLAG_NONBLK)))
@@ -393,15 +383,15 @@ p64_ringbuf_acquire_(void *ptr,
 	    r = acquire_slots_mtsafe(&rb->cons, num);
 	}
     }
+    r.ring = rb->ring;
     return r;
 }
 
 inline bool
-p64_ringbuf_release_(void *ptr,
+p64_ringbuf_release_(p64_ringbuf_t *rb,
 		     p64_ringbuf_result_t r,
 		     bool enqueue)
 {
-    p64_ringbuf_t *rb = container_of(ptr, p64_ringbuf_t, ring);
     uint32_t prod_flags = PROD_FLAGS(rb);
     uint32_t cons_flags = CONS_FLAGS(rb);
     rb = RB(rb);
