@@ -8,6 +8,7 @@
 #include "build_config.h"
 
 #include "arch.h"
+#include "inline.h"
 #include "common.h"
 
 // uint16_t enter_rd;//Bits 0..15

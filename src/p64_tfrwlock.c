@@ -11,6 +11,7 @@
 #include "build_config.h"
 
 #include "arch.h"
+#include "inline.h"
 #include "common.h"
 
 #define RD_ONE    (1U << 16)

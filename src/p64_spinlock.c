@@ -9,6 +9,7 @@
 
 #include "common.h"
 #include "arch.h"
+#include "inline.h"
 
 void
 p64_spinlock_init(p64_spinlock_t *lock)
@@ -31,7 +32,7 @@ p64_spinlock_acquire(p64_spinlock_t *lock)
     do
     {
 	//Wait until lock is available
-	wait_until_equal(lock, 0, __ATOMIC_RELAXED);
+	wait_until_equal_w_bkoff(lock, 0, 60, __ATOMIC_RELAXED);
     }
     while (!try_lock(lock, /*weak=*/true));
 }

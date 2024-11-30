@@ -7,6 +7,7 @@
 #include "p64_blkring.h"
 
 #include "arch.h"
+#include "inline.h"
 #include "lockfree.h"
 #include "common.h"
 #include "err_hnd.h"

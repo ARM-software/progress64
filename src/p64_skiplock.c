@@ -10,6 +10,7 @@
 #include "build_config.h"
 
 #include "arch.h"
+#include "inline.h"
 #include "lockfree.h"
 #include "common.h"
 #include "err_hnd.h"
@@ -32,7 +33,7 @@ p64_skiplock_init(p64_skiplock_t *sl)
 void
 p64_skiplock_acquire(p64_skiplock_t *sl, uint32_t tkt)
 {
-    wait_until_equal(&sl->cur, tkt, __ATOMIC_ACQUIRE);
+    wait_until_equal_w_bkoff(&sl->cur, tkt, 60,  __ATOMIC_ACQUIRE);
 }
 
 #if __SIZEOF_POINTER__ == 8 && __SIZEOF_INT128__ == 16

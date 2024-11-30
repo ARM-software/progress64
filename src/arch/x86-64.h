@@ -7,25 +7,42 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+//A hack to avoid having to define _POSIX_C_SOURCE on the command line
+#define __USE_POSIX199309 1
+#include <time.h>
 
 static inline uint64_t
 counter_freq(void)
 {
-    return 3000000000;//FIXME
+    return UINT64_C(1000000000);
 }
 
 static inline uint64_t
 counter_read(void)
 {
-    uint32_t lo, hi;
-    __asm__ volatile("rdtsc" : "=a" (lo), "=d" (hi));
-    return (uint64_t)hi << 32 | lo;
+    struct timespec ts;
+    while (clock_gettime(CLOCK_MONOTONIC_RAW, &ts) != 0)
+    {
+    }
+    return (uint64_t)ts.tv_sec * UINT64_C(1000000000) + ts.tv_nsec;
 }
 
 static inline void
 doze(void)
 {
-    __asm__ volatile("pause" : : : );
+    __asm__ volatile("pause" : : : "memory");
+}
+
+static inline void
+nano_delay(uint64_t delay_ns)
+{
+    while (delay_ns >= 50)
+    {
+	__asm__ volatile("pause" : : : "memory");
+	//Assume each PAUSE instruction takes 50ns (e.g. 150 cycles @ 3GHz)
+	delay_ns -= 50;
+    }
+    //TODO insert speculation barrier here
 }
 
 static inline void

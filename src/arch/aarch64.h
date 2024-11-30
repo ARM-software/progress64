@@ -110,6 +110,27 @@ doze(void)
 }
 
 static inline void
+nano_delay(uint64_t delay_ns)
+{
+    //Prevent speculation of subsequent counter/timer reads
+    __asm __volatile("isb");
+    //With these simplifications and adjustments, we are usually within 2% of the correct value
+    //uint64_t delay_ticks = delay_ns * counter_freq() / 1000000000UL;
+    uint64_t delay_ticks = (delay_ns + delay_ns / 16) * counter_freq() >> 30;
+    if (delay_ticks != 0)
+    {
+	uint64_t start = counter_read();
+	do
+	{
+	    __asm __volatile("isb" ::: "memory");
+	}
+	while (counter_read() - start < delay_ticks);//Handle counter roll-over
+    }
+    //Prevent speculation of subsequent memory accesses
+    __asm __volatile("isb" ::: "memory");
+}
+
+static inline void
 smp_fence(unsigned int mask)
 {
     switch (mask)

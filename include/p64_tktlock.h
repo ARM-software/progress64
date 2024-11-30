@@ -14,10 +14,7 @@ extern "C"
 {
 #endif
 
-typedef struct
-{
-    uint16_t enter, leave;
-} p64_tktlock_t;
+typedef uint32_t p64_tktlock_t;
 
 void p64_tktlock_init(p64_tktlock_t *lock);
 

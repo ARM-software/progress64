@@ -13,14 +13,6 @@
 
 static void smp_fence(unsigned int mask);
 
-#define wait_until_equal(loc, val, mm) \
-_Generic((loc), \
-    uint8_t *: wait_until_equal8, \
-    uint16_t *: wait_until_equal16, \
-    uint32_t *: wait_until_equal32, \
-    uint64_t *: wait_until_equal64 \
-    )((loc), (val), (mm))
-
 #if defined __aarch64__
 
 #include "arch/aarch64.h"

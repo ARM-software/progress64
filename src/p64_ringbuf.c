@@ -13,6 +13,7 @@
 #include "os_abstraction.h"
 
 #include "arch.h"
+#include "inline.h"
 #include "common.h"
 #include "err_hnd.h"
 
@@ -246,7 +247,7 @@ release_slots(struct idxpair *loc,
     if (flags & FLAG_BLK)
     {
 	//Wait for our turn to signal consumers (producers)
-	wait_until_equal(&loc->cur, idx, __ATOMIC_RELAXED);
+	wait_until_equal_w_bkoff(&loc->cur, idx, 50, __ATOMIC_RELAXED);
     }
     if (!(flags & FLAG_NONBLK))
     {

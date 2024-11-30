@@ -9,6 +9,7 @@
 
 #include "common.h"
 #include "arch.h"
+#include "inline.h"
 
 static THREAD_LOCAL struct p64_hemlock *grant = NULL;
 

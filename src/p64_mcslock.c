@@ -8,6 +8,7 @@
 
 #include "common.h"
 #include "arch.h"
+#include "inline.h"
 
 #define MCS_GO 0
 #define MCS_WAIT 1
