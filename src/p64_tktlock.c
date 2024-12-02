@@ -26,7 +26,7 @@ p64_tktlock_init(p64_tktlock_t *lock)
 }
 
 void
-p64_tktlock_acquire_bkoff(p64_tktlock_t *lock, uint32_t time)
+p64_tktlock_acquire_bkoff(p64_tktlock_t *lock, uint32_t dly)
 {
     //Get a ticket, also read current ticket
     uint32_t word = __atomic_fetch_add(lock, TKTINC, __ATOMIC_ACQUIRE);
@@ -46,7 +46,7 @@ p64_tktlock_acquire_bkoff(p64_tktlock_t *lock, uint32_t time)
 #endif
 	    return;
 	}
-	nano_delay((dist - 1) * time);
+	nano_delay((dist - 1) * dly);
 	word = __atomic_load_n(lock, __ATOMIC_ACQUIRE);
 	cur = CUR(word);
     }

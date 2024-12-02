@@ -20,6 +20,8 @@ void p64_tktlock_init(p64_tktlock_t *lock);
 
 void p64_tktlock_acquire(p64_tktlock_t *lock);
 
+void p64_tktlock_acquire_bkoff(p64_tktlock_t *lock, uint32_t dly);
+
 void p64_tktlock_release(p64_tktlock_t *lock);
 
 #ifdef __cplusplus
