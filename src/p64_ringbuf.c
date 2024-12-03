@@ -266,48 +266,48 @@ release_slots(struct idxpair *loc,
     }
     //Else non-blocking (FLAG_NONBLK)
     uint64_t old, neu;
-restart:
-    //Attempt in-order release
-    old = TOLOWER(idx);
-    neu = TOLOWER(idx + n);
-    if (UNLIKELY(__atomic_compare_exchange_n((uint64_t *)loc,
-		    &old,
-		    neu,
-		    0,
-		    __ATOMIC_RELEASE,
-		    __ATOMIC_RELAXED)))
+    for (;;)
     {
-	return;
-    }
-    //Else failure, 'old' updated with current value
-    uint32_t delta = LOWER(neu) - LOWER(old);
-    //Check if released slots fit within pending window
-    if (UNLIKELY(delta >= PENDMAX))
-    {
-	//End index outside of pending mask
-	//Cannot perform update now, must wait
+	//Attempt in-order release
+	//Pending mask is clear before and after update
+	old = TOLOWER(idx);
+	neu = TOLOWER(idx + n);
+	if (UNLIKELY(__atomic_compare_exchange_n((uint64_t *)loc,
+						 &old,
+						 neu,
+						 0,
+						 __ATOMIC_RELEASE,
+						 __ATOMIC_RELAXED)))
+	{
+	    return;
+	}
+	//Else failure, 'old' updated with current value
+	uint32_t delta = LOWER(neu) - LOWER(old);
+	//Check if slots to release fit within pending window
+	if (LIKELY(delta <= PENDMAX))
+	{
+	    break;
+	}
+	//Else end index outside of pending mask
+	//This includes releases larger than the pending window which must be done in-order
+	//Cannot perform update now, must wait and try again
 	doze();
-	goto restart;
     }
     do
     {
-	if (UNLIKELY(n >= PENDMAX && idx == LOWER(old)))
-	{
-	    //We can only do large releases in-order
-	    neu = TOLOWER(idx + n);
-	}
-	else
-	{
-	    uint32_t offset = idx - LOWER(old);//Offset into pending mask
-	    uint32_t mask = (1UL << n) - 1;//Mask of slots to release
-	    uint32_t newmask = UPPER(old) | (mask << offset);//Update pending mask
-	    uint64_t longmask = newmask;
-	    //Find number of in-order slots (count trailing ones of newmask)
-	    // ~longmask can never be zero!
-	    uint32_t inorder = __builtin_ctzl(~longmask); //0..PENDMAX-1
-	    longmask >>= inorder;
-	    neu = TOLOWER(old + inorder) | TOUPPER(longmask);
-	}
+	assert(n < PENDMAX);
+	uint32_t offset = idx - LOWER(old);//Offset into pending mask
+	assert(n + offset <= PENDMAX);
+	uint32_t ourpend = ((1U << n) - 1) << offset;//Mask of slots to release
+	assert((UPPER(old) & ourpend) == 0);//No overlap with already pending slots
+	//newpend is wider so that it can be shifted PENDMAX bits if necessary
+	uint64_t newpend = UPPER(old) | ourpend;//Update pending mask
+	//Find number of in-order slots (count trailing ones of newpend)
+	assert(~newpend != 0);//__builtin_ctz argument must not be 0
+	uint32_t inorder = __builtin_ctzl(~newpend); //0..PENDMAX
+	assert(inorder <= PENDMAX);
+	neu = TOLOWER(old + inorder) | TOUPPER(newpend >> inorder);
+	assert((UPPER(neu) & 1) == 0);//Lsb can't be pending since it is in-order
     }
     while (!__atomic_compare_exchange_n((uint64_t *)loc,
 					&old,//Updated on failure
