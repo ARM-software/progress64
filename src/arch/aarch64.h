@@ -76,9 +76,6 @@ addr_dep(const void *ptr, uintptr_t dep)
     return res;
 }
 
-#define addr_dep(ptr, dep) \
-((__typeof(ptr)) addr_dep((const void *)(ptr), (uintptr_t)(dep)))
-
 static inline uint64_t
 counter_freq(void)
 {

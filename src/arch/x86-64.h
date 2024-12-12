@@ -1,4 +1,4 @@
-//Copyright (c) 2018, ARM Limited. All rights reserved.
+//Copyright (c) 2018-2024, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
@@ -10,6 +10,18 @@
 //A hack to avoid having to define _POSIX_C_SOURCE on the command line
 #define __USE_POSIX199309 1
 #include <time.h>
+
+static inline void *
+addr_dep(const void *ptr, uintptr_t dep)
+{
+    void *res;
+    __asm ("xor %0, %1, %2\n"
+	   "xor %0, %0, %2\n"
+	   : "=&r" (res)
+	   : "r" (ptr), "r" (dep)
+	   : );
+    return res;
+}
 
 static inline uint64_t
 counter_freq(void)
