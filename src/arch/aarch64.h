@@ -13,6 +13,57 @@
 #endif
 
 #ifdef __ARM_FEATURE_ATOMICS
+//Identity-CAS - atomic read before write (CAS)
+static inline uint32_t
+icas4(uint32_t *ptr, int mo)
+{
+    uint32_t old = 0;
+    if (mo == __ATOMIC_RELAXED)
+    {
+	__asm __volatile("cas %0, %0, [%1]"
+		: "+r" (old)
+		: "r" (ptr)
+		: "memory");
+    }
+    else if (mo == __ATOMIC_ACQUIRE)
+    {
+	__asm __volatile("casa %0, %0, [%1]"
+		: "+r" (old)
+		: "r" (ptr)
+		: "memory");
+    }
+    else
+    {
+	abort();
+    }
+    return old;
+}
+
+static inline uint64_t
+icas8(uint64_t *ptr, int mo)
+{
+    uint64_t old = 0;
+    if (mo == __ATOMIC_RELAXED)
+    {
+	__asm __volatile("cas %0, %0, [%1]"
+		: "+r" (old)
+		: "r" (ptr)
+		: "memory");
+    }
+    else if (mo == __ATOMIC_ACQUIRE)
+    {
+	__asm __volatile("casa %0, %0, [%1]"
+		: "+r" (old)
+		: "r" (ptr)
+		: "memory");
+    }
+    else
+    {
+	abort();
+    }
+    return old;
+}
+
 //Identity-CAS - atomic 128-bit read before write (CAS)
 static inline __int128
 icas16(__int128 *ptr, int mo)

@@ -1,4 +1,4 @@
-//Copyright (c) 2019, ARM Limited. All rights reserved.
+//Copyright (c) 2019-2024, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 //
@@ -17,10 +17,11 @@
 #include "arch.h"
 #include "common.h"
 #include "err_hnd.h"
-#include "../src/lockfree.h"
+#include "../src/lockfree.h" //For MO_LOAD()
 
-//Use atomic_fetch_and/atomic_fetch_or instead of atomic_blend
-#define ATOMIC_AND_OR
+//Use atomic_fetch_and/atomic_fetch_or varient instead of atomic_blend variant
+//Performance is similar but atomic_blend variant perhaps slightly faster
+//#define ATOMIC_AND_OR
 
 //Use uintptr_t for ring slots instead of void ptr
 //This will simplify bitwise operations on slot values and elements
@@ -31,7 +32,7 @@
 //The enqueue out-of-order mark is the inverse of the in-order mark
 #define ENQ_OOMARK (uintptr_t)2
 #define IOMARKS (ENQ_OOMARK | DEQ_IOMARK)
-#else
+#else //ATOMIC_BLEND
 //The enqueue in-order mark is normal (2 => mark is set)
 #define ENQ_IOMARK (uintptr_t)2
 #define IOMARKS (ENQ_IOMARK | DEQ_IOMARK)
@@ -42,9 +43,12 @@ typedef uint32_t ringidx_t;
 struct headtail
 {
     ringidx_t head;
+    ringidx_t hmask;
+_Alignas(CACHE_LINE)
     ringidx_t tail;
-    ringidx_t mask;
+    ringidx_t tmask;
 };
+//sizeof(struct headtail) == 2 * CACHE_LINE
 
 struct p64_buckring
 {
@@ -55,11 +59,12 @@ _Alignas(CACHE_LINE)
 _Alignas(CACHE_LINE)
     uintptr_t ring[];
 };
+//sizeof(struct p64_buckring) == 4 * CACHE_LINE
 
 //Number of elements per cache line
 #define NELEM_PER_CL (CACHE_LINE / sizeof(uintptr_t))
 
-static uint32_t
+static inline uint32_t
 swizzle(uint32_t x)
 {
     x = x ^ (x & (NELEM_PER_CL - 1)) << LOG2_32BIT(NELEM_PER_CL);
@@ -90,11 +95,13 @@ p64_buckring_alloc(uint32_t nelems, uint32_t flags)
 	//Initialise metadata
 	memset(rb, 0, offsetof(p64_buckring_t, ring));
 	rb->prod.head = 0;
+	rb->prod.hmask = ringsize - 1;
 	rb->prod.tail = 0;
-	rb->prod.mask = ringsize - 1;
+	rb->prod.tmask = ringsize - 1;
 	rb->cons.head = 0;
+	rb->cons.hmask = ringsize - 1;
 	rb->cons.tail = 0;
-	rb->cons.mask = ringsize - 1;
+	rb->cons.tmask = ringsize - 1;
 	//Initialise the ring pointers
 #ifdef ATOMIC_AND_OR
 	rb->ring[SW(0)] = NIL | DEQ_IOMARK;
@@ -142,15 +149,21 @@ struct result
 static inline struct result
 atomic_rb_acquire(const ringidx_t *read_ptr,
 		  ringidx_t *write_ptr,
-		  ringidx_t ring_size,
+		  bool enqueue,
 		  int n)
 {
-    ringidx_t tail;
+    ringidx_t tail, mask;
     int actual;
+#ifdef __ARM_FEATURE_ATOMICS
+    tail = icas4(write_ptr, __ATOMIC_RELAXED);
+#else
     tail = __atomic_load_n(write_ptr, __ATOMIC_RELAXED);
-    ringidx_t head = __atomic_load_n(read_ptr, __ATOMIC_ACQUIRE);
+#endif
+    mask = *(read_ptr + 1);//Mask is located after head/tail
+    ringidx_t ring_size = enqueue ? mask + 1 : 0;
     do
     {
+	ringidx_t head = __atomic_load_n(read_ptr, __ATOMIC_ACQUIRE);
 	actual = MIN(n, (int)(ring_size + head - tail));
 	if (UNLIKELY(actual <= 0))
 	{
@@ -166,29 +179,6 @@ atomic_rb_acquire(const ringidx_t *read_ptr,
     return (struct result){ .index = tail, .actual = actual };
 }
 
-#if defined __aarch64__ && !defined __ARM_FEATURE_ATOMICS
-static inline void
-atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
-{
-    uint32_t old;
-    do
-    {
-	old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-	if ((int32_t)(neu - old) <= 0)//neu <= old
-	{
-	    return;
-	}
-	//Else neu > old, update *loc
-    }
-    while (!__atomic_compare_exchange_n(loc,
-					&old,//Updated on failure
-					neu,
-					/*weak=*/true,
-					mo_store,
-					__ATOMIC_RELAXED));
-}
-#endif
-
 #ifndef ATOMIC_AND_OR
 //Atomic blend operation
 //Blend old and new value based on the blend mask
@@ -199,15 +189,18 @@ atomic_blend(uintptr_t *loc,
 	     int mm)
 {
     uintptr_t old, neu;
-    new_val &= ~preserve_mask;//Hoist this before critical section
+#ifdef __ARM_FEATURE_ATOMICS
+    old = icas8(loc, __ATOMIC_RELAXED);
+#else
+    old = __atomic_load_n(loc, __ATOMIC_RELAXED);
+#endif
     do
     {
-	old = __atomic_load_n(loc, __ATOMIC_RELAXED);
 	//Compute blended value from new_val and kept bits of old value
-	neu = new_val | (old & preserve_mask);
+	neu = (new_val & ~preserve_mask) | (old & preserve_mask);
     }
     while (UNLIKELY(!__atomic_compare_exchange_n(loc,
-						 &old,
+						 &old,//Updated on failure
 						 neu,
 						 /*weak=*/true,
 						 mm,
@@ -227,7 +220,7 @@ enq_deq(p64_buckring_t *rb,
     const struct result r =
 	atomic_rb_acquire(enqueue ? &rb->prod.head : &rb->cons.tail,//read
 			  enqueue ? &rb->prod.tail : &rb->cons.head,//write
-			  enqueue ? rb->prod.mask + 1 : 0,//ring_size
+			  enqueue,
 			  num);
     if (UNLIKELY(r.actual == 0))
     {
@@ -240,7 +233,7 @@ enq_deq(p64_buckring_t *rb,
     }
 
     //Step 2: Write slots (write NIL for dequeue)
-    ringidx_t mask = *(enqueue ? &rb->prod.mask : &rb->cons.mask);
+    ringidx_t mask = enqueue ? rb->prod.hmask : rb->cons.tmask;
     uintptr_t old;
     if (enqueue)
     {
@@ -248,23 +241,35 @@ enq_deq(p64_buckring_t *rb,
 	for (uint32_t i = 1; i < r.actual; i++)
 	{
 	    assert(rb->ring[SW(r.index + i) & mask] == NIL);
+	    uintptr_t elem = (uintptr_t)ev[i];
+	    if (UNLIKELY((elem & IOMARKS) != 0 || elem == NIL))
+	    {
+		report_error("buckring", "invalid element pointer", elem);
+		abort();
+	    }
 #ifdef ATOMIC_AND_OR
-	    rb->ring[SW(r.index + i) & mask] = (uintptr_t)ev[i] | ENQ_OOMARK;
+	    rb->ring[SW(r.index + i) & mask] = elem | ENQ_OOMARK;
 #else
-	    rb->ring[SW(r.index + i) & mask] = (uintptr_t)ev[i];
+	    rb->ring[SW(r.index + i) & mask] = elem;
 #endif
 	}
 	//Write first slot last
 	//Preserve dequeue iomark, clear enqueue iomark
 	//Release our elements, acquire any later elements
+	uintptr_t elem = (uintptr_t)ev[0];
+	if (UNLIKELY((elem & IOMARKS) != 0 || elem == NIL))
+	{
+	    report_error("buckring", "invalid element pointer", elem);
+	    abort();
+	}
 #ifdef ATOMIC_AND_OR
 	old = __atomic_fetch_or(&rb->ring[SW(r.index) & mask],
-			        (uintptr_t)ev[0] | //new value
+			        elem | //new value
 				 ENQ_OOMARK,//set enqueue out-of-order mark
 				 __ATOMIC_ACQ_REL);
 #else
 	old = atomic_blend(&rb->ring[SW(r.index) & mask],
-			   (uintptr_t)ev[0],//new value
+			   elem,//new value
 			   DEQ_IOMARK,//preserve DEQ_IOMARK, clear ENQ_IOMARK
 			   __ATOMIC_ACQ_REL);
 #endif
@@ -275,6 +280,7 @@ enq_deq(p64_buckring_t *rb,
 	//Write (clear) all but first slot
 	for (uint32_t i = 1; i < r.actual; i++)
 	{
+	    //TODO investigate whether using __atomic_exchange_n() is beneficial
 	    old = rb->ring[SW(r.index + i) & mask];
 	    rb->ring[SW(r.index + i) & mask] = NIL;
 	    ev[i] = (void *)(old & ~IOMARKS);//Can iomarks actually be present?
@@ -316,7 +322,13 @@ enq_deq(p64_buckring_t *rb,
     uintptr_t new;
     do
     {
+	//Seems faster to re-load here inside the while-loop even as
+	//__atomic_compare_exchange_n() updated 'old'
+#ifdef __ARM_FEATURE_ATOMICS
+	old = icas8(&rb->ring[SW(index) & mask], __ATOMIC_RELAXED);
+#else
 	old = __atomic_load_n(&rb->ring[SW(index) & mask], __ATOMIC_RELAXED);
+#endif
 	uintptr_t elem = old & ~IOMARKS;
 	while (enqueue ?
 		/*enqueue*/elem != NIL && (old & DEQ_IOMARK) == 0 :
@@ -351,22 +363,15 @@ enq_deq(p64_buckring_t *rb,
 	}
     }
     while (!__atomic_compare_exchange_n(&rb->ring[SW(index) & mask],
-					&old,
+					&old,//Updated on failure
 					new,
-					/*weak=*/false,
+					/*weak=*/true,
 					__ATOMIC_ACQ_REL,
 					__ATOMIC_ACQUIRE));
 
     //Finally make all released slots available for new acquisitions
-#if defined __aarch64__ && !defined __ARM_FEATURE_ATOMICS
-    //For targets without atomic add to memory, e.g. ARMv8.0
-    atomic_snmax_4(enqueue ? &rb->cons.tail : &rb->prod.head,
-		   index, __ATOMIC_RELEASE);
-#else
-    //For targets with atomic add to memory, e.g. ARMv8.1
     __atomic_fetch_add(enqueue ? &rb->cons.tail : &rb->prod.head,
 		       index - r.index, __ATOMIC_RELEASE);
-#endif
     return r.actual;
 }
 
