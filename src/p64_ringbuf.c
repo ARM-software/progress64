@@ -489,20 +489,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
     }
 
     //Step 2: write slots
-    if (prod_flags & FLAG_NONBLK)//NBENQ
-    {
-	for (uint32_t i = 1; i < r.actual; i++)
-	{
-	    __atomic_store_n(&rb->ring[(r.index + i) & r.mask],
-			     ev[i], __ATOMIC_RELAXED);
-	}
-	__atomic_store_n(&rb->ring[(r.index + 0) & r.mask],
-			 ev[0], __ATOMIC_RELEASE);
-    }
-    else//SPENQ or MPENQ
-    {
-	write_slots(rb->ring, ev, r);
-    }
+    write_slots(rb->ring, ev, r);
 
     //Step 3: release slots to consumer
     //Consumer metadata is swapped: cons.tail<->cons.head
