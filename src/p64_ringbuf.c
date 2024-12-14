@@ -542,11 +542,16 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	//Use prod.head instead of cons.head (which is not used at all)
 	int actual;
 	//Step 1: speculative acquisition of slots
-	PREFETCH_FOR_WRITE(&rb->prod.head);
-	ringidx_t head = __atomic_load_n(&rb->prod.head.cur, __ATOMIC_RELAXED);
 	//Consumer metadata is swapped: cons.tail<->cons.head
 	ringidx_t tail = __atomic_load_n(&rb->cons.head/*tail*/.cur,
 					 __ATOMIC_ACQUIRE);
+	ringidx_t mask = rb->cons_mask;
+#ifdef __ARM_FEATURE_ATOMICS
+	ringidx_t head = icas4(&rb->prod.head.cur, __ATOMIC_RELAXED);
+#else
+	PREFETCH_FOR_WRITE(&rb->prod.head);
+	ringidx_t head = __atomic_load_n(&rb->prod.head.cur, __ATOMIC_RELAXED);
+#endif
 	do
 	{
 	    actual = MIN((int)num, (int)(tail - head));
@@ -558,7 +563,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	    //Step 2: read slots in advance (fortunately non-destructive)
 	    p64_ringbuf_result_t r = { .index = head,
 				       .actual = actual,
-				       .mask = rb->cons_mask };
+				       .mask = mask };
 	    read_slots(rb->ring, ev, r);
 
 	    //Step 3: commit acquisition, release slots to producer
