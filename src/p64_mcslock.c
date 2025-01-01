@@ -9,6 +9,7 @@
 #include "common.h"
 #include "arch.h"
 #include "inline.h"
+#include "atomic.h"
 
 #define MCS_GO 0
 #define MCS_WAIT 1
@@ -24,7 +25,7 @@ p64_mcslock_acquire(p64_mcslock_t *lock, p64_mcsnode_t *node)
 {
     node->next = NULL;
     //A0: read and write lock, synchronize with A0/A1
-    p64_mcsnode_t *prev = __atomic_exchange_n(lock, node, __ATOMIC_ACQ_REL);
+    p64_mcsnode_t *prev = atomic_exchange_ptr(lock, node, __ATOMIC_ACQ_REL);
     if (LIKELY(prev == NULL))
     {
 	//Lock uncontended, we have acquired it
@@ -34,7 +35,7 @@ p64_mcslock_acquire(p64_mcslock_t *lock, p64_mcsnode_t *node)
 
     node->wait = MCS_WAIT;
     //B0: write next, synchronize with B1/B2
-    __atomic_store_n(&prev->next, node, __ATOMIC_RELEASE);
+    atomic_store_ptr(&prev->next, node, __ATOMIC_RELEASE);
 
     //Wait for previous thread to signal us (using our node)
     //C0: read wait, synchronize with C1
@@ -47,12 +48,12 @@ p64_mcslock_release(p64_mcslock_t *lock, p64_mcsnode_t *node)
     p64_mcsnode_t *next;
     //Check if there is any waiting thread
     //B1: read next, synchronize with B0
-    if ((next = __atomic_load_n(&node->next, __ATOMIC_ACQUIRE)) == NULL)
+    if ((next = atomic_load_ptr(&node->next, __ATOMIC_ACQUIRE)) == NULL)
     {
 	//Seems there are no waiting threads, try to release lock
 	p64_mcsnode_t *tmp = node;//Use temporary variable since it might get overwritten
 	//A1: write lock, synchronize with A0
-	if (__atomic_compare_exchange_n(lock, &tmp, NULL, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
+	if (atomic_compare_exchange_ptr(lock, &tmp, NULL, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
 	{
 	    //Still no waiters, lock released successfully
 	    return;
@@ -61,12 +62,9 @@ p64_mcslock_release(p64_mcslock_t *lock, p64_mcsnode_t *node)
 
 	//Wait for first waiting thread to link their node to our node
 	//B2: read next, synchronize with B0
-	while ((next = __atomic_load_n(&node->next, __ATOMIC_ACQUIRE)) == NULL)
-	{
-	    doze();
-	}
+	next = wait_until_not_equal_ptr(&node->next, NULL, __ATOMIC_ACQUIRE);
     }
     //Signal first waiting thread
     //C1: write wait, synchronize with C0
-    __atomic_store_n(&next->wait, MCS_GO, __ATOMIC_RELEASE);
+    atomic_store_n(&next->wait, MCS_GO, __ATOMIC_RELEASE);
 }

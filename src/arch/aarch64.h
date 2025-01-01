@@ -262,4 +262,18 @@ wait_until_equal64(uint64_t *loc, uint64_t val, int mm)
     }
 }
 
+static inline uint64_t
+wait_until_not_equal64(uint64_t *loc, uint64_t val, int mm)
+{
+    uint64_t mem;
+    if ((mem = __atomic_load_n(loc, mm)) == val)
+    {
+	while ((mem = LDX(loc, mm)) == val)
+	{
+	    WFE();
+	}
+    }
+    return mem;
+}
+
 #endif

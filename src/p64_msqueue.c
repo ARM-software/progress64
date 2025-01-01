@@ -12,7 +12,7 @@
 #include "p64_spinlock.h"
 #include "build_config.h"
 #include "arch.h"
-#include "lockfree.h"
+#include "atomic.h"
 #include "err_hnd.h"
 
 #define TAG_INC 4
@@ -126,7 +126,7 @@ enqueue_lock(p64_ptr_tag_t *qhead,
 }
 
 static struct p64_ptr_tag
-atomic_load_ptr_tag(const struct p64_ptr_tag *loc, int mo)
+atomic_load_ptr_tag(struct p64_ptr_tag *loc, int mo)
 {
     struct p64_ptr_tag pt;
 #ifdef __arm__
@@ -136,23 +136,23 @@ atomic_load_ptr_tag(const struct p64_ptr_tag *loc, int mo)
     //Use address dependency to force program order of loads
     do
     {
-	pt.tag = __atomic_load_n(&loc->tag, mo);
-	pt.ptr = __atomic_load_n(addr_dep(&loc->ptr, pt.tag), __ATOMIC_RELAXED);
+	pt.tag = atomic_load_n(&loc->tag, mo);
+	pt.ptr = atomic_load_ptr(addr_dep(&loc->ptr, pt.tag), __ATOMIC_RELAXED);
 	//The tag is strictly increasing, if it hasn't changed, the pointer
 	//also hasn't changed
     }
-    while (__atomic_load_n(addr_dep(&loc->tag, pt.ptr), __ATOMIC_RELAXED) != pt.tag);
+    while (atomic_load_n(addr_dep(&loc->tag, pt.ptr), __ATOMIC_RELAXED) != pt.tag);
 #else
     (void)mo;
     //Use load-acquire to force program order of loads
     do
     {
-	pt.tag = __atomic_load_n(&loc->tag, __ATOMIC_ACQUIRE);
-	pt.ptr = __atomic_load_n(&loc->ptr, __ATOMIC_ACQUIRE);
+	pt.tag = atomic_load_n(&loc->tag, __ATOMIC_ACQUIRE);
+	pt.ptr = atomic_load_n(&loc->ptr, __ATOMIC_ACQUIRE);
 	//The tag is strictly increasing, if it hasn't changed, the pointer
 	//also hasn't changed
     }
-    while (__atomic_load_n(&loc->tag, __ATOMIC_RELAXED) != pt.tag);
+    while (atomic_load_n(&loc->tag, __ATOMIC_RELAXED) != pt.tag);
 #endif
     return pt;
 }
@@ -170,12 +170,11 @@ atomic_cas_ptr_tag(struct p64_ptr_tag *loc,
 	struct p64_ptr_tag pt;
     } xxx;
     xxx.pt = neu;
-    return lockfree_compare_exchange_pp((ptrpair_t *)loc,
-					(ptrpair_t *)&old,
-					xxx.pp,
-					false,
-					mo_success,
-					mo_failure);
+    return atomic_compare_exchange_n((ptrpair_t *)loc,
+				    (ptrpair_t *)&old,
+				    xxx.pp,
+				    mo_success,
+				    mo_failure);
 }
 
 static void
@@ -189,7 +188,7 @@ enqueue_tag(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *node
     {
 	tail = atomic_load_ptr_tag(qtail, __ATOMIC_ACQUIRE);
 	next = atomic_load_ptr_tag(&tail.ptr->next, __ATOMIC_RELAXED);
-	if (tail.tag != __atomic_load_n(&qtail->tag, __ATOMIC_RELAXED))
+	if (tail.tag != atomic_load_n(&qtail->tag, __ATOMIC_RELAXED))
 	{
 	    continue;
 	}
@@ -235,11 +234,11 @@ enqueue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *node
     for (;;)
     {
 	tail = p64_hazptr_acquire(&qtail->ptr, &hp);
-	next = __atomic_load_n(&tail->next.ptr, __ATOMIC_ACQUIRE);
+	next = atomic_load_ptr(&tail->next.ptr, __ATOMIC_ACQUIRE);
 	//Don't know if this check is actually required when using hazard
 	//pointers, p64_hazptr_acquire() is performing a similar check
 	//internally
-	if (tail != __atomic_load_n(&qtail->ptr, __ATOMIC_RELAXED))
+	if (tail != atomic_load_ptr(&qtail->ptr, __ATOMIC_RELAXED))
 	{
 	    continue;
 	}
@@ -248,10 +247,9 @@ enqueue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *node
 	    //There is a node after 'next'
 	    //qtail does not point to last node
 	    //Advance qtail
-	    __atomic_compare_exchange_n(&qtail->ptr,
+	    (void)atomic_compare_exchange_ptr(&qtail->ptr,
 					&tail,
 					next,
-					false,
 					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED);
 	    //Don't care if we fail, some other thread did it
@@ -259,10 +257,9 @@ enqueue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *node
 	}
 	//Now next == NULL, tail points to last node in list
 	//Insert new node after last node
-	if (__atomic_compare_exchange_n(&tail->next.ptr,
+	if (atomic_compare_exchange_ptr(&tail->next.ptr,
 					&next,//NULL
 					node,
-					false,
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED))
 	{
@@ -271,12 +268,11 @@ enqueue_smr(p64_ptr_tag_t *qhead, p64_ptr_tag_t *qtail, p64_msqueue_elem_t *node
 	}
     }
     //Update qtail to point to new last node
-    __atomic_compare_exchange_n(&qtail->ptr,
-				&tail,
-				node,
-				false,
-				__ATOMIC_RELEASE,
-				__ATOMIC_RELAXED);
+    (void)atomic_compare_exchange_ptr(&qtail->ptr,
+				      &tail,
+				      node,
+				      __ATOMIC_RELEASE,
+				      __ATOMIC_RELAXED);
     p64_hazptr_release(&hp);
 }
 
@@ -358,8 +354,8 @@ dequeue_tag(p64_ptr_tag_t *qhead,
     {
 	head = atomic_load_ptr_tag(qhead, __ATOMIC_ACQUIRE);
 	tail = atomic_load_ptr_tag(qtail, __ATOMIC_RELAXED);
-	next = __atomic_load_n(&head.ptr->next.ptr, __ATOMIC_ACQUIRE);
-	if (head.tag != __atomic_load_n(&qhead->tag, __ATOMIC_RELAXED))
+	next = atomic_load_ptr(&head.ptr->next.ptr, __ATOMIC_ACQUIRE);
+	if (head.tag != atomic_load_n(&qhead->tag, __ATOMIC_RELAXED))
 	{
 	    continue;
 	}
@@ -411,12 +407,12 @@ dequeue_smr(p64_ptr_tag_t *qhead,
     for (;;)
     {
 	head = p64_hazptr_acquire(&qhead->ptr, &hp0);
-	tail = __atomic_load_n(&qtail->ptr, __ATOMIC_RELAXED);
+	tail = atomic_load_ptr(&qtail->ptr, __ATOMIC_RELAXED);
 	next = p64_hazptr_acquire(&head->next.ptr, &hp1);
 	//Don't know if this check is actually required when using hazard
 	//pointers, p64_hazptr_acquire() is performing a similar check
 	//internally
-	if (head != __atomic_load_n(&qhead->ptr, __ATOMIC_RELAXED))
+	if (head != atomic_load_ptr(&qhead->ptr, __ATOMIC_RELAXED))
 	{
 	    continue;
 	}
@@ -430,21 +426,19 @@ dequeue_smr(p64_ptr_tag_t *qhead,
 	if (head == tail)
 	{
 	    //Queue looks empty but head->next is a valid node
-	    __atomic_compare_exchange_n(&qtail->ptr,
-					&tail,
-					next,
-					false,
-					__ATOMIC_RELAXED,
-					__ATOMIC_RELAXED);
+	    (void)atomic_compare_exchange_ptr(&qtail->ptr,
+					      &tail,
+					      next,
+					      __ATOMIC_RELAXED,
+					      __ATOMIC_RELAXED);
 	    continue;
 	}
 	//Else head != tail and next != NULL
 	//next is protected by a hazard pointer and thus will be valid until
 	//we release the hazard pointer, i.e. also after the CAS below
-	if (__atomic_compare_exchange_n(&qhead->ptr,
+	if (atomic_compare_exchange_ptr(&qhead->ptr,
 					&head,
 					next,
-					false,
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED))
 	{

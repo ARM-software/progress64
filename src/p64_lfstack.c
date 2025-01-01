@@ -14,7 +14,7 @@
 #include "build_config.h"
 #include "arch.h"
 #include "err_hnd.h"
-#include "lockfree.h"
+#include "atomic.h"
 
 #define TAG_INC 2
 #define UPD_IN_PROG 1U
@@ -32,23 +32,23 @@ atomic_load_stk_updprog(p64_lfstack_t *stk, int mo)
     do
     {
 #ifdef __ARM_FEATURE_ATOMICS
-	old.tag = __atomic_fetch_or(&stk->tag, UPD_IN_PROG, mo);
+	old.tag = atomic_fetch_or(&stk->tag, UPD_IN_PROG, mo);
 #else
-	old.tag = __atomic_load_n(&stk->tag, mo);
+	old.tag = atomic_load_n(&stk->tag, mo);
 #undef UPD_IN_PROG
 #define UPD_IN_PROG 0U
 #endif
-	old.head = __atomic_load_n(addr_dep(&stk->head, old.tag), __ATOMIC_RELAXED);
+	old.head = atomic_load_ptr(addr_dep(&stk->head, old.tag), __ATOMIC_RELAXED);
     }
-    while (__atomic_load_n(addr_dep(&stk->tag, old.head), __ATOMIC_RELAXED) != (old.tag | UPD_IN_PROG));
+    while (atomic_load_n(addr_dep(&stk->tag, old.head), __ATOMIC_RELAXED) != (old.tag | UPD_IN_PROG));
 #else
     (void)mo;
     do
     {
-	old.tag = __atomic_fetch_or(&stk->tag, UPD_IN_PROG, __ATOMIC_ACQUIRE);
-	old.head = __atomic_load_n(&stk->head, __ATOMIC_ACQUIRE);
+	old.tag = atomic_fetch_or(&stk->tag, UPD_IN_PROG, __ATOMIC_ACQUIRE);
+	old.head = atomic_load_ptr(&stk->head, __ATOMIC_ACQUIRE);
     }
-    while (__atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != (old.tag | UPD_IN_PROG));
+    while (atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != (old.tag | UPD_IN_PROG));
 #endif
     return old;
 }
@@ -85,13 +85,13 @@ p64_lfstack_enqueue(p64_lfstack_t *stk, p64_lfstack_elem_t *elem)
 	//Use an address dependency on the output of atomic_load_stk_updprog() to prevent the load
 	//from being speculated
 	//This avoids shared copies that interfer with later CAS
-	if (__atomic_load_n(addr_dep(&stk->tag, old.st.tag), __ATOMIC_RELAXED) != old.st.tag)
+	if (atomic_load_n(addr_dep(&stk->tag, old.st.tag), __ATOMIC_RELAXED) != old.st.tag)
 	{
 	    //Extra-check failed, restart loop
 	    continue;
 	}
 	//A0: write stack top, synchronize with A1
-	if (lockfree_compare_exchange_16((__int128 *)stk, &old.pp, swp.pp, 0, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
+	if (atomic_compare_exchange_n((__int128 *)stk, &old.pp, swp.pp, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
 	{
 	    //Success, exit loop
 	    return;
@@ -137,12 +137,12 @@ p64_lfstack_dequeue(p64_lfstack_t *stk)
 	//We set the update-in-progress flag when reading head so update old to match memory
 	old.st.tag |= UPD_IN_PROG;
 	//Perform extra check before CAS in order to avoid (expensive) CAS failure
-	if (__atomic_load_n(addr_dep(&stk->tag, old.st.tag), __ATOMIC_RELAXED) != old.st.tag)
+	if (atomic_load_n(addr_dep(&stk->tag, old.st.tag), __ATOMIC_RELAXED) != old.st.tag)
 	{
 	    //Extra-check failed, start from beginning
 	    continue;
 	}
-	if (lockfree_compare_exchange_16((__int128 *)stk, &old.pp, swp.pp, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+	if (atomic_compare_exchange_n((__int128 *)stk, &old.pp, swp.pp, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
 	{
 	    //Success
 	    return old.st.head;

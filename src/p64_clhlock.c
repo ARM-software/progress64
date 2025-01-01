@@ -15,6 +15,7 @@
 #include "inline.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
+#include "atomic.h"
 
 #define CLH_GO 0
 #define CLH_WAIT 1
@@ -69,7 +70,7 @@ enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
 
     //Insert our node last in queue, get back previous last (tail) node
     //A0: read and write tail, synchronize with A0
-    p64_clhnode_t *prev = __atomic_exchange_n(&lock->tail,
+    p64_clhnode_t *prev = atomic_exchange_ptr(&lock->tail,
 					      node,
 					      __ATOMIC_ACQ_REL);
 
@@ -98,7 +99,7 @@ p64_clhlock_release(p64_clhnode_t **nodep)
     //Signal any (current or future) thread that waits for us using "our"
     //old node
     //B1: write wait, synchronize with B0
-    __atomic_store_n(&(*nodep)->wait, CLH_GO, __ATOMIC_RELEASE);
+    atomic_store_n(&(*nodep)->wait, CLH_GO, __ATOMIC_RELEASE);
     //Now when we have signaled the next thread, it will own "our" old node
 
     //Save our new node for later use
