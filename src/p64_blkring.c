@@ -7,12 +7,11 @@
 #include "p64_blkring.h"
 
 #include "arch.h"
-#include "inline.h"
-#include "lockfree.h"
 #include "common.h"
 #include "err_hnd.h"
 #include "build_config.h"
 #include "os_abstraction.h"
+#include "atomic.h"
 
 #define MAXELEMS 0x80000000
 
@@ -116,7 +115,7 @@ p64_blkring_free(p64_blkring_t *rb)
 void
 p64_blkring_enqueue(p64_blkring_t *rb, void *const elems[], uint32_t nelem)
 {
-    uint32_t sn = __atomic_fetch_add(&rb->prod.tail, nelem, __ATOMIC_RELAXED);
+    uint32_t sn = atomic_fetch_add(&rb->prod.tail, nelem, __ATOMIC_RELAXED);
     uint32_t mask = *addr_dep(&rb->prod.mask, sn);
     for (uint32_t i = 0; i < nelem; i++, sn++)
     {
@@ -131,20 +130,15 @@ p64_blkring_enqueue(p64_blkring_t *rb, void *const elems[], uint32_t nelem)
 	//Wait for slot to become empty, then write our element into it
 	do
 	{
-#ifdef __ARM_FEATURE_ATOMICS
-	    //Atomic read using ICAS
-	    old.i128 = casp(&rb->ring[idx].i128, 0, 0, __ATOMIC_ACQUIRE);
-#else
 	    //Prefetch for write as we will write later
 	    PREFETCH_FOR_WRITE(&rb->ring[idx]);
 	    //Non-atomic read, ensure 'elem' is read after 'sn'
-	    old.sn = __atomic_load_n(&rb->ring[idx].sn, __ATOMIC_RELAXED);
-	    old.elem = __atomic_load_n(addr_dep(&rb->ring[idx].elem, old.sn), __ATOMIC_RELAXED);
-#endif
+	    old.sn = atomic_load_n(&rb->ring[idx].sn, __ATOMIC_RELAXED);
+	    old.elem = atomic_load_ptr(addr_dep(&rb->ring[idx].elem, old.sn), __ATOMIC_RELAXED);
 	}
 	while (old.sn != sn || old.elem != NULL);
 	//Now write our new element
-	__atomic_store_n(&rb->ring[idx].elem, elems[i], __ATOMIC_RELEASE);
+	atomic_store_ptr(&rb->ring[idx].elem, elems[i], __ATOMIC_RELEASE);
 #else
 	//If slot is empty then atomically write our element into it
 	struct ringslot cmp, swp;
@@ -152,12 +146,12 @@ p64_blkring_enqueue(p64_blkring_t *rb, void *const elems[], uint32_t nelem)
 	cmp.elem = NULL;
 	swp.sn = sn;
 	swp.elem = elems[i];
-	while (casp(&rb->ring[idx].i128, cmp.i128, swp.i128, __ATOMIC_RELEASE) != cmp.i128)
+	while (atomic_cas_n(&rb->ring[idx].i128, cmp.i128, swp.i128, __ATOMIC_RELEASE) != cmp.i128)
 	{
 	    //CAS comparison failed, no write
 	    //Tail must have wrapped around (too small ring buffer or slow consumer)
 	    //Cannot succeed until consumer has dequeued previous element in this slot
-	    wait_until_equal((uintptr_t *)&rb->ring[idx].elem, (uintptr_t)NULL, __ATOMIC_RELAXED);
+	    wait_until_equal_ptr(&rb->ring[idx].elem, NULL, __ATOMIC_RELAXED);
 	}
 #endif
     }
@@ -177,13 +171,13 @@ blkring_dequeue(p64_blkring_t *rb, void *elems[], uint32_t nelem, uint32_t *inde
 	{
 #ifdef __ARM_FEATURE_ATOMICS
 	    //Atomic read using ICAS
-	    old.i128 = casp(&rb->ring[idx].i128, 0, 0, __ATOMIC_ACQUIRE);
+	    old.i128 = atomic_icas_n(&rb->ring[idx].i128, __ATOMIC_ACQUIRE);
 #else
 	    //Prefetch for write as we will write later
 	    PREFETCH_FOR_WRITE(&rb->ring[idx]);
 	    //Non-atomic read, ensure 'elem' is read after 'sn'
-	    old.sn = __atomic_load_n(&rb->ring[idx].sn, __ATOMIC_RELAXED);
-	    old.elem = __atomic_load_n(addr_dep(&rb->ring[idx].elem, old.sn), __ATOMIC_ACQUIRE);
+	    old.sn = atomic_load_n(&rb->ring[idx].sn, __ATOMIC_RELAXED);
+	    old.elem = atomic_load_ptr(addr_dep(&rb->ring[idx].elem, old.sn), __ATOMIC_ACQUIRE);
 #endif
 	}
 	while (old.sn != sn || old.elem == NULL);
@@ -193,14 +187,14 @@ blkring_dequeue(p64_blkring_t *rb, void *elems[], uint32_t nelem, uint32_t *inde
 	swp.sn = sn + mask + 1;
 	swp.elem = NULL;
 	//CAS cannot fail
-	if (UNLIKELY(casp(&rb->ring[idx].i128, old.i128, swp.i128, __ATOMIC_RELAXED) != old.i128))
+	if (UNLIKELY(atomic_cas_n(&rb->ring[idx].i128, old.i128, swp.i128, __ATOMIC_RELAXED) != old.i128))
 	{
 	    abort();
 	}
 #else
 	//Non-atomic write, ensure 'sn' is written after 'elem'
-	__atomic_store_n(&rb->ring[idx].elem, NULL, __ATOMIC_RELAXED);
-	__atomic_store_n(&rb->ring[idx].sn, sn + mask + 1, __ATOMIC_RELEASE);
+	atomic_store_ptr(&rb->ring[idx].elem, NULL, __ATOMIC_RELAXED);
+	atomic_store_n(&rb->ring[idx].sn, sn + mask + 1, __ATOMIC_RELEASE);
 #endif
 	assert(old.elem != NULL);
 	elems[i] = old.elem;
@@ -210,20 +204,20 @@ blkring_dequeue(p64_blkring_t *rb, void *elems[], uint32_t nelem, uint32_t *inde
 void
 p64_blkring_dequeue(p64_blkring_t *rb, void *elems[], uint32_t nelem, uint32_t *index)
 {
-    uint32_t head = __atomic_fetch_add(&rb->cons.head, nelem, __ATOMIC_RELAXED);
+    uint32_t head = atomic_fetch_add(&rb->cons.head, nelem, __ATOMIC_RELAXED);
     blkring_dequeue(rb, elems, nelem, index, head);
 }
 
 uint32_t
 p64_blkring_dequeue_nblk(p64_blkring_t *rb, void *elems[], uint32_t nelem, uint32_t *index)
 {
-    uint32_t head = __atomic_load_n(&rb->cons.head, __ATOMIC_RELAXED);
+    uint32_t head = atomic_load_n(&rb->cons.head, __ATOMIC_RELAXED);
     uint32_t num;
     do
     {
 	//Always get a fresh copy of prod.tail
 	//This access creates a shared copy of rb->prod which is bad for scalability
-	uint32_t tail = __atomic_load_n(&rb->prod.tail, __ATOMIC_RELAXED);
+	uint32_t tail = atomic_load_n(&rb->prod.tail, __ATOMIC_RELAXED);
 	int32_t avail = tail - head;
 	if (avail <= 0)
 	{
@@ -231,7 +225,7 @@ p64_blkring_dequeue_nblk(p64_blkring_t *rb, void *elems[], uint32_t nelem, uint3
 	}
 	num = (uint32_t)avail < nelem ? (uint32_t)avail : nelem;
     }
-    while (!__atomic_compare_exchange_n(&rb->cons.head, &head, head + num, 0, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(&rb->cons.head, &head, head + num, __ATOMIC_RELAXED, __ATOMIC_RELAXED));
     //'head' updated on failure
     blkring_dequeue(rb, elems, num, index, head);
     return num;

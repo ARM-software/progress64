@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 
+#include "atomic.h"
 #if defined USE_WFE
 #include "ldxstx.h"
 #endif
@@ -103,6 +104,20 @@ cas16(__int128 *ptr, __int128 cmp, __int128 swp, int mo)
     else if (mo == __ATOMIC_ACQUIRE)
     {
 	__asm __volatile("caspa %0, %H0, %1, %H1, [%2]"
+		: "+r" (cmp)
+		: "r" (swp), "r" (ptr)
+		: "memory");
+    }
+    else if (mo == __ATOMIC_ACQ_REL)
+    {
+	__asm __volatile("caspal %0, %H0, %1, %H1, [%2]"
+		: "+r" (cmp)
+		: "r" (swp), "r" (ptr)
+		: "memory");
+    }
+    else if (mo == __ATOMIC_RELEASE)
+    {
+	__asm __volatile("caspl %0, %H0, %1, %H1, [%2]"
 		: "+r" (cmp)
 		: "r" (swp), "r" (ptr)
 		: "memory");
@@ -213,67 +228,5 @@ smp_fence(unsigned int mask)
 #define LDXPTR(a, b)  __atomic_load_n((a), (b))
 
 #endif
-
-static inline void
-wait_until_equal8(uint8_t *loc, uint8_t val, int mm)
-{
-    if (__atomic_load_n(loc, mm) != val)
-    {
-	while(LDX(loc, mm) != val)
-	{
-	    WFE();
-	}
-    }
-}
-
-static inline void
-wait_until_equal16(uint16_t *loc, uint16_t val, int mm)
-{
-    if (__atomic_load_n(loc, mm) != val)
-    {
-	while(LDX(loc, mm) != val)
-	{
-	    WFE();
-	}
-    }
-}
-
-static inline void
-wait_until_equal32(uint32_t *loc, uint32_t val, int mm)
-{
-    if (__atomic_load_n(loc, mm) != val)
-    {
-	while(LDX(loc, mm) != val)
-	{
-	    WFE();
-	}
-    }
-}
-
-static inline void
-wait_until_equal64(uint64_t *loc, uint64_t val, int mm)
-{
-    if (__atomic_load_n(loc, mm) != val)
-    {
-	while(LDX(loc, mm) != val)
-	{
-	    WFE();
-	}
-    }
-}
-
-static inline uint64_t
-wait_until_not_equal64(uint64_t *loc, uint64_t val, int mm)
-{
-    uint64_t mem;
-    if ((mem = __atomic_load_n(loc, mm)) == val)
-    {
-	while ((mem = LDX(loc, mm)) == val)
-	{
-	    WFE();
-	}
-    }
-    return mem;
-}
 
 #endif

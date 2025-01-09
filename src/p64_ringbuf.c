@@ -13,7 +13,6 @@
 #include "os_abstraction.h"
 
 #include "arch.h"
-#include "inline.h"
 #include "common.h"
 #include "err_hnd.h"
 

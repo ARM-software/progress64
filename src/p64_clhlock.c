@@ -12,7 +12,6 @@
 
 #include "common.h"
 #include "arch.h"
-#include "inline.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
 #include "atomic.h"

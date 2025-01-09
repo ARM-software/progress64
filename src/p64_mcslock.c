@@ -8,7 +8,6 @@
 
 #include "common.h"
 #include "arch.h"
-#include "inline.h"
 #include "atomic.h"
 
 #define MCS_GO 0

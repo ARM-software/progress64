@@ -8,7 +8,6 @@
 #include "build_config.h"
 
 #include "arch.h"
-#include "inline.h"
 #include "common.h"
 
 //Lock word is 32 bits

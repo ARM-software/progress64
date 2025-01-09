@@ -9,6 +9,7 @@
 
 #include "arch.h"
 #include "err_hnd.h"
+#include "atomic.h"
 
 void
 p64_barrier_init(p64_barrier_t *br, uint32_t numthreads)
@@ -31,19 +32,19 @@ p64_barrier_init(p64_barrier_t *br, uint32_t numthreads)
 void
 p64_barrier_wait(p64_barrier_t *br)
 {
-    uint32_t before = __atomic_fetch_add(&br->waiting, 1, __ATOMIC_ACQ_REL);
+    uint32_t before = atomic_fetch_add(&br->waiting, 1, __ATOMIC_ACQ_REL);
     if (before + 1 == 2 * br->numthr)
     {
 	//Wrap back to 0
 	//Barrier count may already have incremented again so perform
 	//incremental wrap using subtraction
-	__atomic_fetch_sub(&br->waiting, 2 * br->numthr, __ATOMIC_RELAXED);
+	atomic_fetch_sub(&br->waiting, 2 * br->numthr, __ATOMIC_RELAXED);
     }
     else
     {
 	register uint32_t numthr = br->numthr;
 	uint32_t cur_lap = LAP(before, numthr);
-	while (LAP(LDX(&br->waiting, __ATOMIC_ACQUIRE), numthr) == cur_lap)
+	while (LAP(atomic_ldx(&br->waiting, __ATOMIC_ACQUIRE), numthr) == cur_lap)
 	{
 	    WFE();
 	}

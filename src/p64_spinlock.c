@@ -9,7 +9,6 @@
 
 #include "common.h"
 #include "arch.h"
-#include "inline.h"
 
 void
 p64_spinlock_init(p64_spinlock_t *lock)
