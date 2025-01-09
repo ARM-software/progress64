@@ -1,0 +1,51 @@
+//Copyright (c) 2025, ARM Limited. All rights reserved.
+//
+//SPDX-License-Identifier:        BSD-3-Clause
+
+#include <stdbool.h>
+#include <stdlib.h>
+
+#include "p64_hemlock.h"
+#include "os_abstraction.h"
+#include "verify.h"
+
+#define NUMTHREADS 2
+
+static p64_hemlock_t hem_lock;
+static bool hem_taken = false;
+
+static void
+ver_hemlock_init(uint32_t numthreads)
+{
+    if (numthreads != NUMTHREADS)
+    {
+	abort();
+    }
+    p64_hemlock_init(&hem_lock);
+    hem_taken = false;
+}
+
+static void
+ver_hemlock_fini(uint32_t numthreads)
+{
+    (void)numthreads;
+    VERIFY_ASSERT(hem_taken == false);
+}
+
+static void
+ver_hemlock_exec(uint32_t id)
+{
+    (void)id;
+    p64_hemlock_acquire(&hem_lock);
+    VERIFY_ASSERT(hem_taken == false);
+    hem_taken = true;
+    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0);
+    VERIFY_ASSERT(hem_taken == true);
+    hem_taken = false;
+    p64_hemlock_release(&hem_lock);
+}
+
+struct ver_funcs ver_hemlock =
+{
+    "hemlock", ver_hemlock_init, ver_hemlock_exec, ver_hemlock_fini
+};

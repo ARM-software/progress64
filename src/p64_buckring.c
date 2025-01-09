@@ -17,6 +17,7 @@
 #include "arch.h"
 #include "common.h"
 #include "err_hnd.h"
+#include "atomic.h"
 #include "../src/lockfree.h" //For MO_LOAD()
 
 //Use atomic_fetch_and/atomic_fetch_or varient instead of atomic_blend variant
@@ -129,7 +130,7 @@ p64_buckring_free(p64_buckring_t *rb)
 	if (rb->prod.head != rb->prod.tail ||
 	    rb->cons.head != rb->cons.tail)
 	{
-	    report_error("buckring", "ring buffer not empty\n", rb);
+	    report_error("buckring", "ring buffer not empty", rb);
 	    return;
 	}
 	p64_mfree(rb);
@@ -147,7 +148,7 @@ struct result
 //write_ptr - tail for producer / head for consumer
 //ring_size - mask + 1 for producer / 0 for consumer
 static inline struct result
-atomic_rb_acquire(const ringidx_t *read_ptr,
+atomic_rb_acquire(ringidx_t *read_ptr,
 		  ringidx_t *write_ptr,
 		  bool enqueue,
 		  int n)
@@ -155,27 +156,26 @@ atomic_rb_acquire(const ringidx_t *read_ptr,
     ringidx_t tail, mask;
     int actual;
 #ifdef __ARM_FEATURE_ATOMICS
-    tail = icas4(write_ptr, __ATOMIC_RELAXED);
+    tail = atomic_icas_n(write_ptr, __ATOMIC_RELAXED);
 #else
-    tail = __atomic_load_n(write_ptr, __ATOMIC_RELAXED);
+    tail = atomic_load_n(write_ptr, __ATOMIC_RELAXED);
 #endif
     mask = *(read_ptr + 1);//Mask is located after head/tail
     ringidx_t ring_size = enqueue ? mask + 1 : 0;
     do
     {
-	ringidx_t head = __atomic_load_n(read_ptr, __ATOMIC_ACQUIRE);
+	ringidx_t head = atomic_load_n(read_ptr, __ATOMIC_ACQUIRE);
 	actual = MIN(n, (int)(ring_size + head - tail));
 	if (UNLIKELY(actual <= 0))
 	{
 	    return (struct result){ .index = 0, .actual = 0 };
 	}
     }
-    while (!__atomic_compare_exchange_n(write_ptr,
-					&tail,//Updated on failure
-					tail + actual,
-					/*weak=*/true,
-					__ATOMIC_RELAXED,
-					__ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(write_ptr,
+				      &tail,//Updated on failure
+				      tail + actual,
+				      __ATOMIC_RELAXED,
+				      __ATOMIC_RELAXED));
     return (struct result){ .index = tail, .actual = actual };
 }
 
@@ -190,21 +190,20 @@ atomic_blend(uintptr_t *loc,
 {
     uintptr_t old, neu;
 #ifdef __ARM_FEATURE_ATOMICS
-    old = icas8(loc, __ATOMIC_RELAXED);
+    old = atomic_icas_n(loc, __ATOMIC_RELAXED);
 #else
-    old = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    old = atomic_load_n(loc, __ATOMIC_RELAXED);
 #endif
     do
     {
 	//Compute blended value from new_val and kept bits of old value
 	neu = (new_val & ~preserve_mask) | (old & preserve_mask);
     }
-    while (UNLIKELY(!__atomic_compare_exchange_n(loc,
-						 &old,//Updated on failure
-						 neu,
-						 /*weak=*/true,
-						 mm,
-						 MO_LOAD(mm))));
+    while (UNLIKELY(!atomic_compare_exchange_n(loc,
+					       &old,//Updated on failure
+					       neu,
+					       mm,
+					       MO_LOAD(mm))));
     return old;
 }
 #endif
@@ -263,7 +262,7 @@ enq_deq(p64_buckring_t *rb,
 	    abort();
 	}
 #ifdef ATOMIC_AND_OR
-	old = __atomic_fetch_or(&rb->ring[SW(r.index) & mask],
+	old = atomic_fetch_or(&rb->ring[SW(r.index) & mask],
 			        elem | //new value
 				 ENQ_OOMARK,//set enqueue out-of-order mark
 				 __ATOMIC_ACQ_REL);
@@ -280,7 +279,7 @@ enq_deq(p64_buckring_t *rb,
 	//Write (clear) all but first slot
 	for (uint32_t i = 1; i < r.actual; i++)
 	{
-	    //TODO investigate whether using __atomic_exchange_n() is beneficial
+	    //TODO investigate whether using atomic_exchange_n() is beneficial
 	    old = rb->ring[SW(r.index + i) & mask];
 	    rb->ring[SW(r.index + i) & mask] = NIL;
 	    ev[i] = (void *)(old & ~IOMARKS);//Can iomarks actually be present?
@@ -290,9 +289,9 @@ enq_deq(p64_buckring_t *rb,
 	//Preserve enqueue iomark, clear dequeue iomark
 	//Release our elements, acquire any later elements
 #ifdef ATOMIC_AND_OR
-	old = __atomic_fetch_and(&rb->ring[SW(r.index) & mask],
-				 ENQ_OOMARK,
-				 __ATOMIC_ACQ_REL);
+	old = atomic_fetch_and(&rb->ring[SW(r.index) & mask],
+			       ENQ_OOMARK,
+			       __ATOMIC_ACQ_REL);
 #else
 	old = atomic_blend(&rb->ring[SW(r.index) & mask],
 			   NIL,//new value
@@ -323,11 +322,11 @@ enq_deq(p64_buckring_t *rb,
     do
     {
 	//Seems faster to re-load here inside the while-loop even as
-	//__atomic_compare_exchange_n() updated 'old'
+	//atomic_compare_exchange_n() updated 'old'
 #ifdef __ARM_FEATURE_ATOMICS
-	old = icas8(&rb->ring[SW(index) & mask], __ATOMIC_RELAXED);
+	old = atomic_icas_n(&rb->ring[SW(index) & mask], __ATOMIC_RELAXED);
 #else
-	old = __atomic_load_n(&rb->ring[SW(index) & mask], __ATOMIC_RELAXED);
+	old = atomic_load_n(&rb->ring[SW(index) & mask], __ATOMIC_RELAXED);
 #endif
 	uintptr_t elem = old & ~IOMARKS;
 	while (enqueue ?
@@ -340,7 +339,7 @@ enq_deq(p64_buckring_t *rb,
 	      )
 	{
 	    index++;//One more match, continue with next slot
-	    old = __atomic_load_n(&rb->ring[SW(index) & mask],
+	    old = atomic_load_n(&rb->ring[SW(index) & mask],
 				   __ATOMIC_RELAXED);
 	    elem = old & ~IOMARKS;
 	}
@@ -362,16 +361,15 @@ enq_deq(p64_buckring_t *rb,
 	    new = old | DEQ_IOMARK;//Set dequeue iomark
 	}
     }
-    while (!__atomic_compare_exchange_n(&rb->ring[SW(index) & mask],
-					&old,//Updated on failure
-					new,
-					/*weak=*/true,
-					__ATOMIC_ACQ_REL,
-					__ATOMIC_ACQUIRE));
+    while (!atomic_compare_exchange_n(&rb->ring[SW(index) & mask],
+				      &old,//Updated on failure
+				      new,
+				      __ATOMIC_ACQ_REL,
+				      __ATOMIC_ACQUIRE));
 
     //Finally make all released slots available for new acquisitions
-    __atomic_fetch_add(enqueue ? &rb->cons.tail : &rb->prod.head,
-		       index - r.index, __ATOMIC_RELEASE);
+    atomic_fetch_add(enqueue ? &rb->cons.tail : &rb->prod.head,
+		     index - r.index, __ATOMIC_RELEASE);
     return r.actual;
 }
 

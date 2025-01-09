@@ -9,6 +9,7 @@
 
 #include "arch.h"
 #include "lockfree.h"
+#include "verify.h"
 
 #define atomic_load_n(loc, mm) \
 ({ \
@@ -20,6 +21,7 @@
 	uint64_t *: __atomic_load_n, \
 	void *   *: __atomic_load_n \
 	)((loc), (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE, "load", loc, (intptr_t)_res, 0, 0); \
     _res; \
 })
 
@@ -36,6 +38,7 @@
 	uint64_t *: __atomic_store_n, \
 	void *   *: __atomic_store_n \
 	)((loc), _val, (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_A1, "store", loc, 0, _val, 0); \
 })
 
 #define atomic_store_ptr(ptr, swp, mm) \
@@ -49,6 +52,7 @@
 	uint32_t *: __atomic_fetch_add, \
 	uint64_t *: __atomic_fetch_add \
 	)((loc), _val, (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE | V_A1, "fetch_add", loc, _res, _val, 0); \
     _res; \
 })
 
@@ -60,6 +64,19 @@
 	uint32_t *: __atomic_fetch_sub, \
 	uint64_t *: __atomic_fetch_sub \
 	)((loc), _val, (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE | V_A1, "fetch_sub", loc, _res, _val, 0); \
+    _res; \
+})
+
+#define atomic_fetch_and(loc, val, mm) \
+({ \
+    __typeof(*(loc)) _val = (val); \
+    __typeof(*(loc)) _res = \
+    _Generic((loc), \
+	uint32_t *: __atomic_fetch_and, \
+	uint64_t *: __atomic_fetch_and \
+	)((loc), _val, (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE | V_A1, "fetch_and", loc, _res, _val, 0); \
     _res; \
 })
 
@@ -71,6 +88,7 @@
 	uint32_t *: __atomic_fetch_or, \
 	uint64_t *: __atomic_fetch_or \
 	)((loc), _val, (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE | V_A1, "fetch_or", loc, _res, _val, 0); \
     _res; \
 })
 
@@ -83,6 +101,7 @@
 	uint64_t *: __atomic_exchange_n, \
 	void *   *: __atomic_exchange_n \
 	)((loc), _val, (mo)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE | V_A1, "exchange", loc, _res, _val, 0); \
     _res; \
 })
 
@@ -96,11 +115,13 @@
     __typeof(*(loc)) _swp = (swp); \
     int _res = \
     _Generic((loc), \
+	uint16_t *: __atomic_compare_exchange_n, \
 	uint32_t *: __atomic_compare_exchange_n, \
 	uint64_t *: __atomic_compare_exchange_n, \
 	void *   *: __atomic_compare_exchange_n, \
 	__int128 *: lockfree_compare_exchange_16 \
 	)((loc), _cmp, _swp, false, (mo_succ), (mo_fail)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE | V_A1 | V_A2, "compare_exchange", loc, _res, _mem, _swp); \
     _res; \
 })
 
@@ -113,6 +134,7 @@
 ({ \
     __typeof(loc) __loc = (loc); \
     __typeof(*(loc)) _res = LDX(__loc, (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE, "load", __loc, _res, 0, 0); \
     _res; \
 })
 
@@ -125,6 +147,7 @@
 	while (atomic_ldx(_loc, (mm)) != _val) \
 	{ \
 	    WFE(); \
+	    VERIFY_YIELD(); \
 	} \
     })
 
@@ -142,6 +165,7 @@
 	while ((_mem = atomic_ldx(_loc, (mm))) == _val) \
 	{ \
 	    WFE(); \
+	    VERIFY_YIELD(); \
 	} \
 	_mem; \
     })
@@ -160,6 +184,7 @@
 	while (atomic_ldx(_loc, (mm)) != _val) \
 	{ \
 	    nano_delay(_dly); \
+	    VERIFY_YIELD(); \
 	} \
     })
 
@@ -173,6 +198,7 @@
 	uint64_t *: icas8, \
 	__int128 *: icas16 \
 	)((loc), (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE, "icas", loc, _res, 0, 0); \
     _res; \
 })
 
@@ -184,6 +210,7 @@
     _Generic((loc), \
 	__int128 *: cas16 \
 	)((loc), _cmp, _swp, (mm)); \
+    VERIFY_SUSPEND(V_OP | V_AD | V_RE | V_A1 | V_A2, "cas", loc, _res, _cmp, _swp); \
     _res; \
 })
 

@@ -25,9 +25,9 @@
 
 #include "common.h"
 #include "os_abstraction.h"
-#include "lockfree.h"
 #include "arch.h"
 #include "err_hnd.h"
+#include "atomic.h"
 
 #if defined __ARM_NEON
 #include <arm_neon.h>
@@ -108,10 +108,6 @@ typedef uint16_t sign_t;
 #undef BKT_SIZE
 #define BKT_SIZE 8
 #endif
-
-//A shorter synonym for __atomic_compare_exchange_n()
-#define atomic_cmpxchg(p, o, n, s, f) \
-    __atomic_compare_exchange_n((p), (o), (n), /*weak=*/false, (s), (f))
 
 //Slot is destination for a move-in-progress
 #define TAG_DST (uintptr_t)1
@@ -216,7 +212,7 @@ atomic_load_acquire(p64_cuckooelem_t **pptr,
     }
     else
     {
-	return __atomic_load_n(pptr, __ATOMIC_ACQUIRE);
+	return atomic_load_ptr(pptr, __ATOMIC_ACQUIRE);
     }
 }
 
@@ -572,7 +568,7 @@ search_cellar(p64_cuckooht_t *ht,
     bix_t idx = start;
     do
     {
-	if (__atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_RELAXED) == hash)
+	if (atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_RELAXED) == hash)
 	{
 	    p64_cuckooelem_t *elem =
 		atomic_load_acquire(&ht->cellar[idx].elem,
@@ -618,7 +614,7 @@ lookup(p64_cuckooht_t *ht,
     p64_cuckooelem_t *elem;
     do
     {
-	chgcnt = __atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
+	chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
 	//Create bit masks with all matching hashes
 	mask_t mask0 = find_sig(bkt0->sigs, hash >> 16);
 	if (LIKELY(mask0 != 0))
@@ -645,7 +641,7 @@ lookup(p64_cuckooht_t *ht,
 	//an element which was moved between the buckets
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
     }
-    while (UNLIKELY(__atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt));
+    while (UNLIKELY(atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt));
     //Check cellar bit if any elements which hash to this bucket are
     //present in the cellar
     if ((chgcnt & CELLAR_BIT) != 0)
@@ -738,11 +734,11 @@ write_sig(struct bucket *bkt,
     for (;;)
     {
 	//Try to swing (update) sig field
-	if (atomic_cmpxchg(&bkt->sigs[idx],
-			   &oldsig,
-			   newsig,
-			   __ATOMIC_RELEASE,
-			   __ATOMIC_RELAXED))
+	if (atomic_compare_exchange_n(&bkt->sigs[idx],
+				      &oldsig,
+				      newsig,
+				      __ATOMIC_RELEASE,
+				      __ATOMIC_RELAXED))
 	{
 	    //Success
 	    return;
@@ -752,8 +748,8 @@ write_sig(struct bucket *bkt,
 	//after our write to elem
 	//Check if our element is still present
 	smp_fence(StoreLoad);
-	oldsig = __atomic_load_n(&bkt->sigs[idx], __ATOMIC_RELAXED);
-	if (__atomic_load_n(&bkt->elems[idx], __ATOMIC_RELAXED) != elem)
+	oldsig = atomic_load_n(&bkt->sigs[idx], __ATOMIC_RELAXED);
+	if (atomic_load_ptr(&bkt->elems[idx], __ATOMIC_RELAXED) != elem)
 	{
 	    //No, element not present anymore, don't write sig
 	    return;
@@ -774,14 +770,14 @@ bucket_insert(struct bucket *bkt,
     while (mask != 0)
     {
 	uint32_t i = __builtin_ctzll(mask) >> MASK_SHIFT;
-	sign_t oldsig = __atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
+	sign_t oldsig = atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
 	p64_cuckooelem_t *old = NULL;
 	//Try to grab slot
-	if (atomic_cmpxchg(&bkt->elems[i],
-			   &old,
-			   elem,
-			   __ATOMIC_RELEASE,
-			   __ATOMIC_RELAXED))
+	if (atomic_compare_exchange_ptr(&bkt->elems[i],
+					&old,
+					elem,
+					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED))
 	{
 	    //Success, the slot is ours
 	    //Now update corresponding signature field
@@ -830,11 +826,11 @@ clean_dst(p64_cuckooht_t *ht,
     struct bucket *dst_bkt = &ht->buckets[dst_bix];
     p64_cuckooelem_t *old = SET_IDX(SET_SRC(elem), src_idx);
     //Remove the tags, keeping the bare element pointer
-    if (atomic_cmpxchg(&dst_bkt->elems[dst_idx],
-		       &old,
-		       elem,
-		       __ATOMIC_RELAXED,
-		       __ATOMIC_RELAXED))
+    if (atomic_compare_exchange_ptr(&dst_bkt->elems[dst_idx],
+				    &old,
+				    elem,
+				    __ATOMIC_RELAXED,
+				    __ATOMIC_RELAXED))
     {
 	//Tags removed, element is clean, move complete
 #if 0
@@ -861,7 +857,7 @@ clear_src(p64_cuckooht_t *ht,
     p64_cuckooelem_t *old = SET_IDX(SET_DST(elem), dst_idx);
     //A pre-check of the elem field, we don't want to unnecessarily increment
     //the change counter
-    if (__atomic_load_n(&src_bkt->elems[src_idx], __ATOMIC_RELAXED) == old)
+    if (atomic_load_ptr(&src_bkt->elems[src_idx], __ATOMIC_RELAXED) == old)
     {
 	//First we increment the change counter to indicate the (imminent)
 	//disappearance of an element
@@ -871,14 +867,14 @@ clear_src(p64_cuckooht_t *ht,
 	//counter of one bucket instead of both buckets, this seems to save
 	//some nanoseconds in the lookup
 	bix_t bix = ring_mod(elem->hash, ht->nbkts);
-	__atomic_fetch_add(&ht->buckets[bix].chgcnt,
+	atomic_fetch_add(&ht->buckets[bix].chgcnt,
 			   CHGCNT_INC, __ATOMIC_RELAXED);
 	//Then we actually disappear the element
-	if (atomic_cmpxchg(&src_bkt->elems[src_idx],
-			   &old,
-			   NULL,
-			   __ATOMIC_RELEASE,
-			   __ATOMIC_RELAXED))
+	if (atomic_compare_exchange_ptr(&src_bkt->elems[src_idx],
+					&old,
+					NULL,
+					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED))
 	{
 	    //Source slot cleared
 	}
@@ -901,13 +897,13 @@ move_elem(p64_cuckooht_t *ht,
     assert(!HAS_ANY(elem));
     //Write element to destination slot together with info about source slot
     struct bucket *dst_bkt = &ht->buckets[dst_bix];
-    sign_t oldsig = __atomic_load_n(&dst_bkt->sigs[dst_idx], __ATOMIC_RELAXED);
+    sign_t oldsig = atomic_load_n(&dst_bkt->sigs[dst_idx], __ATOMIC_RELAXED);
     p64_cuckooelem_t *old = SET_DST(NULL);
-    if (atomic_cmpxchg(&dst_bkt->elems[dst_idx],
-		       &old,
-		       SET_IDX(SET_SRC(elem), src_idx),
-		       __ATOMIC_RELEASE,//Keep load(oldsig) above
-		       __ATOMIC_RELAXED))
+    if (atomic_compare_exchange_ptr(&dst_bkt->elems[dst_idx],
+				    &old,
+				    SET_IDX(SET_SRC(elem), src_idx),
+				    __ATOMIC_RELEASE,//Keep load(oldsig) above
+				    __ATOMIC_RELAXED))
     {
 	//Success
 	//Now update corresponding hash field
@@ -966,11 +962,11 @@ find_empty(p64_cuckooht_t *ht,
 	{
 	    //Found empty slot, try to reserve it
 	    p64_cuckooelem_t *old = NULL;
-	    if (atomic_cmpxchg(&bkt->elems[i],
-			       &old,
-			       SET_DST(NULL),//Reserved slot
-			       __ATOMIC_RELAXED,
-			       __ATOMIC_RELAXED))
+	    if (atomic_compare_exchange_ptr(&bkt->elems[i],
+					    &old,
+					    SET_DST(NULL),//Reserved slot
+					    __ATOMIC_RELAXED,
+					    __ATOMIC_RELAXED))
 	    {
 		//Success reserving empty slot
 		*dst_idx = i;
@@ -1022,11 +1018,11 @@ make_room(p64_cuckooht_t *ht,
 	{
 	    //Tag source element with index in destination bucket
 	    //Destination bucket itself can be computed from hash
-	    if (atomic_cmpxchg(&bkt->elems[src_idx],
-			       &elem,
-			       SET_IDX(SET_DST(elem), dst_idx),
-			       __ATOMIC_RELAXED,
-			       __ATOMIC_RELAXED))
+	    if (atomic_compare_exchange_ptr(&bkt->elems[src_idx],
+					    &elem,
+					    SET_IDX(SET_DST(elem), dst_idx),
+					    __ATOMIC_RELAXED,
+					    __ATOMIC_RELAXED))
 	    {
 		//Move started!
 		//Let's try to complete the move ourselves
@@ -1038,11 +1034,11 @@ make_room(p64_cuckooht_t *ht,
 	    //Undo reservation
 	    struct bucket *dst_bkt = &ht->buckets[dst_bix];
 	    p64_cuckooelem_t *old = SET_DST(NULL);
-	    if (!atomic_cmpxchg(&dst_bkt->elems[dst_idx],
-				&old,
-				NULL,
-				__ATOMIC_RELAXED,
-				__ATOMIC_RELAXED))
+	    if (!atomic_compare_exchange_ptr(&dst_bkt->elems[dst_idx],
+					     &old,
+					     NULL,
+					     __ATOMIC_RELAXED,
+					     __ATOMIC_RELAXED))
 	    {
 		//TODO can this really happen?
 		fprintf(stderr, "Failed to clear reservation\n");
@@ -1073,33 +1069,32 @@ insert_cell(p64_cuckooht_t *ht,
     bix_t idx = start;
     do
     {
-	if (__atomic_load_n(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == NULL)
+	if (atomic_load_ptr(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == NULL)
 	{
 	    //Write elem & hash fields atomically
 	    p64_cuckoohash_t oldhash =
-		__atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_RELAXED);
+		atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_RELAXED);
 	    union cellpp old = { .cell.elem = NULL, .cell.hash = oldhash };
 	    union cellpp new = { .cell.elem = elem, .cell.hash = hash };
-	    if (lockfree_compare_exchange_pp((ptrpair_t *)&ht->cellar[idx],
-					     &old.pp,
-					     new.pp,
-					    /*weak=*/false,
-					    __ATOMIC_RELEASE,
-					    __ATOMIC_RELAXED))
+	    if (atomic_compare_exchange_n((ptrpair_t *)&ht->cellar[idx],
+					  &old.pp,
+					  new.pp,
+					  __ATOMIC_RELEASE,
+					  __ATOMIC_RELAXED))
 	    {
 		//Set cellar bit in first bucket to indicate presence of
 		//element in cellar
 		uint32_t old, new;
+		old = atomic_load_n(&bkt->chgcnt, __ATOMIC_RELAXED);
 		do
 		{
-		    old = __atomic_load_n(&bkt->chgcnt, __ATOMIC_RELAXED);
 		    new = (old + CHGCNT_INC) | CELLAR_BIT;
 		}
-		while (!atomic_cmpxchg(&bkt->chgcnt,
-				       &old,
-				       new,
-				       __ATOMIC_RELEASE,
-				       __ATOMIC_RELAXED));
+		while (!atomic_compare_exchange_n(&bkt->chgcnt,
+						  &old,
+						  new,
+						  __ATOMIC_RELEASE,
+						  __ATOMIC_RELAXED));
 		return true;
 	    }
 	}
@@ -1306,13 +1301,13 @@ bucket_remove(p64_cuckooht_t *ht,
 	}
 	atomic_ptr_release(&hp, ht->use_hp);
 	//Replace clean element with NULL
-	sign_t oldsig = __atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
+	sign_t oldsig = atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
 	old = elem;
-	if (atomic_cmpxchg(&bkt->elems[i],
-			   &old,
-			   NULL,
-			   __ATOMIC_RELEASE,
-			   __ATOMIC_RELAXED))
+	if (atomic_compare_exchange_ptr(&bkt->elems[i],
+					&old,
+					NULL,
+					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED))
 	{
 	    //Write invalid signature value
 	    write_sig(bkt, i, oldsig, NULL, elem->hash >> 16);
@@ -1332,15 +1327,15 @@ update_cellar(p64_cuckooht_t *ht,
     uint32_t old, new;
     do
     {
-	old = __atomic_load_n(&ht->buckets[bix].chgcnt, __ATOMIC_ACQUIRE);
+	old = atomic_load_n(&ht->buckets[bix].chgcnt, __ATOMIC_ACQUIRE);
 	new = old;
 	new &= ~CELLAR_BIT;
 	for (bix_t i = 0; i < ht->ncells; i++)
 	{
 	    p64_cuckoohash_t hash =
-		__atomic_load_n(&ht->cellar[i].hash, __ATOMIC_RELAXED);
+		atomic_load_n(&ht->cellar[i].hash, __ATOMIC_RELAXED);
 	    p64_cuckooelem_t *elem =
-		__atomic_load_n(&ht->cellar[i].elem, __ATOMIC_RELAXED);
+		atomic_load_ptr(&ht->cellar[i].elem, __ATOMIC_RELAXED);
 	    if (elem != NULL && ring_mod(hash, ht->nbkts) == bix)
 	    {
 		//Found another element which hashes to same bix
@@ -1356,11 +1351,11 @@ update_cellar(p64_cuckooht_t *ht,
 	new += CHGCNT_INC;
 	//Attempt to update chgcnt, fail if count has changed
     }
-    while (!atomic_cmpxchg(&ht->buckets[bix].chgcnt,
-			   &old,
-			   new,
-			   __ATOMIC_RELEASE,
-			   __ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(&ht->buckets[bix].chgcnt,
+				      &old,
+				      new,
+				      __ATOMIC_RELEASE,
+				      __ATOMIC_RELAXED));
 }
 
 NO_INLINE
@@ -1377,17 +1372,16 @@ remove_cell_by_ptr(p64_cuckooht_t *ht,
     bix_t idx = start;
     do
     {
-	if (__atomic_load_n(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == elem)
+	if (atomic_load_ptr(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == elem)
 	{
 	    //Write elem & hash fields atomically
 	    union cellpp old = { .cell.elem = elem, .cell.hash = hash };
 	    union cellpp nul = { .cell.elem = NULL, .cell.hash = ~hash };
-	    if (lockfree_compare_exchange_pp((ptrpair_t *)&ht->cellar[idx],
-					     &old.pp,
-					     nul.pp,
-					    /*weak=*/false,
-					    __ATOMIC_RELAXED,
-					    __ATOMIC_RELAXED))
+	    if (atomic_compare_exchange_n((ptrpair_t *)&ht->cellar[idx],
+					  &old.pp,
+					  nul.pp,
+					  __ATOMIC_RELAXED,
+					  __ATOMIC_RELAXED))
 	    {
 		update_cellar(ht, ring_mod(hash, ht->nbkts));
 		return true;
@@ -1517,7 +1511,7 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
     bool success = false;
     do
     {
-	chgcnt = __atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
+	chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
 	mask_t mask0 = 0;
 	mask0 = find_elem(bkt0->elems, elem);
 	if (LIKELY(mask0 != 0))
@@ -1541,7 +1535,7 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
 	//an element which was moved between the buckets
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
     }
-    while (__atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt);
+    while (atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt);
     if ((chgcnt & CELLAR_BIT) != 0)
     {
 	success = remove_cell_by_ptr(ht, elem, hash);

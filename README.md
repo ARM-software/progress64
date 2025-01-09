@@ -86,6 +86,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 
 ## Usage
 Use library through the provided C header files. Or copy source files into your own project.
+Use the 'verify' command to verify all or specific permutation(s) (interleavings) of two threads accessing a datatype.
 
 ## Notes
 * Hazardptr and QSBR support one reclamation domain only. This is a trade-off that simplifies the API and usage. For QSBR, multiple reclamation domains do make sense...

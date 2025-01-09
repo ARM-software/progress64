@@ -10,7 +10,7 @@
 #include "err_hnd.h"
 #undef report_error
 
-static p64_errhnd_cb errh;
+static THREAD_LOCAL p64_errhnd_cb errh;
 
 p64_errhnd_cb
 p64_errhnd_install(p64_errhnd_cb new)

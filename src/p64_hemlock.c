@@ -12,7 +12,14 @@
 #include "atomic.h"
 #include "verify.h"
 
+#ifdef VERIFY
+//When verifying, all 'threads' run in the same host thread so have the same TLS
+//We need to ensure verification 'threads' have unique grant locations
+static struct p64_hemlock *grant[2] = { NULL, NULL };
+#define grant grant[verify_id]
+#else
 static THREAD_LOCAL struct p64_hemlock *grant = NULL;
+#endif
 
 void
 p64_hemlock_init(p64_hemlock_t *lock)

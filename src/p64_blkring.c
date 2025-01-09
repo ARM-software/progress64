@@ -12,6 +12,7 @@
 #include "build_config.h"
 #include "os_abstraction.h"
 #include "atomic.h"
+#include "verify.h"
 
 #define MAXELEMS 0x80000000
 
@@ -135,6 +136,7 @@ p64_blkring_enqueue(p64_blkring_t *rb, void *const elems[], uint32_t nelem)
 	    //Non-atomic read, ensure 'elem' is read after 'sn'
 	    old.sn = atomic_load_n(&rb->ring[idx].sn, __ATOMIC_RELAXED);
 	    old.elem = atomic_load_ptr(addr_dep(&rb->ring[idx].elem, old.sn), __ATOMIC_RELAXED);
+	    VERIFY_YIELD();//A necessary hack when verifying
 	}
 	while (old.sn != sn || old.elem != NULL);
 	//Now write our new element
@@ -179,6 +181,7 @@ blkring_dequeue(p64_blkring_t *rb, void *elems[], uint32_t nelem, uint32_t *inde
 	    old.sn = atomic_load_n(&rb->ring[idx].sn, __ATOMIC_RELAXED);
 	    old.elem = atomic_load_ptr(addr_dep(&rb->ring[idx].elem, old.sn), __ATOMIC_ACQUIRE);
 #endif
+	    VERIFY_YIELD();//A necessary hack when verifying
 	}
 	while (old.sn != sn || old.elem == NULL);
 #ifdef __ARM_FEATURE_ATOMICS

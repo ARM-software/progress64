@@ -10,6 +10,7 @@
 #include "arch.h"
 #include "err_hnd.h"
 #include "atomic.h"
+#include "verify.h"
 
 void
 p64_barrier_init(p64_barrier_t *br, uint32_t numthreads)
@@ -47,6 +48,8 @@ p64_barrier_wait(p64_barrier_t *br)
 	while (LAP(atomic_ldx(&br->waiting, __ATOMIC_ACQUIRE), numthr) == cur_lap)
 	{
 	    WFE();
+	    //When verifying, we need to force a thread yield in this poll loop
+	    VERIFY_YIELD();
 	}
     }
 }
