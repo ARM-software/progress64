@@ -13,7 +13,7 @@
 #define NUMTHREADS 2
 
 static p64_blkring_t *blkr_rb;
-static uint32_t *blkr_elems[NUMTHREADS];
+static uint32_t blkr_elems[NUMTHREADS];
 
 static void
 ver_blkring_init(uint32_t numthreads)
@@ -30,7 +30,6 @@ static void
 ver_blkring_fini(uint32_t numthreads)
 {
     (void)numthreads;
-    //VERIFY_ASSERT(blkr_elems[0] == NULL && blkr_elems[1] == NULL);
     p64_blkring_free(blkr_rb);
 }
 
@@ -38,24 +37,21 @@ static void
 ver_blkring_exec(uint32_t id)
 {
     uint32_t idx;
-    uint32_t *elem = malloc(sizeof(uint32_t));
-    VERIFY_ASSERT(elem != NULL);
+    uint32_t *elem = &blkr_elems[id];
     *elem = id;
-    blkr_elems[id] = elem;
     p64_blkring_enqueue(blkr_rb, (void **)&elem, 1);
+    elem = NULL;
     p64_blkring_dequeue(blkr_rb, (void **)&elem, 1, &idx);
-    VERIFY_ASSERT(elem == blkr_elems[0] || elem == blkr_elems[1]);
-    if (elem == blkr_elems[0])
+    VERIFY_ASSERT(idx == 0 || idx == 1);
+    VERIFY_ASSERT(elem == &blkr_elems[0] || elem == &blkr_elems[1]);
+    if (elem == &blkr_elems[0])
     {
 	VERIFY_ASSERT(*elem == 0);
-	blkr_elems[0] = NULL;
     }
     else
     {
 	VERIFY_ASSERT(*elem == 1);
-	blkr_elems[1] = NULL;
     }
-    free(elem);
 }
 
 struct ver_funcs ver_blkring =

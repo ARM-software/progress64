@@ -42,7 +42,7 @@ ver_clhlock_exec(uint32_t id)
     p64_clhlock_acquire(&clh_lock, &node);
     VERIFY_ASSERT(clh_taken == false);
     clh_taken = true;
-    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0);
+    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0, 0);
     clh_taken = false;
     p64_clhlock_release(&node);
     p64_mfree(node);

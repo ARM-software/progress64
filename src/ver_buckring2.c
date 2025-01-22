@@ -16,8 +16,8 @@
 #define NUMTHREADS 2
 
 static p64_buckring_t *buckr_rb;
-static uint32_t *buckr_elems[3];
-static uint32_t elem_mask;
+static uint32_t buckr_elems[3];
+static uint32_t buckr_mask;
 
 static void
 ver_buckring2_init(uint32_t numthreads)
@@ -28,19 +28,10 @@ ver_buckring2_init(uint32_t numthreads)
     }
     buckr_rb = p64_buckring_alloc(64, 0);
     VERIFY_ASSERT(buckr_rb != NULL);
-    uint32_t *elem0 = malloc(sizeof(uint32_t));
-    uint32_t *elem1 = malloc(sizeof(uint32_t));
-    uint32_t *elem2 = malloc(sizeof(uint32_t));
-    VERIFY_ASSERT(elem0 != NULL);
-    VERIFY_ASSERT(elem1 != NULL);
-    VERIFY_ASSERT(elem2 != NULL);
-    *elem0 = 0;
-    *elem1 = 1;
-    *elem2 = 2;
-    buckr_elems[0] = elem0;
-    buckr_elems[1] = elem1;
-    buckr_elems[2] = elem2;
-    elem_mask = 0;
+    buckr_elems[0] = 0;
+    buckr_elems[1] = 1;
+    buckr_elems[2] = 2;
+    buckr_mask = 0;
 }
 
 static int
@@ -57,10 +48,7 @@ static void
 ver_buckring2_fini(uint32_t numthreads)
 {
     (void)numthreads;
-    VERIFY_ASSERT(elem_mask == 7);
-    free(buckr_elems[2]);
-    free(buckr_elems[1]);
-    free(buckr_elems[0]);
+    VERIFY_ASSERT(buckr_mask == 0x77);
     p64_errhnd_install(error_handler);
     p64_buckring_free(buckr_rb);
 }
@@ -71,8 +59,10 @@ ver_buckring2_exec(uint32_t id)
     if (id == 0)
     {
 	uint32_t idx;
-	uint32_t *elems[2];
-	VERIFY_ASSERT(p64_buckring_enqueue(buckr_rb, (void **)&buckr_elems[0], 2) == 2);
+	uint32_t *elems[2] = { &buckr_elems[0], &buckr_elems[1] };
+	buckr_mask ^= 1U << *elems[0];
+	buckr_mask ^= 1U << *elems[1];
+	VERIFY_ASSERT(p64_buckring_enqueue(buckr_rb, (void **)&elems, 2) == 2);
 	elems[0] = NULL;
 	elems[1] = NULL;
 	for (;;)
@@ -90,24 +80,17 @@ ver_buckring2_exec(uint32_t id)
 	//printf("0: elems[1]=%p\n", elems[1]);
 	VERIFY_ASSERT(idx == 0 || idx == 1);
 	VERIFY_ASSERT(elems[0] != elems[1]);
-	for (int i = 0; i < 2; i++)
-	{
-	    for (int j = 0; j < 3; j++)
-	    {
-		if (elems[i] == buckr_elems[j])
-		{
-		    elem_mask ^= 1U << j;
-		    break;
-		}
-	    }
-	}
+	buckr_mask ^= 16U << *elems[0];
+	buckr_mask ^= 16U << *elems[1];
     }
     else //id == 1
     {
 	uint32_t idx;
-	VERIFY_ASSERT(p64_buckring_enqueue(buckr_rb, (void **)&buckr_elems[2], 1) == 1);
+	uint32_t *elem = &buckr_elems[2];
+	buckr_mask ^= 1U << *elem;
+	VERIFY_ASSERT(p64_buckring_enqueue(buckr_rb, (void **)&elem, 1) == 1);
 	//We cannot successfully dequeue element until all preceding enqueue's have completed
-	uint32_t *elem = NULL;
+	elem = NULL;
 	while (p64_buckring_dequeue(buckr_rb, (void **)&elem, 1, &idx) == 0)
 	{
 	    VERIFY_YIELD();
@@ -115,14 +98,7 @@ ver_buckring2_exec(uint32_t id)
 	//printf("1: idx=%u\n", idx);
 	//printf("1: elem=%p\n", elem);
 	VERIFY_ASSERT(idx == 0 || idx == 2);
-	for (int j = 0; j < 3; j++)
-	{
-	    if (elem == buckr_elems[j])
-	    {
-		elem_mask ^= 1U << j;
-		break;
-	    }
-	}
+	buckr_mask ^= 16U << *elem;
 	//Enqueue: 012 201
 	//Dequeue: 01:2 0:12 20:1 2:01
     }

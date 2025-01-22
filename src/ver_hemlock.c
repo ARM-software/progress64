@@ -39,7 +39,7 @@ ver_hemlock_exec(uint32_t id)
     p64_hemlock_acquire(&hem_lock);
     VERIFY_ASSERT(hem_taken == false);
     hem_taken = true;
-    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0);
+    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0, 0);
     VERIFY_ASSERT(hem_taken == true);
     hem_taken = false;
     p64_hemlock_release(&hem_lock);

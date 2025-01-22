@@ -1,4 +1,4 @@
-//Copyright (c) 2017-2018, ARM Limited. All rights reserved.
+//Copyright (c) 2017-2025, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
@@ -15,6 +15,7 @@
 #include "arch.h"
 #include "common.h"
 #include "err_hnd.h"
+#include "atomic.h"
 
 #define SUPPORTED_FLAGS (P64_RINGBUF_F_SPENQ | P64_RINGBUF_F_MPENQ | \
 			 P64_RINGBUF_F_SCDEQ | P64_RINGBUF_F_MCDEQ | \
@@ -49,23 +50,29 @@ struct idxpair
     uint32_t pend;
 };
 
-struct endpoint
+union endpoint
 {
-    _Alignas(4 * sizeof(ringidx_t))
-    struct idxpair head;//tail for consumer
-    ringidx_t tail;//head for consumer
-    ringidx_t capacity;
+    struct
+    {
+	_Alignas(4 * sizeof(ringidx_t))
+	struct idxpair head;//tail for consumer
+	ringidx_t tail;//head for consumer
+	ringidx_t capacity;
+    };
+#ifdef __ARM_FEATURE_ATOMICS
+    __int128 atom;
+#endif
 };
 
 struct p64_ringbuf
 {
     _Alignas(CACHE_LINE)
-    struct endpoint prod;
+    union endpoint prod;
     ringidx_t prod_mask;//Mask must be directly after the endpoint member
 #ifdef USE_SPLIT_PRODCONS
     _Alignas(CACHE_LINE)
 #endif
-    struct endpoint cons;//head & tail are swapped for consumer metadata
+    union endpoint cons;//head & tail are swapped for consumer metadata
     ringidx_t cons_mask;//Mask must be directly after the endpoint member
     _Alignas(CACHE_LINE)
     void *ring[];
@@ -155,14 +162,14 @@ p64_ringbuf_free_(p64_ringbuf_t *rb)
 
 //MT-unsafe single producer/consumer code
 static inline p64_ringbuf_result_t
-acquire_slots(const ringidx_t *headp,
+acquire_slots(ringidx_t *headp,
 	      ringidx_t *tailp,
 	      ringidx_t mask,
 	      int n,
 	      ringidx_t capacity)
 {
-    ringidx_t tail = __atomic_load_n(tailp, __ATOMIC_RELAXED);
-    ringidx_t head = __atomic_load_n(headp, __ATOMIC_ACQUIRE);
+    ringidx_t tail = atomic_load_n(tailp, __ATOMIC_RELAXED);
+    ringidx_t head = atomic_load_n(headp, __ATOMIC_ACQUIRE);
     int actual = MIN(n, (int)(capacity + head - tail));
     if (UNLIKELY(actual <= 0))
     {
@@ -173,37 +180,33 @@ acquire_slots(const ringidx_t *headp,
 
 //MT-safe multi producer/consumer code
 static inline p64_ringbuf_result_t
-acquire_slots_mtsafe(struct endpoint *rb,
+acquire_slots_mtsafe(union endpoint *ep,
 		     int n)
 {
     ringidx_t head, tail, capacity;
     uint32_t mask;
     int actual;
 #ifdef __ARM_FEATURE_ATOMICS
-    union
-    {
-	__int128 i;
-	struct endpoint ep;
-    } mem, swp, cmp;
+    union endpoint mem, swp, cmp;
     //Atomic read using ICAS, preparing for ensuing write
-    mem.i = icas16((__int128 *)rb, __ATOMIC_RELAXED);
-    //Address dependency to prevent accesses through 'rb' to be speculated before the ICAS above
-    rb = addr_dep(rb, mem.i);
-    capacity = mem.ep.capacity;
+    mem.atom = atomic_icas_n(&ep->atom, __ATOMIC_RELAXED);
+    //Address dependency to prevent accesses through 'ep' to be speculated before the ICAS above
+    ep = addr_dep(ep, mem.atom);
+    capacity = mem.capacity;
 #else
-    tail = __atomic_load_n(&rb->tail, __ATOMIC_RELAXED);
-    head = __atomic_load_n(&rb->head.cur, __ATOMIC_ACQUIRE);
-    capacity = rb->capacity;
+    tail = atomic_load_n(&ep->tail, __ATOMIC_RELAXED);
+    head = atomic_load_n(&ep->head.cur, __ATOMIC_ACQUIRE);
+    capacity = ep->capacity;
 #endif
     //Mask is located imediately after the endpoint
-    static_assert(offsetof(struct p64_ringbuf, prod_mask) == offsetof(struct p64_ringbuf, prod) + sizeof(struct endpoint), "prod_mask");
-    static_assert(offsetof(struct p64_ringbuf, cons_mask) == offsetof(struct p64_ringbuf, cons) + sizeof(struct endpoint), "cons_mask");
-    mask = *(uint32_t *)(rb + 1);
+    static_assert(offsetof(struct p64_ringbuf, prod_mask) == offsetof(struct p64_ringbuf, prod) + sizeof(union endpoint), "prod_mask");
+    static_assert(offsetof(struct p64_ringbuf, cons_mask) == offsetof(struct p64_ringbuf, cons) + sizeof(union endpoint), "cons_mask");
+    mask = *(uint32_t *)(ep + 1);
     do
     {
 #ifdef __ARM_FEATURE_ATOMICS
-	tail = mem.ep.tail;
-	head = mem.ep.head.cur;
+	tail = mem.tail;
+	head = mem.head.cur;
 #endif
 	actual = MIN(n, (int)(capacity + head - tail));
 	if (UNLIKELY(actual <= 0))
@@ -212,19 +215,18 @@ acquire_slots_mtsafe(struct endpoint *rb,
 	}
 #ifdef __ARM_FEATURE_ATOMICS
 	cmp = swp = mem;
-	swp.ep.tail += actual;
-	mem.i = cas16((__int128 *)rb, cmp.i, swp.i, __ATOMIC_ACQUIRE);//Load-acquire head
+	swp.tail += actual;
+	mem.atom = atomic_cas_n(&ep->atom, cmp.atom, swp.atom, __ATOMIC_ACQUIRE);//Load-acquire head
 #endif
     }
 #ifdef __ARM_FEATURE_ATOMICS
-    while (UNLIKELY(mem.i != cmp.i));
+    while (UNLIKELY(mem.atom != cmp.atom));
 #else
-    while (!__atomic_compare_exchange_n(&rb->tail,
-					&tail,//Updated on failure
-					tail + actual,
-					/*weak=*/true,
-					__ATOMIC_RELAXED,
-					__ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(&ep->tail,
+				      &tail,//Updated on failure
+				      tail + actual,
+				      __ATOMIC_RELAXED,
+				      __ATOMIC_RELAXED));
 #endif
     return (p64_ringbuf_result_t){ .index = tail,
 				   .actual = actual,
@@ -255,11 +257,11 @@ release_slots(struct idxpair *loc,
 	if (loads_only)
 	{
 	    smp_fence(LoadStore);//Order loads only
-	    __atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELAXED);
+	    atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELAXED);
 	}
 	else
 	{
-	    __atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELEASE);
+	    atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELEASE);
 	}
 	return;
     }
@@ -271,10 +273,9 @@ release_slots(struct idxpair *loc,
 	//Pending mask is clear before and after update
 	old = TOLOWER(idx);
 	neu = TOLOWER(idx + n);
-	if (UNLIKELY(__atomic_compare_exchange_n((uint64_t *)loc,
+	if (UNLIKELY(atomic_compare_exchange_n((uint64_t *)loc,
 						 &old,
 						 neu,
-						 0,
 						 __ATOMIC_RELEASE,
 						 __ATOMIC_RELAXED)))
 	{
@@ -308,10 +309,9 @@ release_slots(struct idxpair *loc,
 	neu = TOLOWER(old + inorder) | TOUPPER(newpend >> inorder);
 	assert((UPPER(neu) & 1) == 0);//Lsb can't be pending since it is in-order
     }
-    while (!__atomic_compare_exchange_n((uint64_t *)loc,
+    while (!atomic_compare_exchange_n((uint64_t *)loc,
 					&old,//Updated on failure
 					neu,
-					/*weak=*/0,
 					__ATOMIC_RELEASE,
 					__ATOMIC_RELAXED));
 }
@@ -350,10 +350,10 @@ p64_ringbuf_acquire_(p64_ringbuf_t *rb,
 	    //Use prod.head instead of cons.head (which is not used at all)
 	    int actual;
 	    //Speculative acquisition of slots
-	    ringidx_t head = __atomic_load_n(&rb->prod.head.cur,
+	    ringidx_t head = atomic_load_n(&rb->prod.head.cur,
 					     __ATOMIC_RELAXED);
 	    //Consumer metadata is swapped: cons.tail<->cons.head
-	    ringidx_t tail = __atomic_load_n(&rb->cons.head/*tail*/.cur,
+	    ringidx_t tail = atomic_load_n(&rb->cons.head/*tail*/.cur,
 					     __ATOMIC_ACQUIRE);
 	    actual = MIN((int)num, (int)(tail - head));
 	    if (UNLIKELY(actual <= 0))
@@ -407,10 +407,9 @@ p64_ringbuf_release_(p64_ringbuf_t *rb,
     {
 	if (cons_flags & FLAG_LOCKFREE)
 	{
-	    bool success = __atomic_compare_exchange_n(&rb->prod.head.cur,
+	    bool success = atomic_compare_exchange_n(&rb->prod.head.cur,
 						       &r.index,
 						       r.index + r.actual,
-						       /*weak=*/true,
 						       __ATOMIC_RELEASE,
 						       __ATOMIC_RELAXED);
 	    return success;
@@ -542,14 +541,14 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 	int actual;
 	//Step 1: speculative acquisition of slots
 	//Consumer metadata is swapped: cons.tail<->cons.head
-	ringidx_t tail = __atomic_load_n(&rb->cons.head/*tail*/.cur,
+	ringidx_t tail = atomic_load_n(&rb->cons.head/*tail*/.cur,
 					 __ATOMIC_ACQUIRE);
 	ringidx_t mask = rb->cons_mask;
 #ifdef __ARM_FEATURE_ATOMICS
-	ringidx_t head = icas4(&rb->prod.head.cur, __ATOMIC_RELAXED);
+	ringidx_t head = atomic_icas_n(&rb->prod.head.cur, __ATOMIC_RELAXED);
 #else
 	PREFETCH_FOR_WRITE(&rb->prod.head);
-	ringidx_t head = __atomic_load_n(&rb->prod.head.cur, __ATOMIC_RELAXED);
+	ringidx_t head = atomic_load_n(&rb->prod.head.cur, __ATOMIC_RELAXED);
 #endif
 	do
 	{
@@ -567,10 +566,9 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
 
 	    //Step 3: commit acquisition, release slots to producer
 	}
-	while (!__atomic_compare_exchange_n(&rb->prod.head.cur,
+	while (!atomic_compare_exchange_n(&rb->prod.head.cur,
 					    &head,//Updated on failure
 					    head + actual,
-					    /*weak=*/true,
 					    __ATOMIC_RELEASE,
 					    __ATOMIC_RELAXED));
 	*index = head;

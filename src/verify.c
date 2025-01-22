@@ -15,6 +15,7 @@
 
 #include "p64_coroutine.h"
 #include "verify.h"
+#include "build_config.h"
 
 #define NUMCOROS 2
 #define NUMSTEPS 64
@@ -45,10 +46,33 @@ ver_nop_fini(uint32_t numthreads)
     (void)numthreads;
 }
 
+#include "atomic.h"
+
 static void
 ver_nop_exec(uint32_t id)
 {
-    (void)id;
+#if 1
+    static _Alignas(CACHE_LINE) uint32_t head;
+    static _Alignas(CACHE_LINE) uint32_t tail;
+    if (id == 0)
+    {
+	//Produce (enqueue) at tail
+	uint32_t t = atomic_load_n(&tail, __ATOMIC_RELAXED);
+	uint32_t h = atomic_load_n(&head, __ATOMIC_ACQUIRE);//A0: Synchronize with A1
+	(void)h;
+	//Write ring[t & mask]
+	atomic_store_n(&tail, t + 1, __ATOMIC_RELEASE);//B0: Synchronize with B1
+    }
+    else //id == 1
+    {
+	//Consume (dequeue) from head
+	uint32_t h = atomic_load_n(&head, __ATOMIC_RELAXED);
+	uint32_t t = atomic_load_n(&tail, __ATOMIC_ACQUIRE);//B1: Synchronize with B0
+	(void)t;
+	//Read ring[h & mask]
+	atomic_store_n(&head, h + 1, __ATOMIC_RELEASE);//A1: Synchronize with A0
+    }
+#endif
 #if 0
     for (;;)
     {
@@ -72,6 +96,8 @@ extern struct ver_funcs ver_hemlock;
 extern struct ver_funcs ver_barrier;
 extern struct ver_funcs ver_buckring1, ver_buckring2;
 extern struct ver_funcs ver_cuckooht1, ver_cuckooht2;
+extern struct ver_funcs ver_ringbuf1, ver_ringbuf2, ver_ringbuf3;
+extern struct ver_funcs ver_hopscotch1;
 
 //List of supported datatypes
 static struct ver_funcs *ver_table[] =
@@ -86,6 +112,8 @@ static struct ver_funcs *ver_table[] =
     &ver_barrier,
     &ver_buckring1, &ver_buckring2,
     &ver_cuckooht1, &ver_cuckooht2,
+    &ver_ringbuf1, &ver_ringbuf2, &ver_ringbuf3,
+    &ver_hopscotch1,
     NULL
 };
 
@@ -117,6 +145,20 @@ coroutine(va_list *args)
     return 0;
 }
 
+static const char *
+memo_str(int mo)
+{
+    switch (mo)
+    {
+	case __ATOMIC_RELAXED : return "rlx";
+	case __ATOMIC_ACQUIRE : return "acq";
+	case __ATOMIC_RELEASE : return "rls";
+	case __ATOMIC_ACQ_REL : return "acq_rls";
+	case __ATOMIC_SEQ_CST : return "seq_cst";
+	default : return "?";
+    }
+}
+
 static void
 print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr_t mask)
 {
@@ -126,7 +168,14 @@ print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr
 	printf("file %s line %"PRIuPTR" ", fl->file, fl->line);
 	if (fl->fmt & V_OP)
 	{
-	    printf("%s(", fl->oper);
+	    uint32_t datasize = fl->fmt & 0xff;
+	    assert(datasize <= 16);
+	    printf("%s", fl->oper);
+	    if (datasize != 0)
+	    {
+		printf("_%u", datasize);
+	    }
+	    printf("(");
 	    if (fl->fmt & V_STR)
 	    {
 		printf("\"%s\"", (const char *)fl->addr);
@@ -134,19 +183,47 @@ print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr
 	    else if (fl->fmt & V_AD)
 	    {
 		printf("%p", (void *)((uintptr_t)fl->addr & mask));
-		if (fl->fmt & V_A1)
+		if (datasize <= 8)
 		{
-		    printf(",%#"PRIxPTR, (fl->arg1 & mask));
-		    if (fl->fmt & V_A2)
+		    if (fl->fmt & V_A1)
 		    {
-			printf(",%#"PRIxPTR, (fl->arg2 & mask));
+			printf(",%#"PRIxPTR, (intptr_t)(fl->arg1 & mask));
+			if (fl->fmt & V_A2)
+			{
+			    printf(",%#"PRIxPTR, (intptr_t)(fl->arg2 & mask));
+			}
 		    }
 		}
+		else //datasize > 8
+		{
+		    if (fl->fmt & V_A1)
+		    {
+			printf(",%#"PRIxPTR"'%016"PRIxPTR,
+				(uintptr_t)(fl->arg1 >> 64),
+				(uintptr_t)fl->arg1);
+			if (fl->fmt & V_A2)
+			{
+			    printf(",%#"PRIxPTR"'%016"PRIxPTR,
+				    (uintptr_t)(fl->arg2 >> 64),
+				    (uintptr_t)fl->arg2);
+			}
+		    }
+		}
+		printf(",%s", memo_str(fl->memo & 0xff));
 	    }
 	    printf(")");
 	    if (fl->fmt & V_RE)
 	    {
-		printf("=%#"PRIxPTR, (fl->res & mask));
+		if (datasize <= 8)
+		{
+		    printf("=%#"PRIxPTR, (intptr_t)(fl->res & mask));
+		}
+		else //datasize > 8
+		{
+		    printf("=%#"PRIxPTR"'%016"PRIxPTR,
+			    (uintptr_t)(fl->res >> 64),
+			    (uintptr_t)fl->res);
+		}
 	    }
 	}
 	printf("\n");
@@ -266,7 +343,7 @@ verify(const struct ver_funcs *vf, uint64_t permutation, intptr_t mask)
 		p |= !id;//Set lsb to other id
 	    }
 	    //Else check for error or assertion failed, this aborts current verification
-	    else if ((fl->fmt & V_ABORT) != 0)
+	    else if (fl->fmt & V_ABORT)
 	    {
 		printf("Verification of permutation %#lx failed at step %u\n", permutation, step);
 		status = failed;

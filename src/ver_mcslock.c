@@ -40,7 +40,7 @@ ver_mcslock_exec(uint32_t id)
     p64_mcslock_acquire(&mcs_lock, &node);
     VERIFY_ASSERT(mcs_taken == false);
     mcs_taken = true;
-    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0);
+    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0, 0);
     mcs_taken = false;
     p64_mcslock_release(&mcs_lock, &node);
 }

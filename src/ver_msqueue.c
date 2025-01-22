@@ -9,8 +9,16 @@
 
 #define NUMTHREADS 2
 
+struct elem
+{
+    p64_msqueue_elem_t node;
+    uint32_t data;
+};
+
 static p64_ptr_tag_t msq_head;
 static p64_ptr_tag_t msq_tail;
+static struct elem dummy;
+static struct elem msq_elems[NUMTHREADS];
 
 static void
 ver_msqueue_init(uint32_t numthreads)
@@ -19,32 +27,34 @@ ver_msqueue_init(uint32_t numthreads)
     {
 	abort();
     }
-    p64_msqueue_elem_t *dummy = p64_malloc(sizeof(p64_msqueue_elem_t) + sizeof(uint32_t), 64);
-    VERIFY_ASSERT(dummy != NULL);
-    dummy->max_size = sizeof(uint32_t);
-    p64_msqueue_init(&msq_head, &msq_tail, P64_ABA_TAG, dummy);
+    dummy.node.next.ptr = NULL;
+    dummy.node.next.tag = ~0ul;//msqueue assertion
+    dummy.node.max_size = sizeof(uint32_t);
+    dummy.node.cur_size = 0;
+    p64_msqueue_init(&msq_head, &msq_tail, P64_ABA_TAG, &dummy.node);
 }
 
 static void
 ver_msqueue_fini(uint32_t numthreads)
 {
     (void)numthreads;
-    p64_msqueue_elem_t *dummy = p64_msqueue_fini(&msq_head, &msq_tail);
-    //VERIFY_ASSERT(dummy != NULL);
-    p64_mfree(dummy);
+    struct elem *dummy = (struct elem *)p64_msqueue_fini(&msq_head, &msq_tail);
+    VERIFY_ASSERT(dummy == &msq_elems[0] || dummy == &msq_elems[1]);
 }
 
 static void
 ver_msqueue_exec(uint32_t id)
 {
-    p64_msqueue_elem_t *elem = p64_malloc(sizeof(p64_msqueue_elem_t) + sizeof(uint32_t), 64);
-    VERIFY_ASSERT(elem != NULL);
-    elem->max_size = sizeof(uint32_t);
-    uint32_t data = id, sizeof_data = sizeof data;
-    p64_msqueue_enqueue(&msq_head, &msq_tail, elem, &data, sizeof_data);
-    elem = p64_msqueue_dequeue(&msq_head, &msq_tail, &data, &sizeof_data);
+    struct elem *elem = &msq_elems[id];
+    elem->node.next.ptr = NULL;
+    elem->node.next.tag = ~0ul;//msqueue assertion
+    elem->node.max_size = sizeof(uint32_t);
+    elem->node.cur_size = 0;
+    uint32_t data = 242 + id, sizeof_data = sizeof data;
+    p64_msqueue_enqueue(&msq_head, &msq_tail, &elem->node, &data, sizeof_data);
+    elem = (struct elem *)p64_msqueue_dequeue(&msq_head, &msq_tail, &data, &sizeof_data);
     VERIFY_ASSERT(elem != NULL && sizeof_data == sizeof data);
-    VERIFY_ASSERT(data == 0 || data == 1);
+    VERIFY_ASSERT(data == 242 || data == 243);
 }
 
 struct ver_funcs ver_msqueue =

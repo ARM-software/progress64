@@ -19,7 +19,7 @@
 #include "arch.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
-#include "lockfree.h"
+#include "atomic.h"
 
 typedef size_t bix_t;
 
@@ -75,21 +75,26 @@ ring_mod(p64_hopschash_t hash, bix_t modulo)
 #define BITMAP_MASK (uint32_t)((1UL << BITMAP_BITS) - 1U)
 #define SIG_MASK ((1U << SIG_BITS) - 1U)
 
-struct bmc
+union bmc
 {
-    //Neighbourhood map of elements which hash to this bucket
-    unsigned bitmap:BITMAP_BITS;
+    struct
+    {
+	//Neighbourhood map of elements which hash to this bucket
+	unsigned bitmap:BITMAP_BITS;
 #if SIG_BITS != 0
-    //Signature (truncated hash) of element stored in this bucket
-    unsigned sig:SIG_BITS;
+	//Signature (truncated hash) of element stored in this bucket
+	unsigned sig:SIG_BITS;
 #endif
-    //Change counter
-    unsigned count:COUNT_BITS;
-    //True if element(s) hashing to this bucket is stored in cellar
-    unsigned cellar:1;
+	//Change counter
+	unsigned count:COUNT_BITS;
+	//True if element(s) hashing to this bucket is stored in cellar
+	unsigned cellar:1;
+    };
+    uintptr_t atom;//Need a scalar alias for use with atomic operations
 };
-static_assert(sizeof(struct bmc) == sizeof(void *),
-	     "sizeof(struct bmc) == sizeof(void *)");
+
+static_assert(sizeof(union bmc) == sizeof(void *),
+	     "sizeof(union bmc) == sizeof(void *)");
 
 struct cell
 {
@@ -99,7 +104,7 @@ struct cell
 
 struct bucket
 {
-    struct bmc bmc;
+    union bmc bmc;
     void *elem;
 };
 
@@ -125,7 +130,7 @@ atomic_load_acquire(void **pptr,
     }
     else
     {
-	return __atomic_load_n(pptr, __ATOMIC_ACQUIRE);
+	return atomic_load_ptr(pptr, __ATOMIC_ACQUIRE);
     }
 }
 
@@ -406,19 +411,19 @@ lookup(p64_hopscotch_t *ht,
        bool use_hp,
        bool check_key)
 {
-    struct bmc cur;
-    __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
+    union bmc cur;
+    cur.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
     while (cur.bitmap != 0)
     {
 	//Bitmap indicates which buckets in neighbourhood that contain
 	//elements which hash to this bucket
 	uint32_t bit = __builtin_ctz(cur.bitmap);
 	bix_t idx = ring_add(bix, bit, ht->nbkts);
-	struct bmc elem_bmc;
+	union bmc elem_bmc;
 	void *elem = atomic_load_acquire(&ht->buckets[idx].elem,
 					 hazpp,
 					 use_hp);
-	__atomic_load(&ht->buckets[idx].bmc, &elem_bmc, __ATOMIC_RELAXED);
+	elem_bmc.atom = atomic_load_n(&ht->buckets[idx].bmc.atom, __ATOMIC_RELAXED);
 	if (LIKELY(elem != NULL))
 	{
 #if SIG_BITS != 0
@@ -450,10 +455,10 @@ lookup(p64_hopscotch_t *ht,
 	if (cur.bitmap == 0)
 	{
 	    //Need to check that bmc hasn't changed during our check
-	    struct bmc fresh;
+	    union bmc fresh;
 	    //Prevent re-load of bmc from moving up
 	    __atomic_thread_fence(__ATOMIC_ACQUIRE);
-	    __atomic_load(&ht->buckets[bix].bmc, &fresh, __ATOMIC_RELAXED);
+	    fresh.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_RELAXED);
 	    if (fresh.count != cur.count)
 	    {
 		//Bmc has changed, restart with fresh bitmap
@@ -537,20 +542,19 @@ bitmap_set_mask(p64_hopscotch_t *ht,
     uint32_t bit = ring_sub(idx, bix, ht->nbkts);
     assert(bit < BITMAP_BITS);
     uint32_t mask = 1U << bit;
-    struct bmc old, new;
+    union bmc old, new;
     do
     {
-	__atomic_load(&ht->buckets[bix].bmc, &old, __ATOMIC_RELAXED);
+	old.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_RELAXED);
 	assert((old.bitmap & mask) == 0);
 	new = old;
 	new.bitmap |= mask;
 	//Always increase change counter
 	new.count++;
     }
-    while (!__atomic_compare_exchange(&ht->buckets[bix].bmc,
-				      &old,
-				      &new,
-				      /*weak=*/false,
+    while (!atomic_compare_exchange_n(&ht->buckets[bix].bmc.atom,
+				      &old.atom,
+				      new.atom,
 				      __ATOMIC_RELEASE,
 				      __ATOMIC_RELAXED));
 }
@@ -559,18 +563,18 @@ static void
 bitmap_update_cellar(p64_hopscotch_t *ht,
 		     bix_t bix)
 {
-    struct bmc old, new;
+    union bmc old, new;
     do
     {
-	__atomic_load(&ht->buckets[bix].bmc, &old, __ATOMIC_ACQUIRE);
+	old.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
 	new = old;
 	new.cellar = 0;
 	for (bix_t i = 0; i < ht->ncells; i++)
 	{
 	    p64_hopschash_t hash =
-		__atomic_load_n(&ht->cellar[i].hash, __ATOMIC_RELAXED);
+		atomic_load_n(&ht->cellar[i].hash, __ATOMIC_RELAXED);
 	    void *elem =
-		__atomic_load_n(&ht->cellar[i].elem, __ATOMIC_RELAXED);
+		atomic_load_ptr(&ht->cellar[i].elem, __ATOMIC_RELAXED);
 	    if (elem != NULL && ring_mod(hash, ht->nbkts) == bix)
 	    {
 		//Found another element which hashes to same bix
@@ -587,10 +591,9 @@ bitmap_update_cellar(p64_hopscotch_t *ht,
 	new.count++;
 	//Attempt to update bmc, fail and retry if count has changed
     }
-    while (!__atomic_compare_exchange(&ht->buckets[bix].bmc,
-				      &old,
-				      &new,
-				      /*weak=*/false,
+    while (!atomic_compare_exchange_n(&ht->buckets[bix].bmc.atom,
+				      &old.atom,
+				      new.atom,
 				      __ATOMIC_RELEASE,
 				      __ATOMIC_RELAXED));
 }
@@ -603,7 +606,7 @@ find_empty_bkt(p64_hopscotch_t *ht,
     bix_t idx = bix;
     do
     {
-	void *elem = __atomic_load_n(&ht->buckets[idx].elem, __ATOMIC_RELAXED);
+	void *elem = atomic_load_ptr(&ht->buckets[idx].elem, __ATOMIC_RELAXED);
 	if (elem == NULL)
 	{
 	    *empty = idx;
@@ -620,7 +623,7 @@ static bool
 find_move_candidate(p64_hopscotch_t *ht,
 		    bix_t empty,
 		    bix_t *home_bix,
-		    struct bmc *home_bmc,
+		    union bmc *home_bmc,
 		    bix_t *src_idx)
 {
     for (uint32_t i = BITMAP_BITS - 1; i != 0; i--)
@@ -628,8 +631,8 @@ find_move_candidate(p64_hopscotch_t *ht,
 	bix_t bix = ring_sub(empty, i, ht->nbkts);
 	//Assert empty is in the neighbourhood of bix
 	assert(ring_sub(empty, bix, ht->nbkts) < BITMAP_BITS);
-	struct bmc bmc;
-	__atomic_load(&ht->buckets[bix].bmc, &bmc, __ATOMIC_ACQUIRE);
+	union bmc bmc;
+	bmc.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
 	if (bmc.bitmap != 0)
 	{
 	    //Check first element that hash to bix bucket
@@ -670,8 +673,8 @@ write_elem(struct bucket *bkt,
     {
 #if 1
 //Using atomic loads sometimes leads to 35-50ns more overhead
-	__atomic_load(&bkt->bmc, &old.bk.bmc, __ATOMIC_RELAXED);
-	__atomic_load(&bkt->elem, &old.bk.elem, __ATOMIC_RELAXED);
+	old.bk.bmc.atom = atomic_load_n(&bkt->bmc.atom, __ATOMIC_RELAXED);
+	old.bk.elem = atomic_load_ptr(&bkt->elem, __ATOMIC_RELAXED);
 #else//Let's use plain loads
 	old.bk = *bkt;
 #endif
@@ -709,7 +712,7 @@ move_elem(p64_hopscotch_t *ht,
     {
 	//Find source bucket which has empty bucket in its neighbourhood
 	bix_t home_bix, src_idx;
-	struct bmc home_bmc;
+	union bmc home_bmc;
 	if (!find_move_candidate(ht, dst_idx, &home_bix, &home_bmc, &src_idx))
 	{
 	    //Found no candidate which can be moved to empty bucket
@@ -718,8 +721,8 @@ move_elem(p64_hopscotch_t *ht,
 	//Copy element from source to empty bucket
 	struct bucket src;
 #if 0
-	__atomic_load(&ht->buckets[src_idx].bmc, &src.bmc, __ATOMIC_RELAXED);
-	__atomic_load(&ht->buckets[src_idx].elem, &src.elem, __ATOMIC_RELAXED);
+	src.bmc.atom = atomic_load_n(&ht->buckets[src_idx].bmc.atom, __ATOMIC_RELAXED);
+	src.elem = atomic_load_ptr(&ht->buckets[src_idx].elem, __ATOMIC_RELAXED);
 #else
 	src = ht->buckets[src_idx];
 #endif
@@ -738,7 +741,7 @@ move_elem(p64_hopscotch_t *ht,
 	    return dst_no_empty;
 	}
 	//Update home_bix bitmap to reflect move
-	struct bmc new_bmc;
+	union bmc new_bmc;
 	new_bmc = home_bmc;
 	uint32_t src_bit = ring_sub(src_idx, home_bix, ht->nbkts);
 	assert(src_bit < BITMAP_BITS);
@@ -751,23 +754,22 @@ move_elem(p64_hopscotch_t *ht,
 	new_bmc.bitmap |= 1U << dst_bit;
 	//Always increase change counter
 	new_bmc.count++;
-	if (__atomic_compare_exchange(&ht->buckets[home_bix].bmc,
-				      &home_bmc,
-				      &new_bmc,
-				      /*weak=*/false,
+	if (atomic_compare_exchange_n(&ht->buckets[home_bix].bmc.atom,
+				      &home_bmc.atom,
+				      new_bmc.atom,
 				      __ATOMIC_RELEASE,
 				      __ATOMIC_RELAXED))
 	{
 	    //Moved element from source to empty
 	    //Clear source bucket
-	    __atomic_store_n(&ht->buckets[src_idx].elem,
+	    atomic_store_ptr(&ht->buckets[src_idx].elem,
 			     NULL, __ATOMIC_RELAXED);
 	    *empty = src_idx;
 	    return move_ok;
 	}
 	//Else home_bix bitmap changed, our element could have been moved
 	//Undo move
-	__atomic_store_n(&ht->buckets[dst_idx].elem, NULL, __ATOMIC_RELAXED);
+	atomic_store_ptr(&ht->buckets[dst_idx].elem, NULL, __ATOMIC_RELAXED);
 	//Restart from beginning
     }
 }
@@ -829,33 +831,31 @@ insert_cell(p64_hopscotch_t *ht,
     bix_t idx = start;
     do
     {
-	if (__atomic_load_n(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == NULL)
+	if (atomic_load_ptr(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == NULL)
 	{
 	    void *old = NULL;
-	    if (__atomic_compare_exchange_n(&ht->cellar[idx].elem,
+	    if (atomic_compare_exchange_ptr(&ht->cellar[idx].elem,
 					    &old,
 					    elem,
-					    /*weak=*/false,
 					    __ATOMIC_RELEASE,
 					    __ATOMIC_RELAXED))
 	    {
-		__atomic_store_n(&ht->cellar[idx].hash, hash, __ATOMIC_RELAXED);
+		atomic_store_n(&ht->cellar[idx].hash, hash, __ATOMIC_RELAXED);
 		//Set cellar bit in bix bucket to indicate present of element
 		//in cellar
 		bix_t bix = ring_mod(hash, ht->nbkts);
-		struct bmc old, new;
+		union bmc old, new;
 		do
 		{
-		    __atomic_load(&ht->buckets[bix].bmc,
-				  &old, __ATOMIC_RELAXED);
+		    old.atom = atomic_load_n(&ht->buckets[bix].bmc.atom,
+					   __ATOMIC_RELAXED);
 		    new = old;
 		    new.cellar = 1;
 		    new.count++;
 		}
-		while (!__atomic_compare_exchange(&ht->buckets[bix].bmc,
-						  &old,
-						  &new,
-						  /*weak=*/false,
+		while (!atomic_compare_exchange_n(&ht->buckets[bix].bmc.atom,
+						  &old.atom,
+						  new.atom,
 						  __ATOMIC_RELEASE,
 						  __ATOMIC_RELAXED));
 		return true;
@@ -895,40 +895,39 @@ remove_bkt_by_ptr(p64_hopscotch_t *ht,
 {
     bix_t bix = ring_mod(hash, ht->nbkts);
     uint32_t prev_count;
-    struct bmc cur;
-    __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
+    union bmc cur;
+    cur.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
     do
     {
 	if (cur.bitmap == 0)
 	{
 	    break;
 	}
-	struct bmc old = cur;
+	union bmc old = cur;
 	while (cur.bitmap != 0)
 	{
 	    //Bitmap indicates which buckets in neighbourhood that contain
 	    //elements which hash this bucket
 	    uint32_t bit = __builtin_ctz(cur.bitmap);
 	    bix_t idx = (bix + bit) % ht->nbkts;
-	    if (__atomic_load_n(&ht->buckets[idx].elem, __ATOMIC_RELAXED) ==
+	    if (atomic_load_ptr(&ht->buckets[idx].elem, __ATOMIC_RELAXED) ==
 				rem_elem)
 	    {
 		//Found our element
-		struct bmc new = old;
+		union bmc new = old;
 		//Clear bit in bix bitmap
 		new.bitmap &= ~(1U << bit);
 		//Always increase change counter
 		new.count++;
 		//TODO loop because bmc.sig might have changed
-		if (__atomic_compare_exchange(&ht->buckets[bix].bmc,
-					      &old,//Updated on failure
-					      &new,
-					      /*weak=*/false,
+		if (atomic_compare_exchange_n(&ht->buckets[bix].bmc.atom,
+					      &old.atom,//Updated on failure
+					      new.atom,
 					      __ATOMIC_RELEASE,
 					      __ATOMIC_RELAXED))
 		{
 		    //Successfully updated bitmap, now clear bucket
-		    __atomic_store_n(&ht->buckets[idx].elem,
+		    atomic_store_ptr(&ht->buckets[idx].elem,
 				     NULL,
 				     __ATOMIC_RELAXED);
 		    return true;
@@ -942,7 +941,7 @@ remove_bkt_by_ptr(p64_hopscotch_t *ht,
 	prev_count = cur.count;
 	//Prevent re-load of bmc from moving up
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
-	__atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
+	cur.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
     }
     while (cur.count != prev_count);
     return false;
@@ -961,13 +960,12 @@ remove_cell_by_ptr(p64_hopscotch_t *ht,
     bix_t idx = start;
     do
     {
-	if (__atomic_load_n(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == elem)
+	if (atomic_load_ptr(&ht->cellar[idx].elem, __ATOMIC_RELAXED) == elem)
 	{
 	    void *old = elem;
-	    if (__atomic_compare_exchange_n(&ht->cellar[idx].elem,
+	    if (atomic_compare_exchange_ptr(&ht->cellar[idx].elem,
 					    &old,
 					    NULL,
-					    /*weak=*/false,
 					    __ATOMIC_RELAXED,
 					    __ATOMIC_RELAXED))
 	    {
@@ -1012,23 +1010,23 @@ remove_bkt_by_key(p64_hopscotch_t *ht,
 {
     uint32_t prev_count;
     bix_t bix = ring_mod(hash, ht->nbkts);
-    struct bmc cur;
-    __atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
+    union bmc cur;
+    cur.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
     do
     {
 	if (cur.bitmap == 0)
 	{
 	    break;
 	}
-	struct bmc old = cur;
+	union bmc old = cur;
 	while (cur.bitmap != 0)
 	{
 	    //Bitmap indicates which buckets in neighbourhood that contain
 	    //elements which hash this bucket
 	    uint32_t bit = __builtin_ctz(cur.bitmap);
 	    bix_t idx = (bix + bit) % ht->nbkts;
-	    struct bmc elem_bmc;
-	    __atomic_load(&ht->buckets[idx].bmc, &elem_bmc, __ATOMIC_RELAXED);
+	    union bmc elem_bmc;
+	    elem_bmc.atom = atomic_load_n(&ht->buckets[idx].bmc.atom, __ATOMIC_RELAXED);
 	    void *elem = atomic_load_acquire(&ht->buckets[idx].elem,
 					     hazpp,
 					     ht->use_hp);
@@ -1042,20 +1040,19 @@ remove_bkt_by_key(p64_hopscotch_t *ht,
 		    if (LIKELY(ht->cf(elem, key) == 0))
 		    {
 			//Found our element
-			struct bmc new = old;
+			union bmc new = old;
 			//Clear bit in bix bitmap
 			new.bitmap &= ~(1U << bit);
 			//Always increase change counter
 			new.count++;
-			if (__atomic_compare_exchange(&ht->buckets[bix].bmc,
-						      &old,
-						      &new,
-						      /*weak=*/false,
+			if (atomic_compare_exchange_n(&ht->buckets[bix].bmc.atom,
+						      &old.atom,
+						      new.atom,
 						      __ATOMIC_RELAXED,
 						      __ATOMIC_RELAXED))
 			{
 			    //Successfully updated bitmap, now clear bucket
-			    __atomic_store_n(&ht->buckets[idx].elem,
+			    atomic_store_ptr(&ht->buckets[idx].elem,
 					     NULL,
 					     __ATOMIC_RELAXED);
 			    return elem;
@@ -1072,7 +1069,7 @@ remove_bkt_by_key(p64_hopscotch_t *ht,
 	prev_count = cur.count;
 	//Prevent re-load of bmc from moving up
 	__atomic_thread_fence(__ATOMIC_ACQUIRE);
-	__atomic_load(&ht->buckets[bix].bmc, &cur, __ATOMIC_ACQUIRE);
+	cur.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
     }
     while (cur.count != prev_count);
     p64_hazptr_release(hazpp);
@@ -1094,17 +1091,16 @@ remove_cell_by_key(p64_hopscotch_t *ht,
     bix_t idx = start;
     do
     {
-	if (__atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_ACQUIRE) == hash)
+	if (atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_ACQUIRE) == hash)
 	{
 	    void *elem = atomic_load_acquire(&ht->cellar[idx].elem,
 					     hazpp,
 					     ht->use_hp);
 	    if (ht->cf(key, elem) == 0)
 	    {
-		if (__atomic_compare_exchange_n(&ht->cellar[idx].elem,
+		if (atomic_compare_exchange_ptr(&ht->cellar[idx].elem,
 						&elem,
 						NULL,
-						/*weak=*/false,
 						__ATOMIC_RELAXED,
 						__ATOMIC_RELAXED))
 		{
@@ -1124,7 +1120,6 @@ remove_cell_by_key(p64_hopscotch_t *ht,
     atomic_ptr_release(hazpp, ht->use_hp);
     return NULL;
 }
-
 
 void *
 p64_hopscotch_remove_by_key(p64_hopscotch_t *ht,
