@@ -39,6 +39,7 @@ ver_msqueue_fini(uint32_t numthreads)
 {
     (void)numthreads;
     struct elem *dummy = (struct elem *)p64_msqueue_fini(&msq_head, &msq_tail);
+    (void)dummy;
     VERIFY_ASSERT(dummy == &msq_elems[0] || dummy == &msq_elems[1]);
 }
 
