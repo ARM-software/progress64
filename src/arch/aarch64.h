@@ -161,7 +161,9 @@ counter_read(void)
 static inline void
 wfe(void)
 {
+#ifndef VERIFY
     __asm__ volatile("wfe" : : : "memory");
+#endif
 }
 
 static inline void
