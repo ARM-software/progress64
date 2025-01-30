@@ -96,7 +96,7 @@ extern struct ver_funcs ver_hemlock;
 extern struct ver_funcs ver_barrier;
 extern struct ver_funcs ver_buckring1, ver_buckring2;
 extern struct ver_funcs ver_cuckooht1, ver_cuckooht2;
-extern struct ver_funcs ver_ringbuf1, ver_ringbuf2, ver_ringbuf3;
+extern struct ver_funcs ver_ringbuf_mpmc, ver_ringbuf_nbenbd, ver_ringbuf_nbelfd, ver_ringbuf_spsc;
 extern struct ver_funcs ver_hopscotch1;
 
 //List of supported datatypes
@@ -112,7 +112,7 @@ static struct ver_funcs *ver_table[] =
     &ver_barrier,
     &ver_buckring1, &ver_buckring2,
     &ver_cuckooht1, &ver_cuckooht2,
-    &ver_ringbuf1, &ver_ringbuf2, &ver_ringbuf3,
+    &ver_ringbuf_mpmc, &ver_ringbuf_nbenbd, &ver_ringbuf_nbelfd, &ver_ringbuf_spsc,
     &ver_hopscotch1,
     NULL
 };
