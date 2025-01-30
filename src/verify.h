@@ -33,7 +33,7 @@ struct ver_file_line
 #define V_A1 0x0800 //arg1 present
 #define V_A2 0x1000 //arg2 present
 #define V_STR 0x2000 //Print addr as a string
-#define V_FORCE 0x4000 //Force yield to other thread
+#define V_YIELD 0x4000 //Yield to other thread
 #define V_ABORT 0x8000 //Abort execution
 
 #ifdef VERIFY
@@ -41,7 +41,7 @@ struct ver_file_line
 #include "p64_coroutine.h"
 
 #define VERIFY_SUSPEND(fm, op, ad, re, a1, a2, mo) p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = (fm), .oper = (op), .addr = (ad), .res = (__int128)(re), .arg1 = (__int128)(a1), .arg2 = (__int128)(a2), .memo = (mo) })
-#define VERIFY_YIELD() p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = V_FORCE | V_OP, .oper = "force" })
+#define VERIFY_YIELD() p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = V_YIELD | V_OP, .oper = "yield" })
 #define VERIFY_ERROR(msg) p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = V_OP | V_STR | V_ABORT, .oper = "error", .addr = (msg) })
 
 #define VER_HASHSTR(s) #s

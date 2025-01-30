@@ -7,6 +7,7 @@
 #endif
 #include <assert.h>
 #include <inttypes.h>
+#include <signal.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -27,12 +28,14 @@
 
 uint32_t verify_id;//For use by datatype implementations
 
+static volatile bool user_interrupt = false;
 static bool VERBOSE = false;
+static bool WARNERR = false;
 static p64_coroutine_t CORO[NUMCOROS];
 static _Alignas(64) char STACKS[NUMCOROS][STKSIZE];
 #define INTERRUPTED NUMSTEPS
 #define FAILED (NUMSTEPS + 1)
-static uint32_t HISTO[NUMSTEPS + 2];
+static uint64_t HISTO[NUMSTEPS + 2];
 
 static void
 ver_nop_init(uint32_t numthreads)
@@ -332,12 +335,12 @@ verify(const struct ver_funcs *vf, uint64_t permutation, intptr_t mask)
 	    {
 		print_result(fl, id, step, mask);
 	    }
-	    //Check for 'force' yield to other thread
-	    if (fl->fmt & V_FORCE)
+	    //Check for yield to other thread
+	    if (fl->fmt & V_YIELD)
 	    {
 		if (VERBOSE)
 		{
-		    printf("Forcing other thread to run\n");
+		    printf("Yielding to other thread\n");
 		}
 		p &= ~(uint64_t)1;//Clear lsb
 		p |= !id;//Set lsb to other id
@@ -345,7 +348,7 @@ verify(const struct ver_funcs *vf, uint64_t permutation, intptr_t mask)
 	    //Else check for error or assertion failed, this aborts current verification
 	    else if (fl->fmt & V_ABORT)
 	    {
-		printf("Verification of permutation %#lx failed at step %u\n", permutation, step);
+		printf("Permutation %#lx step %u: Verification failed\n", permutation, step);
 		status = failed;
 		step++;//Ensure the error/assert info is saved in trace
 		break;
@@ -397,17 +400,32 @@ failure:
     }
 }
 
+static void int_handler(int dummy)
+{
+    (void)dummy;
+    if (user_interrupt)
+    {
+	//User already tried to interrupt execution
+	static const char msg[] = "Forced interrupt\n";
+	int r = write(1, msg, strlen(msg));
+	(void)r;
+	exit(EXIT_FAILURE);
+    }
+    user_interrupt = true;
+}
+
 int main(int argc, char *argv[])
 {
 #ifndef VERIFY
     fprintf(stderr, "Verification not enabled!\n"); fflush(stderr);
     exit(EXIT_FAILURE);
 #endif
+    (void)signal(SIGINT, int_handler);
     int64_t permutation = -1;//Steal one permutation
     uint64_t upper = (uint64_t)1 << 32;//Default upper bound to verify
     uintptr_t mask = ~(uintptr_t)0;
     int c;
-    while ((c = getopt(argc, argv, "mp:u:v")) != -1)
+    while ((c = getopt(argc, argv, "mp:u:vw")) != -1)
     {
 	switch (c)
 	{
@@ -445,6 +463,9 @@ int main(int argc, char *argv[])
 	    case 'v' :
 		VERBOSE = true;
 		break;
+	    case 'w' :
+		WARNERR = true;
+		break;
 	    default :
 usage:
 		fprintf(stderr, "Usage: verify [<options>] <datatype>\n"
@@ -452,6 +473,7 @@ usage:
 			"-p <permutation> Specify permutation\n"
 			"-u <limit>       Specify upper limit of permutations to sweep\n"
 			"-v               Verbose\n"
+			"-w               Warnings become failures\n"
 		       );
 list_datatypes:
 		fprintf(stderr, "Known datatypes:\n");
@@ -497,13 +519,22 @@ list_datatypes:
 		printf("Verifying permutation %#lx...\n", perm);
 	    }
 	    verify(*vf, perm, mask);
+	    if (user_interrupt)
+	    {
+		printf("Interrupted\n");
+		break;
+	    }
 	}
+	uint64_t succeeded = 0;
 	for (uint32_t i = 0; i < NUMSTEPS; i++)
 	{
-	    printf("%u: %u\n", i, HISTO[i]);
+	    succeeded += HISTO[i];
+	    printf("%u: %lu\n", i, HISTO[i]);
 	}
-	printf("interrupted: %u\n", HISTO[INTERRUPTED]);
-	printf("failed: %u\n", HISTO[FAILED]);
+	succeeded += HISTO[INTERRUPTED] + HISTO[FAILED];
+	printf("succeeded: %lu\n", succeeded);
+	printf("interrupted: %lu\n", HISTO[INTERRUPTED]);
+	printf("failed: %lu\n", HISTO[FAILED]);
     }
 
     return EXIT_SUCCESS;
