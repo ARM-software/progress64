@@ -26,6 +26,7 @@ laxrob
 lfring
 lfstack
 libprogress64.a
+linklist
 bm_mcas
 bm_lock
 bm_mbtrie

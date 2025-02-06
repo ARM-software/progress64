@@ -23,6 +23,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | laxrob | 'lax' reorder buffer | non-blocking (1)
 | lfring | ring buffer | lock-free
 | lfstack | lock-free stack (using tagged pointers) with backoff and progress-in-update flag | lock-free
+| linklist | Harris single linked list | lock-free
 | mbtrie | multi-bit trie | reader lock-free/wait-free, writer non-blocking (1)
 | qsbr | safe object reclamation using quiescent state based reclamation | reader wait-free, writer blocking
 | reassemble | IP reassembly | lock-free (2), resizeable
