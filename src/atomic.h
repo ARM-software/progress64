@@ -25,7 +25,7 @@
 #define atomic_store_n(loc, val, mo) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(*(loc)) _val = (val); \
+    __typeof(val) _val = (val); \
     __typeof(mo) _mo = (mo); \
     __atomic_store_n(_loc, _val, _mo); \
     VERIFY_SUSPEND(sizeof(*(loc)) | V_OP | V_AD | V_A1, "store", _loc, 0, (intptr_t)_val, 0, _mo); \
@@ -36,7 +36,7 @@
 #define atomic_fetch_add(loc, val, mo) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(*(loc)) _val = (val); \
+    __typeof(val) _val = (val); \
     __typeof(mo) _mo = (mo); \
     __typeof(*(loc)) _res = __atomic_fetch_add(_loc, _val, _mo); \
     VERIFY_SUSPEND(sizeof(*(loc)) | V_OP | V_AD | V_RE | V_A1, "fetch_add", _loc, _res, _val, 0, _mo); \
@@ -46,7 +46,7 @@
 #define atomic_fetch_sub(loc, val, mo) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(*(loc)) _val = (val); \
+    __typeof(val) _val = (val); \
     __typeof(mo) _mo = (mo); \
     __typeof(*(loc)) _res = __atomic_fetch_sub(_loc, _val, _mo); \
     VERIFY_SUSPEND(sizeof(*(loc)) | V_OP | V_AD | V_RE | V_A1, "fetch_sub", _loc, _res, _val, 0, _mo); \
@@ -56,7 +56,7 @@
 #define atomic_fetch_and(loc, val, mo) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(*(loc)) _val = (val); \
+    __typeof(val) _val = (val); \
     __typeof(mo) _mo = (mo); \
     __typeof(*(loc)) _res = __atomic_fetch_and(_loc, _val, _mo); \
     VERIFY_SUSPEND(sizeof(*(loc)) | V_OP | V_AD | V_RE | V_A1, "fetch_and", _loc, _res, _val, 0, _mo); \
@@ -66,17 +66,17 @@
 #define atomic_fetch_or(loc, val, mo) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(*(loc)) _val = (val); \
+    __typeof(val) _val = (val); \
     __typeof(mo) _mo = (mo); \
     __typeof(*(loc)) _res = __atomic_fetch_or(_loc, _val, _mo); \
-    VERIFY_SUSPEND(sizeof(*(loc)) | V_OP | V_AD | V_RE | V_A1, "fetch_or", _loc, _res, _val, 0, _mo); \
+    VERIFY_SUSPEND(sizeof(*(loc)) | V_OP | V_AD | V_RE | V_A1, "fetch_or", _loc, (uintptr_t)_res, _val, 0, _mo); \
     _res; \
 })
 
 #define atomic_exchange_n(loc, swp, mo) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(*(loc)) _swp = (swp); \
+    __typeof(swp) _swp = (swp); \
     __typeof(mo) _mo = (mo); \
     __typeof(*(loc)) _res =  __atomic_exchange_n(_loc, _swp, _mo); \
     VERIFY_SUSPEND(sizeof(*(loc)) | V_OP | V_AD | V_RE | V_A1, "exchange", _loc, (intptr_t)_res, (intptr_t)_swp, 0, _mo); \
@@ -88,9 +88,9 @@
 #define atomic_compare_exchange_n(loc, cmp, swp, mo_succ, mo_fail) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(loc) _cmp = (cmp); \
+    __typeof(cmp) _cmp = (cmp); \
     __typeof(*(loc)) _mem = *_cmp; (void)_mem; \
-    __typeof(*(loc)) _swp = (swp); \
+    __typeof(swp) _swp = (swp); \
     __typeof(mo_succ) _mo_succ = (mo_succ); \
     __typeof(mo_fail) _mo_fail = (mo_fail); \
     int _res = \
@@ -109,9 +109,9 @@
 #define atomic_compare_exchange_ptr(loc, cmp, swp, mo_succ, mo_fail) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(loc) _cmp = (cmp); \
+    __typeof(cmp) _cmp = (cmp); \
     __typeof(*(loc)) _mem = *_cmp; (void)_mem; \
-    __typeof(*(loc)) _swp = (swp); \
+    __typeof(swp) _swp = (swp); \
     __typeof(mo_succ) _mo_succ = (mo_succ); \
     __typeof(mo_fail) _mo_fail = (mo_fail); \
     int _res = __atomic_compare_exchange_n(_loc, _cmp, _swp, false, _mo_succ, _mo_fail); \
@@ -135,7 +135,7 @@
 #define wait_until_equal(loc, val, mo) \
     ({ \
 	__typeof(loc) _loc = (loc); \
-	__typeof(*loc) _val = (val); \
+	__typeof(val) _val = (val); \
 	__typeof(mo) _mo = (mo); \
 	while (atomic_ldx(_loc, _mo) != _val) \
 	{ \
@@ -153,7 +153,7 @@
 #define wait_until_not_equal(loc, val, mo) \
     ({ \
 	__typeof(loc) _loc = (loc); \
-	__typeof(*loc) _val = (val); \
+	__typeof(val) _val = (val); \
 	__typeof(mo) _mo = (mo); \
 	__typeof(*loc) _mem; \
 	while ((_mem = atomic_ldx(_loc, _mo)) == _val) \
@@ -173,8 +173,8 @@
 #define wait_until_equal_w_bkoff(loc, val, dly, mo) \
     ({ \
 	__typeof(loc) _loc = (loc); \
-	__typeof(*loc) _val = (val); \
-	__typeof(*loc) _dly = (dly); \
+	__typeof(val) _val = (val); \
+	__typeof(dly) _dly = (dly); \
 	__typeof(mo) _mo = (mo); \
 	while (atomic_ldx(_loc, _mo) != _val) \
 	{ \
@@ -202,8 +202,8 @@
 #define atomic_cas_n(loc, cmp, swp, mo) \
 ({ \
     __typeof(loc) _loc = (loc); \
-    __typeof(*(loc)) _cmp = (cmp); \
-    __typeof(*(loc)) _swp = (swp); \
+    __typeof(cmp) _cmp = (cmp); \
+    __typeof(swp) _swp = (swp); \
     __typeof(mo) _mo = (mo); \
     __typeof(*(loc)) _res = \
     _Generic((loc), \
