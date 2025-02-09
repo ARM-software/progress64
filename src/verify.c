@@ -101,7 +101,7 @@ extern struct ver_funcs ver_buckring1, ver_buckring2;
 extern struct ver_funcs ver_cuckooht1, ver_cuckooht2;
 extern struct ver_funcs ver_ringbuf_mpmc, ver_ringbuf_nbenbd, ver_ringbuf_nbelfd, ver_ringbuf_spsc;
 extern struct ver_funcs ver_hopscotch1;
-extern struct ver_funcs ver_linklist1, ver_linklist2, ver_linklist3;
+extern struct ver_funcs ver_linklist1, ver_linklist2, ver_linklist3, ver_linklist4;
 
 //List of supported datatypes
 static struct ver_funcs *ver_table[] =
@@ -118,7 +118,7 @@ static struct ver_funcs *ver_table[] =
     &ver_cuckooht1, &ver_cuckooht2,
     &ver_ringbuf_mpmc, &ver_ringbuf_nbenbd, &ver_ringbuf_nbelfd, &ver_ringbuf_spsc,
     &ver_hopscotch1,
-    &ver_linklist1, &ver_linklist2, &ver_linklist3,
+    &ver_linklist1, &ver_linklist2, &ver_linklist3, &ver_linklist4,
     NULL
 };
 
