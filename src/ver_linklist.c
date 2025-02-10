@@ -31,8 +31,8 @@ static struct object ll_elems[2 * NUMTHREADS];
 static void
 ll_cleanup(p64_linklist_t *list)
 {
-    p64_linklist_cursor_t cursor = { list };
-    while (p64_linklist_cursor_next(&cursor) != NULL)
+    p64_linklist_t *curr = list;
+    while ((curr = p64_linklist_next(curr)) != NULL)
     {
     }
 }
@@ -40,9 +40,8 @@ ll_cleanup(p64_linklist_t *list)
 static p64_linklist_t *
 ll_lookup(p64_linklist_t *list, uint32_t data)
 {
-    p64_linklist_cursor_t cursor = { list };
-    p64_linklist_t *curr;
-    while ((curr = p64_linklist_cursor_next(&cursor)) != NULL)
+    p64_linklist_t *curr = list;
+    while ((curr = p64_linklist_next(curr)) != NULL)
     {
 	const struct object *obj = container_of(curr, struct object, elem);
 	if (obj->data == data)
@@ -73,11 +72,11 @@ ll_remove(p64_linklist_t *list, p64_linklist_t *elem)
 {
     for (;;)
     {
-	p64_linklist_cursor_t cursor = { list };
+	p64_linklist_t *curr = list;
 	p64_linklist_t *pred = list;
 	for(;;)
 	{
-	    p64_linklist_t *curr = p64_linklist_cursor_next(&cursor);
+	    curr = p64_linklist_next(curr);
 	    if (curr == NULL)
 	    {
 		//Element not found, someone else might have removed it
@@ -97,7 +96,6 @@ ll_remove(p64_linklist_t *list, p64_linklist_t *elem)
 	    //Else not element we are looking for, continue search
 	    pred = curr;
 	}
-	//Curr/predecessor removed, can't continue from here, must restart from beginning
     }
 }
 

@@ -54,9 +54,8 @@ elem_alloc(uint32_t k)
 static p64_linklist_t *
 lookup(p64_linklist_t *list, uint32_t key)
 {
-    p64_linklist_cursor_t cursor = { list };
-    p64_linklist_t *curr;
-    while ((curr = p64_linklist_cursor_next(&cursor)) != NULL)
+    p64_linklist_t *curr = list;
+    while ((curr = p64_linklist_next(curr)) != NULL)
     {
 	const struct my_elem *obj = container_of(curr, struct my_elem, elem);
 	if (obj->key == key)

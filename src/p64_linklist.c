@@ -17,28 +17,18 @@ p64_linklist_init(p64_linklist_t *list)
     list->next = NULL;
 }
 
-void
-p64_linklist_cursor_init(p64_linklist_cursor_t *curs, p64_linklist_t *list)
-{
-    if (list == NULL)
-    {
-	report_error("linklist", "NULL list", list);
-    }
-    curs->curr = list;
-}
-
 p64_linklist_t *
-p64_linklist_cursor_next(p64_linklist_cursor_t *curs)
+p64_linklist_next(p64_linklist_t *curr)
 {
-    if (curs->curr == NULL)
+    if (curr == NULL)
     {
-	report_error("linklist", "cursor->curr == NULL", curs);
+	report_error("linklist", "next NULL element", curr);
 	return NULL;
     }
     //Current element becomes predecessor
-    p64_linklist_t *pred = curs->curr;
-    //'curr' is next element
-    p64_linklist_t *curr = atomic_load_ptr(&pred->next, __ATOMIC_ACQUIRE);
+    p64_linklist_t *pred = curr;
+    //'curr' is element after pred
+    curr = atomic_load_ptr(&pred->next, __ATOMIC_ACQUIRE);
     while (REM_MARK(curr) != NULL)
     {
 	//Not end of list
@@ -69,12 +59,10 @@ p64_linklist_cursor_next(p64_linklist_cursor_t *curs)
 	else //'curr' is not marked for removal
 	{
 	    //Return 'curr'
-	    curs->curr = curr;
 	    return curr;
 	}
     }
     //Reached end of list
-    curs->curr = NULL;
     return NULL;
 }
 
