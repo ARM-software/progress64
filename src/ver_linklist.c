@@ -27,29 +27,30 @@ struct object
 static _Alignas(64) p64_linklist_t ll_list;
 static struct object ll_elems[2 * NUMTHREADS];
 
+//Traverse list to force unlinking of marked elements
+static void
+ll_cleanup(p64_linklist_t *list)
+{
+    p64_linklist_cursor_t cursor = { list };
+    while (p64_linklist_cursor_next(&cursor) != NULL)
+    {
+    }
+}
+
 static p64_linklist_t *
 ll_lookup(p64_linklist_t *list, uint32_t data)
 {
-    for (;;)
+    p64_linklist_cursor_t cursor = { list };
+    p64_linklist_t *curr;
+    while ((curr = p64_linklist_cursor_next(&cursor)) != NULL)
     {
-	p64_linklist_cursor_t cursor = { list };
-	p64_linklist_status_t stat;
-	while ((stat = p64_linklist_cursor_next(&cursor)) != p64_ll_predmark)
+	const struct object *obj = container_of(curr, struct object, elem);
+	if (obj->data == data)
 	{
-	    VERIFY_ASSERT(stat == p64_ll_success);
-	    if (cursor.curr == NULL)
-	    {
-		//Element not found, someone else might have removed it
-		return NULL;
-	    }
-	    const struct object *obj = container_of(cursor.curr, struct object, elem);
-	    if (obj->data == data)
-	    {
-		return cursor.curr;
-	    }
+	    return curr;
 	}
-	//Curr/predecessor removed, can't continue from here, must restart from beginning
     }
+    return NULL;
 }
 
 static void
@@ -59,12 +60,10 @@ ll_insert(p64_linklist_t *list, p64_linklist_t *pred, p64_linklist_t *elem)
     //If this fails, we insert 'elem' after list head
     for (;;)
     {
-	p64_linklist_status_t stat = p64_linklist_insert(pred, elem);
-	if (stat == p64_ll_success)
+	if (p64_linklist_insert(pred, elem))
 	{
 	    return;
 	}
-	VERIFY_ASSERT(stat == p64_ll_predmark);
 	pred = list;
     }
 }
@@ -76,25 +75,27 @@ ll_remove(p64_linklist_t *list, p64_linklist_t *elem)
     {
 	p64_linklist_cursor_t cursor = { list };
 	p64_linklist_t *pred = list;
-	p64_linklist_status_t stat;
-	while ((stat = p64_linklist_cursor_next(&cursor)) != p64_ll_predmark)
+	for(;;)
 	{
-	    VERIFY_ASSERT(stat == p64_ll_success);
-	    if (cursor.curr == NULL)
+	    p64_linklist_t *curr = p64_linklist_cursor_next(&cursor);
+	    if (curr == NULL)
 	    {
 		//Element not found, someone else might have removed it
 		return;
 	    }
-	    else if (cursor.curr == elem)
+	    else if (curr == elem)
 	    {
-		if (p64_linklist_remove(pred, elem) == p64_ll_success)
+		//Now we have the predecessor to 'elem'
+		if (p64_linklist_remove(pred, elem))
 		{
 		    return;
 		}
 		//Else remove failed
+		//Restart outer loop, restart from beginning of list
 		break;
 	    }
-	    pred = cursor.curr;
+	    //Else not element we are looking for, continue search
+	    pred = curr;
 	}
 	//Curr/predecessor removed, can't continue from here, must restart from beginning
     }
@@ -116,7 +117,7 @@ static void
 ver_linklist1_fini(uint32_t numthreads)
 {
     (void)numthreads;
-    //ll_lookup(&ll_list, ~0U);
+    ll_cleanup(&ll_list);
     VERIFY_ASSERT(ll_list.next == NULL);
 }
 

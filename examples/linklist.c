@@ -51,22 +51,23 @@ elem_alloc(uint32_t k)
 #define container_of(pointer, type, member) \
     ((type *)(void *)(((char *)pointer) - offsetof(type, member)))
 
-static uint32_t
-compare_key(const void *key, const p64_linklist_t *elem)
-{
-    const struct my_elem *me = container_of(elem, struct my_elem, elem);
-    if (me->key == *(const uint32_t *)key)
-    {
-	return P64_LINKLIST_F_STOP | P64_LINKLIST_F_RETURN;
-    }
-    return 0;
-}
-
 static p64_linklist_t *
 lookup(p64_linklist_t *list, uint32_t key)
 {
-    return p64_linklist_traverse(list, compare_key, &key);
+    p64_linklist_cursor_t cursor = { list };
+    p64_linklist_t *curr;
+    while ((curr = p64_linklist_cursor_next(&cursor)) != NULL)
+    {
+	const struct my_elem *obj = container_of(curr, struct my_elem, elem);
+	if (obj->key == key)
+	{
+	    return curr;
+	}
+    }
+    //Element not found, someone else might have removed it
+    return NULL;
 }
+
 
 static void
 test_list(void)
@@ -78,29 +79,28 @@ test_list(void)
 
     p64_errhnd_install(error_handler);
     p64_linklist_init(&list);
-    p64_linklist_remove(&list, NULL);
     me1 = elem_alloc(10);
     //Insert me1 first in list
-    p64_linklist_insert(&list, &list, &me1->elem);
+    EXPECT(p64_linklist_insert(&list, &me1->elem) == true);
     me2 = elem_alloc(20);
     //Insert me2 after me1
-    p64_linklist_insert(&list, &me1->elem, &me2->elem);
+    EXPECT(p64_linklist_insert(&me1->elem, &me2->elem) == true);
     //Remove me1; me2 is now first
-    p64_linklist_remove(&list, &me1->elem);
+    EXPECT(p64_linklist_remove(&list, &me1->elem) == true);
     elem = lookup(&list, 20);
     EXPECT(elem == &me2->elem);
     //Attempt to remove me1 again
-    p64_linklist_remove(&list, &me1->elem);
+    EXPECT(p64_linklist_remove(&list, &me1->elem) == true);
     elem = lookup(&list, 20);
     EXPECT(elem == &me2->elem);
     //Remove me2
-    p64_linklist_remove(&list, &me2->elem);
+    EXPECT(p64_linklist_remove(&list, &me2->elem) == true);
     elem = lookup(&list, 20);
     EXPECT(elem == NULL);
     //Check that insert of (invalid) NULL pointer is detected
     if ((jv = setjmp(jmpbuf)) == 0)
     {
-	p64_linklist_insert(&list, &list, NULL);
+	p64_linklist_insert(&list, NULL);
 	EXPECT(!"p64_linklist_insert() unexpectedly succeeded");
     }
     //Else longjumped back from error handler

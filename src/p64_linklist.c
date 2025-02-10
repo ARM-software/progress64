@@ -2,8 +2,6 @@
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-#include <assert.h>
-
 #include "p64_linklist.h"
 
 #include "atomic.h"
@@ -29,13 +27,13 @@ p64_linklist_cursor_init(p64_linklist_cursor_t *curs, p64_linklist_t *list)
     curs->curr = list;
 }
 
-p64_linklist_status_t
+p64_linklist_t *
 p64_linklist_cursor_next(p64_linklist_cursor_t *curs)
 {
     if (curs->curr == NULL)
     {
 	report_error("linklist", "cursor->curr == NULL", curs);
-	return p64_ll_progerror;
+	return NULL;
     }
     //Current element becomes predecessor
     p64_linklist_t *pred = curs->curr;
@@ -50,7 +48,7 @@ p64_linklist_cursor_next(p64_linklist_cursor_t *curs)
 	p64_linklist_t *next = atomic_load_ptr(&curr->next, __ATOMIC_ACQUIRE);
 	if (HAS_MARK(next))
 	{
-	    //'curr' marked for removal, we must remove it
+	    //'curr' marked for removal, try to remove it
 	    next = REM_MARK(next);
 	    if (atomic_compare_exchange_ptr(&pred->next,
 					    &curr,//Updated on failure
@@ -59,84 +57,76 @@ p64_linklist_cursor_next(p64_linklist_cursor_t *curs)
 					    __ATOMIC_RELAXED))
 	    {
 		//'curr' removed, 'pred' now points to 'next'
-		//Keep 'pred'
+		//Keep 'pred', update 'curr'
 		curr = next;
-		continue;
 	    }
-	    else //Failed to remove 'curr'
+	    else //Failed to remove 'curr' from predecessor's next ptr
 	    {
-		return p64_ll_predmark;//Possibly not entirely accurate
+		//We continue anyway with the next element after 'pred->next'
+		//'curr' already updated by CAS failure
 	    }
 	}
 	else //'curr' is not marked for removal
 	{
 	    //Return 'curr'
 	    curs->curr = curr;
-	    return p64_ll_success;
+	    return curr;
 	}
     }
     //Reached end of list
     curs->curr = NULL;
-    return p64_ll_success;
+    return NULL;
 }
 
-p64_linklist_status_t
+bool
 p64_linklist_remove(p64_linklist_t *pred,
 		    p64_linklist_t *elem)
 {
+    //Set REMOVE mark on our next pointer
+    p64_linklist_t *next = atomic_fetch_or(&elem->next, MARK_REMOVE, __ATOMIC_RELAXED);
     do
     {
-	p64_linklist_t *this = atomic_load_ptr(&pred->next, __ATOMIC_ACQUIRE);
+	//Now try to unlink us
+	p64_linklist_t *this = elem;
+	if (atomic_compare_exchange_ptr(&pred->next,
+					&this,//Updated on failure
+					REM_MARK(next),
+					__ATOMIC_ACQUIRE,
+					__ATOMIC_ACQUIRE))
+	{
+	    //Success, 'this' (== 'elem') element is removed
+	    return true;
+	}
+	//Else CAS failed => unlinking failed
 	//Check if predecessor element is marked for REMOVAL
 	if (HAS_MARK(this))
 	{
 	    //Yes, it must first be removed but we can't do that here
-	    return p64_ll_predmark;
+	    return false;
 	}
-	//Check if predecessor still points to us
-	else if (this == elem)
-	{
-	    //Found our element, now remove it
-	    //Set REMOVE mark on our next pointer (it may already be set)
-	    p64_linklist_t *next = atomic_fetch_or(&this->next, MARK_REMOVE, __ATOMIC_RELAXED);
-	    //Now try to unlink us
-	    if (atomic_compare_exchange_ptr(&pred->next,
-					    &this,
-					    REM_MARK(next),
-					    __ATOMIC_RELAXED,
-					    __ATOMIC_RELAXED))
-	    {
-		//Success, 'this' element is removed
-		return p64_ll_success;
-	    }
-	    //Else CAS failed
-	    //Either some other thread helped remove our element
-	    //Or predecessor element was also marked for removal and must be removed first
-	    //Or some other element was inserted after predecessor element (before us)
-	    //Try again with fresh value
-	    continue;
-	}
-	//Else not our element, continue search
+	//Else either some other thread helped remove our element
+	//Or some other element was inserted after predecessor element (before us)
 	pred = this;
     }
     while (pred != NULL);
-    //'elem' not found in list
-    return p64_ll_notfound;
+    //'elem' not found in list, some other thread probably unlinked it
+    return true;
 }
 
-p64_linklist_status_t
+bool
 p64_linklist_insert(p64_linklist_t *pred,
 		    p64_linklist_t *elem)
 {
     if (UNLIKELY(elem == NULL))
     {
 	report_error("linklist", "insert NULL element", elem);
-	return p64_ll_progerror;
+	return true;
     }
     if (UNLIKELY(HAS_MARK(elem)))
     {
 	report_error("linklist", "element has low bit set", elem);
-	return p64_ll_progerror;
+	//Clear lsb and continue with insertion
+	elem = REM_MARK(elem);
     }
     p64_linklist_t *next = atomic_load_ptr(&pred->next, __ATOMIC_ACQUIRE);
     for (;;)
@@ -149,26 +139,30 @@ p64_linklist_insert(p64_linklist_t *pred,
 	    next = REM_MARK(next);
 	    if (next == NULL)
 	    {
-		//No element after 'pred', insertion fails
-		return p64_ll_predmark;
+		//No element after 'pred' to use as new predecessor, insertion fails
+		return false;
 	    }
+	    //Update pred:next tuple for next attempt
 	    pred = next;
-	    continue;
+	    next = atomic_load_ptr(&pred->next, __ATOMIC_ACQUIRE);
 	}
-	//'next' is not marked for removal
-	//Try to swing in new element
-	elem->next = next;
-	if (atomic_compare_exchange_ptr(&pred->next,
-					&next,//Updated on failure
-					elem,
-					__ATOMIC_RELEASE,
-					__ATOMIC_ACQUIRE))
+	else
 	{
-	    //Success inserting new element
-	    return p64_ll_success;
+	    //'pred' is not marked for removal, we can insert here
+	    elem->next = next;
+	    //Try to swing in new element
+	    if (atomic_compare_exchange_ptr(&pred->next,
+					    &next,//Updated on failure
+					    elem,
+					    __ATOMIC_RELEASE,
+					    __ATOMIC_ACQUIRE))
+	    {
+		//Success inserting new element
+		return true;
+	    }
+	    //Else pred->next changed
+	    //Either 'pred' is being removed or some other element was inserted
+	    //Restart with updated value of 'next', 'pred' remains the same
 	}
-	//Else pred->next changed
-	//Either 'pred' is being removed or some other element was inserted
-	//Restart with updated value of 'next'
     }
 }
