@@ -9,7 +9,7 @@
 #include "p64_skiplock.h"
 #include "build_config.h"
 
-#include "arch.h"
+#include "atomic.h"
 #include "lockfree.h"
 #include "common.h"
 #include "err_hnd.h"
@@ -99,7 +99,7 @@ void
 p64_skiplock_skip(p64_skiplock_t *sl, uint32_t tkt)
 {
     //Wait until tkt in range
-    while (UNLIKELY(tkt - __atomic_load_n(&sl->cur, __ATOMIC_RELAXED) > BITS))
+    while (UNLIKELY(tkt - atomic_load_n(&sl->cur, __ATOMIC_RELAXED) > BITS))
     {
 	//TODO use WFE
 	doze();

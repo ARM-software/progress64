@@ -10,7 +10,7 @@
 #include "p64_tfrwlock.h"
 #include "build_config.h"
 
-#include "arch.h"
+#include "atomic.h"
 #include "common.h"
 
 #define RD_ONE    (1U << 16)
@@ -31,8 +31,7 @@ void
 p64_tfrwlock_acquire_rd(p64_tfrwlock_t *lock)
 {
     //Increment lock->enter.rd to record reader enters
-    uint32_t old_enter = __atomic_fetch_add(&lock->enter.rdwr, RD_ONE,
-					    __ATOMIC_RELAXED);
+    uint32_t old_enter = atomic_fetch_add(&lock->enter.rdwr, RD_ONE, __ATOMIC_RELAXED);
     //Wait for any previous writers lockers to go away
     wait_until_equal(&lock->leave.wr, TO_WR(old_enter), __ATOMIC_ACQUIRE);
 }
@@ -41,7 +40,7 @@ void
 p64_tfrwlock_release_rd(p64_tfrwlock_t *lock)
 {
     //Increment lock->leave.rd to record reader leaves
-    (void)__atomic_fetch_add(&lock->leave.rd, 1, __ATOMIC_RELEASE);
+    (void)atomic_fetch_add(&lock->leave.rd, 1, __ATOMIC_RELEASE);
 }
 
 static inline uint32_t
@@ -54,17 +53,16 @@ static inline uint32_t
 atomic_add_w_mask(uint32_t *loc, uint32_t val, uint32_t mask)
 {
     uint32_t old, neu;
-    old = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    old = atomic_load_n(loc, __ATOMIC_RELAXED);
     do
     {
 	neu = add_w_mask(old, val, mask);
     }
-    while (!__atomic_compare_exchange_n(loc,
-					&old,//Updated on failure
-					neu,
-					/*weak=*/true,
-					__ATOMIC_RELAXED,
-					__ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(loc,
+				      &old,//Updated on failure
+				      neu,
+				      __ATOMIC_RELAXED,
+				      __ATOMIC_RELAXED));
     return old;
 }
 
@@ -86,5 +84,5 @@ void
 p64_tfrwlock_release_wr(p64_tfrwlock_t *lock, uint16_t tkt)
 {
     //Increment lock->leave.wr to release writer ticket
-    (void)__atomic_store_n(&lock->leave.wr, tkt + 1, __ATOMIC_RELEASE);
+    (void)atomic_store_n(&lock->leave.wr, tkt + 1, __ATOMIC_RELEASE);
 }

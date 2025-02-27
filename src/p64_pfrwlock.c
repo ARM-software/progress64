@@ -7,7 +7,7 @@
 #include "p64_pfrwlock.h"
 #include "build_config.h"
 
-#include "arch.h"
+#include "atomic.h"
 #include "common.h"
 
 // uint16_t enter_rd;//Bits 0..15
@@ -50,7 +50,7 @@ static inline uint64_t
 atomic_incr_enter_or_pend(uint64_t *loc)
 {
     uint64_t old, neu;
-    old = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    old = atomic_load_n(loc, __ATOMIC_RELAXED);
     do
     {
 	if (ENTER_WR(old) == LEAVE_WR(old))
@@ -64,12 +64,11 @@ atomic_incr_enter_or_pend(uint64_t *loc)
 	    neu = add_w_mask(old, PEND_RD_ONE, PEND_RD_MASK);
 	}
     }
-    while (!__atomic_compare_exchange_n(loc,
-					&old,//Updated on failure
-					neu,
-					/*weak=*/true,
-					__ATOMIC_ACQUIRE,
-					__ATOMIC_ACQUIRE));
+    while (!atomic_compare_exchange_n(loc,
+				      &old,//Updated on failure
+				      neu,
+				      __ATOMIC_ACQUIRE,
+				      __ATOMIC_ACQUIRE));
     return old;
 }
 
@@ -90,19 +89,19 @@ void
 p64_pfrwlock_release_rd(p64_pfrwlock_t *lock)
 {
     //Increment 'leave_rd' to record reader leaves
-    (void)__atomic_fetch_add(&lock->leave_rd, 1, __ATOMIC_RELEASE);
+    (void)atomic_fetch_add(&lock->leave_rd, 1, __ATOMIC_RELEASE);
 }
 
 void
 p64_pfrwlock_acquire_wr(p64_pfrwlock_t *lock)
 {
     //Increment 'enter_wr' to acquire a writer ticket
-    uint64_t old = __atomic_fetch_add(&lock->word,
+    uint64_t old = atomic_fetch_add(&lock->word,
 				      ENTER_WR_ONE, __ATOMIC_RELAXED);
     //Wait for previous writer to end write phase and update 'enter_rd'
     wait_until_equal(&lock->leave_wr, ENTER_WR(old), __ATOMIC_ACQUIRE);
     //'enter_rd' now updated from 'pend_rd'
-    uint16_t enter_rd = __atomic_load_n(&lock->enter_rd, __ATOMIC_RELAXED);
+    uint16_t enter_rd = atomic_load_n(&lock->enter_rd, __ATOMIC_RELAXED);
     //Wait for all previous readers to leave
     wait_until_equal(&lock->leave_rd, enter_rd, __ATOMIC_RELAXED);
 }
@@ -112,7 +111,7 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
 {
     uint64_t *loc = (uint64_t *)lock;
     uint64_t old, neu;
-    old = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    old = atomic_load_n(loc, __ATOMIC_RELAXED);
     do
     {
 	//Compute new values
@@ -124,10 +123,9 @@ p64_pfrwlock_release_wr(p64_pfrwlock_t *lock)
 	      ((uint64_t)leave_wr << LEAVE_WR_SHIFT) |
 	      ((uint64_t)enter_rd << ENTER_RD_SHIFT);
     }
-    while (!__atomic_compare_exchange_n(loc,
-					&old,//Updated on failure
-					neu,
-					/*weak=*/true,
-					__ATOMIC_RELEASE,
-					__ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(loc,
+				      &old,//Updated on failure
+				      neu,
+				      __ATOMIC_RELEASE,
+				      __ATOMIC_RELAXED));
 }

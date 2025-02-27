@@ -7,7 +7,7 @@
 #include "p64_tktlock.h"
 #include "build_config.h"
 
-#include "arch.h"
+#include "atomic.h"
 #include "common.h"
 
 //Lock word is 32 bits
@@ -28,7 +28,7 @@ void
 p64_tktlock_acquire_bkoff(p64_tktlock_t *lock, uint32_t dly)
 {
     //Get a ticket, also read current ticket
-    uint32_t word = __atomic_fetch_add(lock, TKTINC, __ATOMIC_ACQUIRE);
+    uint32_t word = atomic_fetch_add(lock, TKTINC, __ATOMIC_ACQUIRE);
     uint16_t tkt = TKT(word);
     uint16_t cur = CUR(word);
     //Wait for any previous lockers to leave
@@ -46,7 +46,7 @@ p64_tktlock_acquire_bkoff(p64_tktlock_t *lock, uint32_t dly)
 	    return;
 	}
 	nano_delay((dist - 1) * dly);
-	word = __atomic_load_n(lock, __ATOMIC_ACQUIRE);
+	word = atomic_load_n(lock, __ATOMIC_ACQUIRE);
 	cur = CUR(word);
     }
 }
@@ -64,7 +64,7 @@ p64_tktlock_release(p64_tktlock_t *lock)
     //Operate on cur field only to avoid overflowing into ticket counter
 #if __LITTLE_ENDIAN__ || __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
     //Increment cur field (16 lsb, assume little endian system)
-    (void)__atomic_fetch_add((uint16_t *)lock, 1, __ATOMIC_RELEASE);
+    (void)atomic_fetch_add((uint16_t *)lock, 1, __ATOMIC_RELEASE);
 #else
 #error Not a little endian system
 #endif
