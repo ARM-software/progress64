@@ -9,6 +9,7 @@
 #include "p64_buckring.h"
 
 #include "verify.h"
+#include "atomic.h"
 
 #define NUMTHREADS 2
 
@@ -44,6 +45,7 @@ ver_buckring1_exec(uint32_t id)
     (void)id;
     uint32_t idx;
     uint32_t *elem = &buckr_elems[id];
+    regular_store_n(elem, id);
     VERIFY_ASSERT(p64_buckring_enqueue(buckr_rb, (void **)&elem, 1) == 1);
     buckr_mask ^= 1U << id;
     //We cannot successfully dequeue element until all preceding enqueue's have completed
@@ -56,11 +58,11 @@ ver_buckring1_exec(uint32_t id)
     VERIFY_ASSERT(elem == &buckr_elems[0] || elem == &buckr_elems[1]);
     if (elem == &buckr_elems[0])
     {
-	VERIFY_ASSERT(*elem == 0);
+	VERIFY_ASSERT(regular_load_n(elem) == 0);
     }
     else
     {
-	VERIFY_ASSERT(*elem == 1);
+	VERIFY_ASSERT(regular_load_n(elem) == 1);
     }
     buckr_mask ^= 16U << *elem;
 }

@@ -8,6 +8,7 @@
 #include "p64_mcslock.h"
 #include "os_abstraction.h"
 #include "verify.h"
+#include "atomic.h"
 
 #define NUMTHREADS 2
 
@@ -38,10 +39,11 @@ ver_mcslock_exec(uint32_t id)
     (void)id;
     p64_mcsnode_t node;
     p64_mcslock_acquire(&mcs_lock, &node);
-    VERIFY_ASSERT(mcs_taken == false);
-    mcs_taken = true;
-    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0, 0);
-    mcs_taken = false;
+    VERIFY_ASSERT(regular_load_n(&mcs_taken) == false);
+    regular_store_n(&mcs_taken, true);
+    VERIFY_YIELD();
+    VERIFY_ASSERT(regular_load_n(&mcs_taken) == true);
+    regular_store_n(&mcs_taken, false);
     p64_mcslock_release(&mcs_lock, &node);
 }
 

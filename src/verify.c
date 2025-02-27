@@ -94,6 +94,7 @@ extern struct ver_funcs ver_lfstack;
 extern struct ver_funcs ver_msqueue;
 extern struct ver_funcs ver_clhlock;
 extern struct ver_funcs ver_mcslock;
+extern struct ver_funcs ver_spinlock;
 extern struct ver_funcs ver_blkring;
 extern struct ver_funcs ver_hemlock;
 extern struct ver_funcs ver_barrier;
@@ -111,6 +112,7 @@ static struct ver_funcs *ver_table[] =
     &ver_msqueue,
     &ver_clhlock,
     &ver_mcslock,
+    &ver_spinlock,
     &ver_blkring,
     &ver_hemlock,
     &ver_barrier,

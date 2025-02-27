@@ -34,8 +34,7 @@ alloc_clhnode(void)
 	report_error("clhlock", "failed to allocate clhnode", 0);
 	return NULL;
     }
-    node->prev = NULL;
-    node->wait = CLH_WAIT;
+    //Node not initialized
     return node;
 }
 
@@ -65,7 +64,9 @@ enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
     {
 	*nodep = node = alloc_clhnode();
     }
-    node->wait = CLH_WAIT;
+    //Initialise node
+    regular_store_ptr(&node->prev, NULL);
+    regular_store_n(&node->wait, CLH_WAIT);
 
     //Insert our node last in queue, get back previous last (tail) node
     //A0: read and write tail, synchronize with A0
@@ -74,7 +75,8 @@ enqueue(p64_clhlock_t *lock, p64_clhnode_t **nodep)
 					      __ATOMIC_ACQ_REL);
 
     //Save previous node in (what is still) "our" node for later use
-    node->prev = prev;
+    VERIFY_ASSERT(regular_load_ptr(&node->prev) == NULL);//???
+    regular_store_ptr(&node->prev, prev);
     return prev;
 }
 
@@ -93,11 +95,12 @@ void
 p64_clhlock_release(p64_clhnode_t **nodep)
 {
     //Read previous node, it will become our new node
-    p64_clhnode_t *prev = (*nodep)->prev;
+    p64_clhnode_t *prev = regular_load_ptr(&(*nodep)->prev);
 
     //Signal any (current or future) thread that waits for us using "our"
     //old node
     //B1: write wait, synchronize with B0
+    VERIFY_ASSERT(regular_load_n(&(*nodep)->wait) == CLH_WAIT);
     atomic_store_n(&(*nodep)->wait, CLH_GO, __ATOMIC_RELEASE);
     //Now when we have signaled the next thread, it will own "our" old node
 

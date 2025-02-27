@@ -1,13 +1,10 @@
-//Copyright (c) 2025, ARM Limited. All rights reserved.
-//
-//SPDX-License-Identifier:        BSD-3-Clause
-
 #include <stdbool.h>
 #include <stdlib.h>
 
 #include "p64_hemlock.h"
 #include "os_abstraction.h"
 #include "verify.h"
+#include "atomic.h"
 
 #define NUMTHREADS 2
 
@@ -37,11 +34,11 @@ ver_hemlock_exec(uint32_t id)
 {
     (void)id;
     p64_hemlock_acquire(&hem_lock);
-    VERIFY_ASSERT(hem_taken == false);
-    hem_taken = true;
-    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0, 0);
-    VERIFY_ASSERT(hem_taken == true);
-    hem_taken = false;
+    VERIFY_ASSERT(regular_load_n(&hem_taken) == false);
+    regular_store_n(&hem_taken, true);
+    VERIFY_YIELD();
+    VERIFY_ASSERT(regular_load_n(&hem_taken) == true);
+    regular_store_n(&hem_taken, false);
     p64_hemlock_release(&hem_lock);
 }
 

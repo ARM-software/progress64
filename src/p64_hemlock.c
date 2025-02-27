@@ -32,7 +32,8 @@ p64_hemlock_try_acquire(p64_hemlock_t *lock)
 {
     assert(grant == NULL);
     //lock->tail == NULL => lock is free
-    struct p64_hemlock **pred = NULL;
+    struct p64_hemlock **pred;
+    regular_store_ptr(&pred, NULL);
     //A0: read and write tail, synchronize with A0/A1/A2
     return atomic_compare_exchange_ptr(&lock->tail, &pred, &grant,
 				       __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
@@ -42,6 +43,7 @@ void
 p64_hemlock_acquire(p64_hemlock_t *lock)
 {
     assert(grant == NULL);
+    regular_store_ptr(&grant, NULL);
     //A1: read and write tail, synchronize with A0/A1/A2
     struct p64_hemlock **pred =
 	atomic_exchange_ptr(&lock->tail, &grant, __ATOMIC_ACQ_REL);
@@ -78,6 +80,7 @@ p64_hemlock_release(p64_hemlock_t *lock)
 
     //Signal first waiting thread which is polling our grant
     //B1: write pred, synchronize with B0
+    VERIFY_ASSERT(regular_load_ptr(&grant) == NULL);
     atomic_store_ptr(&grant, lock, __ATOMIC_RELEASE);
 
     //Wait for thread to ack the grant

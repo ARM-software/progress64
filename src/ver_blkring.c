@@ -9,6 +9,7 @@
 #include "p64_blkring.h"
 
 #include "verify.h"
+#include "atomic.h"
 
 #define NUMTHREADS 2
 
@@ -38,7 +39,7 @@ ver_blkring_exec(uint32_t id)
 {
     uint32_t idx;
     uint32_t *elem = &blkr_elems[id];
-    *elem = id;
+    regular_store_n(elem, id);
     p64_blkring_enqueue(blkr_rb, (void **)&elem, 1);
     elem = NULL;
     p64_blkring_dequeue(blkr_rb, (void **)&elem, 1, &idx);
@@ -46,11 +47,11 @@ ver_blkring_exec(uint32_t id)
     VERIFY_ASSERT(elem == &blkr_elems[0] || elem == &blkr_elems[1]);
     if (elem == &blkr_elems[0])
     {
-	VERIFY_ASSERT(*elem == 0);
+	VERIFY_ASSERT(regular_load_n(elem) == 0);
     }
     else
     {
-	VERIFY_ASSERT(*elem == 1);
+	VERIFY_ASSERT(regular_load_n(elem) == 1);
     }
 }
 

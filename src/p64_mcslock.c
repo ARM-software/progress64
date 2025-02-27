@@ -22,7 +22,8 @@ p64_mcslock_init(p64_mcslock_t *lock)
 void
 p64_mcslock_acquire(p64_mcslock_t *lock, p64_mcsnode_t *node)
 {
-    node->next = NULL;
+    regular_store_ptr(&node->next, NULL);
+    regular_store_n(&node->wait, MCS_WAIT);
     //A0: read and write lock, synchronize with A0/A1
     p64_mcsnode_t *prev = atomic_exchange_ptr(lock, node, __ATOMIC_ACQ_REL);
     if (LIKELY(prev == NULL))
@@ -32,8 +33,8 @@ p64_mcslock_acquire(p64_mcslock_t *lock, p64_mcsnode_t *node)
     }
     //Else lock owned by other thread, we must wait for our turn
 
-    node->wait = MCS_WAIT;
     //B0: write next, synchronize with B1/B2
+    VERIFY_ASSERT(regular_load_ptr(&prev->next) == NULL);
     atomic_store_ptr(&prev->next, node, __ATOMIC_RELEASE);
 
     //Wait for previous thread to signal us (using our node)
@@ -65,5 +66,6 @@ p64_mcslock_release(p64_mcslock_t *lock, p64_mcsnode_t *node)
     }
     //Signal first waiting thread
     //C1: write wait, synchronize with C0
+    VERIFY_ASSERT(regular_load_n(&next->wait) == MCS_WAIT);
     atomic_store_n(&next->wait, MCS_GO, __ATOMIC_RELEASE);
 }

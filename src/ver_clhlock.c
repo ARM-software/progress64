@@ -8,6 +8,7 @@
 #include "p64_clhlock.h"
 #include "os_abstraction.h"
 #include "verify.h"
+#include "atomic.h"
 
 #define NUMTHREADS 2
 
@@ -40,10 +41,11 @@ ver_clhlock_exec(uint32_t id)
     (void)id;
     p64_clhnode_t *node = NULL;
     p64_clhlock_acquire(&clh_lock, &node);
-    VERIFY_ASSERT(clh_taken == false);
-    clh_taken = true;
-    VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0, 0);
-    clh_taken = false;
+    VERIFY_ASSERT(regular_load_n(&clh_taken) == false);
+    regular_store_n(&clh_taken, true);
+    VERIFY_YIELD();
+    VERIFY_ASSERT(regular_load_n(&clh_taken) == true);
+    regular_store_n(&clh_taken, false);
     p64_clhlock_release(&node);
     p64_mfree(node);
 }
