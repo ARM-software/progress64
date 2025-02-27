@@ -35,6 +35,11 @@ struct ver_file_line
 #define V_STR 0x2000 //Print addr as a string
 #define V_YIELD 0x4000 //Yield to other thread
 #define V_ABORT 0x8000 //Abort execution
+#define V_READ 0x10000 //Operation is a read
+#define V_WRITE 0x20000 //Operation is a write
+#define V_RW (V_READ | V_WRITE)
+
+#define V_REGULAR (__ATOMIC_RELAXED | __ATOMIC_ACQUIRE | __ATOMIC_RELEASE | __ATOMIC_ACQ_REL | __ATOMIC_SEQ_CST)
 
 #ifdef VERIFY
 
@@ -44,13 +49,10 @@ struct ver_file_line
 #define VERIFY_YIELD() p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = V_YIELD | V_OP, .oper = "yield" })
 #define VERIFY_ERROR(msg) p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = V_OP | V_STR | V_ABORT, .oper = "error", .addr = (msg) })
 
-#define VER_HASHSTR(s) #s
-#define VER_STR(s) VER_HASHSTR(s)
-
 #define VERIFY_ASSERT(exp) \
 { \
     if (!(exp)) \
-	p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = V_OP | V_STR | V_ABORT, .oper = "failed", .addr = VER_STR(exp) }); \
+	p64_coro_suspend((intptr_t)&(struct ver_file_line){.file = __FILE__, .line = __LINE__, .fmt = V_OP | V_STR | V_ABORT, .oper = "failed", .addr = #exp }); \
 }
 
 extern uint32_t verify_id;

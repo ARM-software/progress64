@@ -151,10 +151,24 @@ coroutine(va_list *args)
 }
 
 static const char *
+rw_str(uint32_t fmt)
+{
+    switch (fmt & (V_READ | V_WRITE))
+    {
+	case 0       : return "--";
+	case V_READ  : return "r-";
+	case V_WRITE : return "-w";
+	case V_RW    : return "rw";
+	default      : return "??";
+    }
+}
+
+static const char *
 memo_str(int mo)
 {
     switch (mo)
     {
+	case V_REGULAR        : return "regular";
 	case __ATOMIC_RELAXED : return "rlx";
 	case __ATOMIC_ACQUIRE : return "acq";
 	case __ATOMIC_RELEASE : return "rls";
@@ -164,10 +178,22 @@ memo_str(int mo)
     }
 }
 
+static bool
+is_acq(int mo)
+{
+    return mo == __ATOMIC_ACQUIRE || mo == __ATOMIC_ACQ_REL || mo == __ATOMIC_SEQ_CST;
+}
+
+static bool
+is_rls(int mo)
+{
+    return mo == __ATOMIC_RELEASE || mo == __ATOMIC_ACQ_REL || mo == __ATOMIC_SEQ_CST;
+}
+
 static void
 print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr_t mask)
 {
-    printf("Step %d: thread %u, ", step, id);
+    printf("Step %2d: thread %u, ", step, id);
     if (fl != NULL && fl->file != NULL)
     {
 	printf("file %s line %"PRIuPTR" ", fl->file, fl->line);
@@ -175,7 +201,7 @@ print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr
 	{
 	    uint32_t datasize = fl->fmt & 0xff;
 	    assert(datasize <= 16);
-	    printf("%s", fl->oper);
+	    printf("%s %s", rw_str(fl->fmt), fl->oper);
 	    if (datasize != 0)
 	    {
 		printf("_%u", datasize);
@@ -214,7 +240,7 @@ print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr
 			}
 		    }
 		}
-		printf(",%s", memo_str(fl->memo & 0xff));
+		printf(",%s", memo_str(fl->memo));
 	    }
 	    printf(")");
 	    if (fl->fmt & V_RE)
@@ -265,13 +291,170 @@ exec_coroutine(p64_coroutine_t *cr,
     }
 }
 
-enum verify_status { success, interrupted, failed };
+struct fileline
+{
+    const char *file0;
+    uintptr_t line0;
+    const char *file1;
+    uintptr_t line1;
+    uint64_t count;
+};
+
+static struct fileline syncs[257];
+static struct fileline races[257];
 
 static void
-verify(const struct ver_funcs *vf, uint64_t permutation, intptr_t mask)
+fileline_add(struct fileline *fl, const char *file0, uintptr_t line0, const char *file1, uintptr_t line1)
 {
-    struct ver_file_line trace[NUMSTEPS + 1] = { 0 };
-    uint32_t trace_id[NUMSTEPS + 1] = { 0 };
+    uint32_t i = (line0 + 8192 * line1) % 257;
+    if (fl[i].line0 == 0 && fl[i].line1 == 0)
+    {
+	fl[i].file0 = file0;
+	fl[i].line0 = line0;
+	fl[i].file1 = file1;
+	fl[i].line1 = line1;
+	fl[i].count = 1;
+    }
+    else
+    {
+	fl[i].count++;
+    }
+}
+
+static void
+print_syncs(void)
+{
+    for (uint32_t i = 0; i < 257; i++)
+    {
+	if (syncs[i].count != 0)
+	{
+	    printf("%s:%zu synchronizes-with %s:%zu (%lu)\n",
+		    syncs[i].file0, syncs[i].line0,
+		    syncs[i].file1, syncs[i].line1,
+		    syncs[i].count);
+	}
+    }
+}
+static void
+print_races(void)
+{
+    for (uint32_t i = 0; i < 257; i++)
+    {
+	if (races[i].count != 0)
+	{
+	    printf("%s:%zu data-races-with %s:%zu (%lu)\n",
+		    races[i].file0, races[i].line0,
+		    races[i].file1, races[i].line1,
+		    races[i].count);
+	}
+    }
+}
+
+//Return true if [addr0:size0] is within [addr1:size1]
+static bool
+inside(uintptr_t addr0, uint32_t size0, uintptr_t addr1, uint32_t size1)
+{
+    //Check if before
+    if (addr0 + size0 <= addr1)
+    {
+	return false;
+    }
+    //Check if after
+    if (addr0 >= addr1 + size1)
+    {
+	return false;
+    }
+    //Some form of overlap
+    return true;
+}
+
+enum verify_status { success, interrupted, failed };
+
+struct trace
+{
+    struct ver_file_line fl;
+    uint16_t id;
+    int16_t syncw;//Synchronizes-with this step
+};
+
+static bool
+analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct trace trace[])
+{
+    //Check for read operation
+    if ((fl->fmt & V_READ) != 0)
+    {
+	//Try to find matching earlier write
+	assert(fl->fmt & V_AD);
+	uintptr_t addr = (uintptr_t)fl->addr;
+	uint32_t size = fl->fmt & 0xff;
+	for (int32_t i = step - 1; i >= 0; i--)
+	{
+	    uintptr_t addr_i = (uintptr_t)trace[i].fl.addr;
+	    uint32_t size_i = trace[i].fl.fmt & 0xff;
+	    if ((trace[i].fl.fmt & V_WRITE) && inside(addr, size, addr_i, size_i))
+	    {
+		bool same = trace[i].id == id;
+		if (VERBOSE)
+		{
+		    printf("%s read on step %d matches %s write from %s thread on step %d (line %zu)\n",
+			    fl->memo == V_REGULAR ? "Regular" : "Atomic",
+			    step,
+			    trace[i].fl.memo == V_REGULAR ? "regular" : "atomic",
+			    same ? "same" : "other", i, trace[i].fl.line);
+		}
+		if (same)
+		{
+		    //Read matches write from same thread => ok
+		    return true;
+		}
+		if (fl->memo != V_REGULAR && trace[i].fl.memo != V_REGULAR)
+		{
+		    //Atomic read matches atomic write from other thread => ok
+		    if (is_acq(fl->memo) && is_rls(trace[i].fl.memo))
+		    {
+			//Load-acquire matches store-release => synchronizes-with
+			trace[step].syncw = i;
+			if (VERBOSE)
+			{
+			    printf("Step %d synchronizes-with step %d\n", step, i);
+			}
+			fileline_add(syncs, fl->file, fl->line, trace[i].fl.file, trace[i].fl.line);
+		    }
+		    return true;
+		}
+		//Else at least one memory access is regular (non-atomic), this could be a problem
+		assert(fl->memo == V_REGULAR || trace[k].fl.memo == V_REGULAR);
+		//Search for synchronize-with between steps-1..i+1
+		for (int32_t j = step - 1; j > i; j--)
+		{
+		    if (trace[j].id == id && trace[j].syncw > i)
+		    {
+			if (VERBOSE)
+			{
+			    printf("Read on step %d matching write on step %d saved by synchronizes-with on steps %d-%d\n", step, i, j, trace[j].syncw);
+			}
+			return true;
+		    }
+		}
+		if (VERBOSE)
+		{
+		    printf("ERROR: Read on step %d matching write on step %d missing synchronize-with!\n", step, i);
+		}
+		fileline_add(races, fl->file, fl->line, trace[i].fl.file, trace[i].fl.line);
+		return false;
+	    }
+	    //Else no address match, continue search
+	}
+	//No matching write found
+    }
+    //Else not a read operation
+    return true;
+}
+
+static void
+verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t mask)
+{
+    struct trace trace[NUMSTEPS + 1] = { 0 };
     enum verify_status status = interrupted;
     intptr_t res[NUMCOROS] = { !RET_DONE, !RET_DONE };
     uint64_t p = permutation;
@@ -307,7 +490,8 @@ verify(const struct ver_funcs *vf, uint64_t permutation, intptr_t mask)
 	verify_id = id;//Assign to global variable as well for external use
 	//Resume identified coroutine
 	intptr_t ret = p64_coro_resume(&CORO[id], RES_EXEC);
-	trace_id[step] = id;
+	trace[step].id = id;
+	trace[step].syncw = -1;//Does not synchronize-with anything (yet)
 	//RET_DONE return means coroutine completed
 	if (ret == RET_DONE)
 	{
@@ -332,10 +516,19 @@ verify(const struct ver_funcs *vf, uint64_t permutation, intptr_t mask)
 	{
 	    struct ver_file_line *fl = (struct ver_file_line *)ret;
 	    res[id] = !RET_DONE;
-	    trace[step] = *fl;//Save operation in trace
+	    trace[step].fl = *fl;//Save operation in trace
 	    if (VERBOSE)
 	    {
 		print_result(fl, id, step, mask);
+	    }
+	    if (analyze)
+	    {
+		if (!analyze_memo(id, step, fl, trace))
+		{
+		    printf("Permutation %#lx step %u: Verification failed\n", permutation, step);
+		    status = failed;
+		    break;
+		}
 	    }
 	    //Check for yield to other thread
 	    if (fl->fmt & V_YIELD)
@@ -397,12 +590,13 @@ failure:
 	//Print the steps that led to here
 	for (uint32_t i = 0; i < step; i++)
 	{
-	    print_result(&trace[i], trace_id[i], i, mask);
+	    print_result(&trace[i].fl, trace[i].id, i, mask);
 	}
     }
 }
 
-static void int_handler(int dummy)
+static void
+int_handler(int dummy)
 {
     (void)dummy;
     if (user_interrupt)
@@ -416,6 +610,16 @@ static void int_handler(int dummy)
     user_interrupt = true;
 }
 
+static inline uint64_t
+xorshift64(uint64_t x)
+{
+    //x == 0 will return 0
+    x ^= x << 13;
+    x ^= x >> 7;
+    x ^= x << 17;
+    return x;
+}
+
 int main(int argc, char *argv[])
 {
 #ifndef VERIFY
@@ -426,11 +630,16 @@ int main(int argc, char *argv[])
     int64_t permutation = -1;//Steal one permutation
     uint64_t upper = (uint64_t)1 << 32;//Default upper bound to verify
     uintptr_t mask = ~(uintptr_t)0;
+    uint64_t random = 0;
+    bool analyze = false;
     int c;
-    while ((c = getopt(argc, argv, "mp:u:vw")) != -1)
+    while ((c = getopt(argc, argv, "amp:r:u:vw")) != -1)
     {
 	switch (c)
 	{
+	    case 'a' :
+		analyze = true;
+		break;
 	    case 'm' :
 		mask = (uint32_t)mask;
 		break;
@@ -446,6 +655,20 @@ int main(int argc, char *argv[])
 		else
 		{
 		    permutation = strtoul(optarg, NULL, 10);
+		}
+		break;
+	    case 'r' :
+		if (optarg[0] == '0' && optarg[1] == 'x')
+		{
+		    random = strtoul(optarg + 2, NULL, 16);
+		}
+		else if (optarg[0] == '0' && optarg[1] == 'b')
+		{
+		    random = strtoul(optarg + 2, NULL, 2);
+		}
+		else
+		{
+		    random = strtoul(optarg, NULL, 10);
 		}
 		break;
 	    case 'u' :
@@ -471,8 +694,10 @@ int main(int argc, char *argv[])
 	    default :
 usage:
 		fprintf(stderr, "Usage: verify [<options>] <datatype>\n"
+			"-a               Analyze memory orderings\n"
 			"-m               Mask addresses and values to 32 bits when displaying\n"
 			"-p <permutation> Specify permutation\n"
+			"-r <seed>        Specify seed for random permutations\n"
 			"-u <limit>       Specify upper limit of permutations to sweep\n"
 			"-v               Verbose\n"
 			"-w               Warnings become failures\n"
@@ -510,7 +735,27 @@ list_datatypes:
     }
     if (permutation != -1)
     {
-	verify(*vf, permutation, mask);
+	verify(*vf, permutation, analyze, mask);
+	print_syncs();
+	print_races();
+	return EXIT_SUCCESS;
+    }
+    else if (random != 0)
+    {
+	for (uint64_t iter = 0; iter < upper; iter++)
+	{
+	    if (!VERBOSE && iter % 100000 == 0)
+	    {
+		printf("Verifying permutation %#lx\n", random);
+	    }
+	    verify(*vf, random, analyze, mask);
+	    if (user_interrupt)
+	    {
+		printf("Interrupted\n");
+		break;
+	    }
+	    random = xorshift64(random);
+	}
     }
     else
     {
@@ -520,24 +765,26 @@ list_datatypes:
 	    {
 		printf("Verifying permutation %#lx...\n", perm);
 	    }
-	    verify(*vf, perm, mask);
+	    verify(*vf, perm, analyze, mask);
 	    if (user_interrupt)
 	    {
 		printf("Interrupted\n");
 		break;
 	    }
 	}
-	uint64_t succeeded = 0;
-	for (uint32_t i = 0; i < NUMSTEPS; i++)
-	{
-	    succeeded += HISTO[i];
-	    printf("%u: %lu\n", i, HISTO[i]);
-	}
-	succeeded += HISTO[INTERRUPTED] + HISTO[FAILED];
-	printf("succeeded: %lu\n", succeeded);
-	printf("interrupted: %lu\n", HISTO[INTERRUPTED]);
-	printf("failed: %lu\n", HISTO[FAILED]);
     }
+    uint64_t succeeded = 0;
+    for (uint32_t i = 0; i < NUMSTEPS; i++)
+    {
+	succeeded += HISTO[i];
+	printf("%u: %lu\n", i, HISTO[i]);
+    }
+    succeeded += HISTO[INTERRUPTED] + HISTO[FAILED];
+    printf("succeeded: %lu\n", succeeded);
+    printf("interrupted: %lu\n", HISTO[INTERRUPTED]);
+    printf("failed: %lu\n", HISTO[FAILED]);
+    print_syncs();
+    print_races();
 
     return EXIT_SUCCESS;
 }
