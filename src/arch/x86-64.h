@@ -15,8 +15,9 @@ static inline void *
 addr_dep(const void *ptr, uintptr_t dep)
 {
     void *res;
-    __asm ("xor %0, %1, %2\n"
-	   "xor %0, %0, %2\n"
+    __asm ("movq %1,%0\n"
+	   "xor %2, %0\n"
+	   "xor %2, %0\n"
 	   : "=&r" (res)
 	   : "r" (ptr), "r" (dep)
 	   : );
@@ -42,7 +43,9 @@ counter_read(void)
 static inline void
 doze(void)
 {
+#ifndef VERIFY
     __asm__ volatile("pause" : : : "memory");
+#endif
 }
 
 static inline void
@@ -73,7 +76,7 @@ smp_fence(unsigned int mask)
 }
 
 #define WFE() doze()
-#define LDX(a, b)  __atomic_load_n((a), (b))
-#define LDXPTR(a, b)  __atomic_load_n((a), (b))
+#define LDX(a,b) __atomic_load_n((a), (b))
+#define LDXPTR(a,b) __atomic_load_n((a), (b))
 
 #endif

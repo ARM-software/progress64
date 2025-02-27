@@ -6,7 +6,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 
-#include <arm_acle.h>
 #include "p64_linklist.h"
 #include "os_abstraction.h"
 

@@ -57,6 +57,27 @@ static_assert(offsetof(p64_crosscall_t, fp) == 16, "offsetof(p64_crosscall_t, fp
 #endif
 		       "cc", "memory");
     return x0;//arg from other side
+#else
+    register intptr_t         rdi __asm("rdi") = arg;//1st argument
+    register p64_crosscall_t *rsi __asm("rsi") = out;//2nd argument
+    register p64_crosscall_t *rdx __asm("rdx") = in;//3rd argument
+    __asm __volatile("movq %%rbp,16(%1)\n" //Save old FP
+		     "movq %%rsp,8(%1)\n" //Save old SP
+		     "lea  1f(%%rip),%%rax\n"//Read PC of "1" label
+		     "movq %%rax,0(%1)\n" //Save old PC
+		     "movq 16(%2),%%rbp\n" //Load and restore new FP
+		     "movq 8(%2),%%rsp\n"  //Load and restore new SP
+		     "movq 0(%2),%%rax\n" //Load new PC
+		     "jmp *%%rax\n" //Jump to (restore) PC
+		     "1: endbr64\n"//Indirect jump landing pad
+		     : "+r" (rdi), "+r" (rsi), "+r" (rdx)
+		     :
+		     : "rax", "rbx", "rcx", /*rdx*/ /*rsi*/ /*rdi*/ /*rsp*/ /*rbp*/
+		       "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+		       "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
+		       "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
+		       "cc", "memory");
+    return rdi;//arg from other side
 #endif
 }
 
