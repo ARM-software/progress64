@@ -352,9 +352,9 @@ print_races(void)
     }
 }
 
-//Return true if [addr0:size0] is within [addr1:size1]
+//Return true if [addr0:size0] is overlapping [addr1:size1]
 static bool
-inside(uintptr_t addr0, uint32_t size0, uintptr_t addr1, uint32_t size1)
+overlap(uintptr_t addr0, uint32_t size0, uintptr_t addr1, uint32_t size1)
 {
     //Check if before
     if (addr0 + size0 <= addr1)
@@ -393,16 +393,18 @@ analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct trace 
 	{
 	    uintptr_t addr_i = (uintptr_t)trace[i].fl.addr;
 	    uint32_t size_i = trace[i].fl.fmt & 0xff;
-	    if ((trace[i].fl.fmt & V_WRITE) && inside(addr, size, addr_i, size_i))
+	    if ((trace[i].fl.fmt & V_WRITE) && overlap(addr, size, addr_i, size_i))
 	    {
 		bool same = trace[i].id == id;
 		if (VERBOSE)
 		{
-		    printf("%s read on step %d matches %s write from %s thread on step %d (line %zu)\n",
+		    printf("%s read_%u on step %d matches %s write_%u from %s thread on step %d\n",
 			    fl->memo == V_REGULAR ? "Regular" : "Atomic",
+			    fl->fmt & 0xff,
 			    step,
 			    trace[i].fl.memo == V_REGULAR ? "regular" : "atomic",
-			    same ? "same" : "other", i, trace[i].fl.line);
+			    trace[i].fl.fmt & 0xff,
+			    same ? "same" : "other", i);
 		}
 		if (same)
 		{
@@ -418,9 +420,19 @@ analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct trace 
 			trace[step].syncw = i;
 			if (VERBOSE)
 			{
-			    printf("Step %d synchronizes-with step %d\n", step, i);
+			    printf("Step %d (%s:%zu) synchronizes-with step %d (%s:%zu)\n",
+				    step, fl->file, fl->line,
+				    i, trace[i].fl.file, trace[i].fl.line);
 			}
 			fileline_add(syncs, fl->file, fl->line, trace[i].fl.file, trace[i].fl.line);
+		    }
+		    else if (is_acq(fl->memo) && !is_rls(trace[i].fl.memo))
+		    {
+			if (VERBOSE)
+			{
+			    printf("Ignoring acquire-relaxed match\n");
+			}
+			continue;
 		    }
 		    return true;
 		}
@@ -529,6 +541,7 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
 		{
 		    printf("Permutation %#lx step %u: Verification failed\n", permutation, step);
 		    status = failed;
+		    step++;//Ensure the last operation is saved in trace
 		    break;
 		}
 	    }
