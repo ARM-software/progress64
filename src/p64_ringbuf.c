@@ -183,52 +183,44 @@ static inline p64_ringbuf_result_t
 acquire_slots_mtsafe(union endpoint *ep,
 		     int n)
 {
-    ringidx_t head, tail, capacity;
+    union endpoint mem;
     uint32_t mask;
     int actual;
-#ifdef __ARM_FEATURE_ATOMICS
-    union endpoint mem, swp, cmp;
-    //Atomic read using ICAS, preparing for ensuing write
-    mem.atom = atomic_icas_n(&ep->atom, __ATOMIC_RELAXED);
-    //Address dependency to prevent accesses through 'ep' to be speculated before the ICAS above
-    ep = addr_dep(ep, mem.atom);
-    capacity = mem.capacity;
-#else
-    tail = atomic_load_n(&ep->tail, __ATOMIC_RELAXED);
-    head = atomic_load_n(&ep->head.cur, __ATOMIC_ACQUIRE);
-    capacity = ep->capacity;
-#endif
-    //Mask is located imediately after the endpoint
+#ifndef __ARM_FEATURE_ATOMICS
+    mem.tail = atomic_load_n(&ep->tail, __ATOMIC_RELAXED);
+    mem.capacity = ep->capacity;
+    //Mask is located immediately after the endpoint
     static_assert(offsetof(struct p64_ringbuf, prod_mask) == offsetof(struct p64_ringbuf, prod) + sizeof(union endpoint), "prod_mask");
     static_assert(offsetof(struct p64_ringbuf, cons_mask) == offsetof(struct p64_ringbuf, cons) + sizeof(union endpoint), "cons_mask");
     mask = *(uint32_t *)(ep + 1);
+#endif
     do
     {
 #ifdef __ARM_FEATURE_ATOMICS
-	tail = mem.tail;
-	head = mem.head.cur;
+	//Atomic read using ICAS, preparing for ensuing write
+	mem.atom = atomic_icas_n(&ep->atom, __ATOMIC_ACQUIRE);
+	//Address dependency to prevent accesses through 'ep' to be speculated before the ICAS above
+	ep = addr_dep(ep, mem.atom);
+	//Mask is located immediately after the endpoint
+	static_assert(offsetof(struct p64_ringbuf, prod_mask) == offsetof(struct p64_ringbuf, prod) + sizeof(union endpoint), "prod_mask");
+	static_assert(offsetof(struct p64_ringbuf, cons_mask) == offsetof(struct p64_ringbuf, cons) + sizeof(union endpoint), "cons_mask");
+	mask = *(uint32_t *)(ep + 1);
+#else
+	//Must reload head if CAS(tail) fails or we could fail to dequeue an existing element
+	mem.head.cur = atomic_load_n(&ep->head.cur, __ATOMIC_ACQUIRE);
 #endif
-	actual = MIN(n, (int)(capacity + head - tail));
+	actual = MIN(n, (int)(mem.capacity + mem.head.cur - mem.tail));
 	if (UNLIKELY(actual <= 0))
 	{
 	    return (p64_ringbuf_result_t){ .index = 0, .actual = 0, .mask = 0 };
 	}
-#ifdef __ARM_FEATURE_ATOMICS
-	cmp = swp = mem;
-	swp.tail += actual;
-	mem.atom = atomic_cas_n(&ep->atom, cmp.atom, swp.atom, __ATOMIC_ACQUIRE);//Load-acquire head
-#endif
     }
-#ifdef __ARM_FEATURE_ATOMICS
-    while (UNLIKELY(mem.atom != cmp.atom));
-#else
     while (!atomic_compare_exchange_n(&ep->tail,
-				      &tail,//Updated on failure
-				      tail + actual,
+				      &mem.tail,//Updated on failure
+				      mem.tail + actual,
 				      __ATOMIC_RELAXED,
 				      __ATOMIC_RELAXED));
-#endif
-    return (p64_ringbuf_result_t){ .index = tail,
+    return (p64_ringbuf_result_t){ .index = mem.tail,
 				   .actual = actual,
 				   .mask = mask };
 }
@@ -242,27 +234,18 @@ static inline void
 release_slots(struct idxpair *loc,
 	      ringidx_t idx,
 	      uint32_t n,
-	      bool loads_only,
 	      uint32_t flags)
 {
     if (flags & FLAG_BLK)
     {
 	//Wait for our turn to signal consumers (producers)
-	wait_until_equal_w_bkoff(&loc->cur, idx, 50, __ATOMIC_RELAXED);
+	wait_until_equal_w_bkoff(&loc->cur, idx, 50, __ATOMIC_ACQUIRE);
     }
     if (!(flags & FLAG_NONBLK))
     {
 	//Release elements to consumers (producers)
 	//Also enable other producers (consumers) to proceed
-	if (loads_only)
-	{
-	    smp_fence(LoadStore);//Order loads only
-	    atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELAXED);
-	}
-	else
-	{
-	    atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELEASE);
-	}
+	atomic_store_n(&loc->cur, idx + n, __ATOMIC_RELEASE);
 	return;
     }
     //Else non-blocking (FLAG_NONBLK)
@@ -276,8 +259,8 @@ release_slots(struct idxpair *loc,
 	if (UNLIKELY(atomic_compare_exchange_n((uint64_t *)loc,
 						 &old,
 						 neu,
-						 __ATOMIC_RELEASE,
-						 __ATOMIC_RELAXED)))
+						 __ATOMIC_ACQ_REL,
+						 __ATOMIC_ACQUIRE)))
 	{
 	    return;
 	}
@@ -312,8 +295,8 @@ release_slots(struct idxpair *loc,
     while (!atomic_compare_exchange_n((uint64_t *)loc,
 					&old,//Updated on failure
 					neu,
-					__ATOMIC_RELEASE,
-					__ATOMIC_RELAXED));
+					__ATOMIC_ACQ_REL,
+					__ATOMIC_ACQUIRE));
 }
 
 inline p64_ringbuf_result_t
@@ -399,8 +382,7 @@ p64_ringbuf_release_(p64_ringbuf_t *rb,
     if (enqueue)
     {
 	//Consumer metadata is swapped: cons.tail<->cons.head
-	release_slots(&rb->cons.head/*tail*/, r.index, r.actual,
-		      /*loads_only=*/false, prod_flags);
+	release_slots(&rb->cons.head/*tail*/, r.index, r.actual, prod_flags);
 	return true;//Success
     }
     else //dequeue
@@ -414,8 +396,7 @@ p64_ringbuf_release_(p64_ringbuf_t *rb,
 						       __ATOMIC_RELAXED);
 	    return success;
 	}
-	release_slots(&rb->prod.head, r.index, r.actual,
-		      /*loads_only=*/true, cons_flags);
+	release_slots(&rb->prod.head, r.index, r.actual, cons_flags);
 	return true;//Success
     }
 }
@@ -438,7 +419,8 @@ write_slots(void **restrict rbring,
     void **restrict ring0 = &rbring[r.index & r.mask];
     if (LIKELY(r.actual <= 1))
     {
-	ring0[0] = ev[0];
+	//Use regular_store_n() from atomic.h to support verification
+	regular_store_n(&ring0[0], ev[0]);
 	return;
     }
     uint32_t seg0 = r.mask + 1 - (r.index & r.mask);
@@ -491,8 +473,7 @@ p64_ringbuf_enqueue(p64_ringbuf_t *rb,
 
     //Step 3: release slots to consumer
     //Consumer metadata is swapped: cons.tail<->cons.head
-    release_slots(&rb->cons.head/*tail*/, r.index, r.actual,
-		  /*loads_only=*/false, prod_flags);
+    release_slots(&rb->cons.head/*tail*/, r.index, r.actual, prod_flags);
 
     return r.actual;
 }
@@ -505,7 +486,8 @@ read_slots(void *const *restrict rbring,
     void *const *restrict ring0 = &rbring[r.index & r.mask];
     if (LIKELY(r.actual <= 1))
     {
-	ev[0] = ring0[0];
+	//Use regular_load_n() from atomic.h to support verification
+	ev[0] = regular_load_n(&ring0[0]);
 	return;
     }
     uint32_t seg0 = r.mask + 1 - (r.index & r.mask);
@@ -599,8 +581,7 @@ p64_ringbuf_dequeue(p64_ringbuf_t *rb,
     read_slots(rb->ring, ev, r);
 
     //Step 3: release slots to producer
-    release_slots(&rb->prod.head, r.index, r.actual,
-		  /*loads_only=*/true, cons_flags);
+    release_slots(&rb->prod.head, r.index, r.actual, cons_flags);
 
     *index = r.index;
     return r.actual;

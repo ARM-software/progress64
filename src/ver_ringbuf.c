@@ -43,15 +43,12 @@ ver_ringbuf_mpmc_exec(uint32_t id)
 {
     (void)id;
     uint32_t idx;
+    (void)idx;
     uint32_t *elem = &rb_elems[id];
     VERIFY_ASSERT(p64_ringbuf_enqueue(rb_rb, (void **)&elem, 1) == 1);
     rb_mask ^= 1U << id;
-    //We cannot successfully dequeue element until all preceding enqueues have completed
     elem = NULL;
-    while (p64_ringbuf_dequeue(rb_rb, (void **)&elem, 1, &idx) == 0)
-    {
-	VERIFY_YIELD();
-    }
+    VERIFY_ASSERT(p64_ringbuf_dequeue(rb_rb, (void **)&elem, 1, &idx) == 1);
     VERIFY_ASSERT(idx == 0 || idx == 1);
     VERIFY_ASSERT(elem == &rb_elems[0] || elem == &rb_elems[1]);
     if (elem == &rb_elems[0])
@@ -100,7 +97,9 @@ ver_ringbuf_nbenbd_exec(uint32_t id)
     uint32_t *elem = &rb_elems[id];
     VERIFY_ASSERT(p64_ringbuf_enqueue(rb_rb, (void **)&elem, 1) == 1);
     rb_mask ^= 1U << id;
-    //We cannot successfully dequeue element until all preceding enqueues have completed
+    //With the non-blocking ring buffer, our enqueue/dequeue operation may return before
+    //preceding enqueue/dequeue operations have completed and our out-of-order/deferred
+    //updates have been applied
     elem = NULL;
     while (p64_ringbuf_dequeue(rb_rb, (void **)&elem, 1, &idx) == 0)
     {
