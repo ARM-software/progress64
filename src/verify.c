@@ -794,7 +794,6 @@ list_datatypes:
 	succeeded += HISTO[i];
 	printf("%u: %lu\n", i, HISTO[i]);
     }
-    succeeded += HISTO[INTERRUPTED] + HISTO[FAILED];
     printf("succeeded: %lu\n", succeeded);
     printf("interrupted: %lu\n", HISTO[INTERRUPTED]);
     printf("failed: %lu\n", HISTO[FAILED]);
