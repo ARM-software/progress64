@@ -20,6 +20,7 @@ hashtable
 hemlock
 mbtrie
 mcas
+mcqueue
 mcslock
 msqueue
 laxrob

@@ -6,7 +6,7 @@ PROGRESS64 is a C library of scalable functions for parallel and concurrent prog
 A secondary purpose is to inform and inspire the use of the C11-based memory model (especially Release Consistency i.e. using load-acquire/store-release) for multithreaded programming.
 
 ## Functionality
-### Non-blocking functions
+### Non-blocking or concurrent functions
 | Name | Description | Properties |
 | ---- | ---- | :----: |
 | antireplay | replay protection | lock-free/wait-free
@@ -19,6 +19,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
 | hopscotch | hash table - hopscotch with cellar | non-blocking (1)
 | mcas | Harris/Fraser/Pratt multi-word CAS | lock-free
+| mcqueue | Mellor-Crummey concurrent queue  | blocking
 | msqueue | Michael & Scott queue with configurable ABA workaround (lock/tag/smr) | blocking/lock-free
 | laxrob | 'lax' reorder buffer | non-blocking (1)
 | lfring | ring buffer | lock-free
