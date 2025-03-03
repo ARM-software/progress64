@@ -16,7 +16,7 @@
 #include "os_abstraction.h"
 
 #include "arch.h"
-#include "lockfree.h"
+#include "atomic.h"
 #include "common.h"
 #include "err_hnd.h"
 
@@ -91,10 +91,10 @@ p64_buckrob_acquire(p64_buckrob_t *rob,
     uint32_t head, tail;
     int32_t actual;
     PREFETCH_FOR_WRITE(&rob->tail);
-    tail = __atomic_load_n(&rob->tail, __ATOMIC_RELAXED);
+    tail = atomic_load_n(&rob->tail, __ATOMIC_RELAXED);
     do
     {
-	head = __atomic_load_n(&rob->head, __ATOMIC_ACQUIRE);
+	head = atomic_load_n(&rob->head, __ATOMIC_ACQUIRE);
 	int32_t available = (rob->mask + 1) - (tail - head);
 	//Use signed arithmetic for robustness as head & tail are not read
 	//atomically, available may be < 0
@@ -104,37 +104,14 @@ p64_buckrob_acquire(p64_buckrob_t *rob,
 	    return 0;
 	}
     }
-    while (!__atomic_compare_exchange_n(&rob->tail,
-					&tail,//Updated on failure
-					tail + actual,
-					/*weak=*/true,
-					__ATOMIC_RELAXED,
-					__ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(&rob->tail,
+				      &tail,//Updated on failure
+				      tail + actual,
+				      __ATOMIC_RELAXED,
+				      __ATOMIC_RELAXED));
     *sn = tail;
     return actual;
 }
-
-#if defined __aarch64__ && !defined __ARM_FEATURE_ATOMICS
-static inline void
-atomic_snmax_4(uint32_t *loc, uint32_t neu, int mo_store)
-{
-    uint32_t old = __atomic_load_n(loc, __ATOMIC_RELAXED);
-    do
-    {
-	if ((int32_t)(neu - old) <= 0)//neu <= old
-	{
-	    return;
-	}
-	//Else neu > old, update *loc
-    }
-    while (!__atomic_compare_exchange_n(loc,
-					&old,//Updated on failure
-					neu,
-					/*weak=*/true,
-					mo_store,
-					__ATOMIC_RELAXED));
-}
-#endif
 
 static inline bool
 AFTER(uint32_t x, uint32_t y)
@@ -162,7 +139,7 @@ p64_buckrob_release(p64_buckrob_t *rob,
 	//a SN currently outside of the ROB window
 	uint32_t sz = mask + 1;
 	if (UNLIKELY(AFTER(sn + nelems,
-			   __atomic_load_n(&rob->head, __ATOMIC_ACQUIRE) + sz)))
+			   atomic_load_n(&rob->head, __ATOMIC_ACQUIRE) + sz)))
 	{
 	    //We must wait for enough elements to be retired so that our SN
 	    //fits inside the ROB window
@@ -182,7 +159,7 @@ p64_buckrob_release(p64_buckrob_t *rob,
     for (uint32_t i = 1; i < nelems; i++)
     {
 	assert(elems[i] != NULL && elems[i] != P64_BUCKROB_RESERVED_ELEM);
-	__atomic_store_n(&rob->ring[(sn + i) & mask],
+	atomic_store_ptr(&rob->ring[(sn + i) & mask],
 			 elems[i],
 			 __ATOMIC_RELAXED);
     }
@@ -192,10 +169,9 @@ p64_buckrob_release(p64_buckrob_t *rob,
     //Assume not in-order <=> out-of-order
     //Attempt to release our (first) element
     void *old = NULL;
-    if (__atomic_compare_exchange_n(&rob->ring[sn & mask],
+    if (atomic_compare_exchange_ptr(&rob->ring[sn & mask],
 				    &old,
 				    elem,
-				    /*weak=*/false,
 				    __ATOMIC_ACQ_REL,
 				    __ATOMIC_ACQUIRE))
     {
@@ -208,22 +184,22 @@ p64_buckrob_release(p64_buckrob_t *rob,
     uint32_t npending = 0;
     uint32_t org_sn = sn;
     //Free our slot
-    __atomic_store_n(&rob->ring[sn & mask], NULL, __ATOMIC_RELAXED);
+    atomic_store_ptr(&rob->ring[sn & mask], NULL, __ATOMIC_RELAXED);
     cb(arg, elem, sn++);
     npending++;
     //Read next slot
-    elem = __atomic_load_n(&rob->ring[sn & mask], __ATOMIC_ACQUIRE);
+    elem = atomic_load_ptr(&rob->ring[sn & mask], __ATOMIC_ACQUIRE);
     do
     {
 	//Find valid elements
 	while (elem != NULL)
 	{
 	    //Free this slot
-	    __atomic_store_n(&rob->ring[sn & mask], NULL, __ATOMIC_RELAXED);
+	    atomic_store_ptr(&rob->ring[sn & mask], NULL, __ATOMIC_RELAXED);
 	    cb(arg, elem, sn++);
 	    npending++;
 	    //Read next slot
-	    elem = __atomic_load_n(&rob->ring[sn & mask], __ATOMIC_ACQUIRE);
+	    elem = atomic_load_ptr(&rob->ring[sn & mask], __ATOMIC_ACQUIRE);
 	}
 	//No more consecutive valid elements
 	if (LIKELY(npending != 0))
@@ -234,19 +210,11 @@ p64_buckrob_release(p64_buckrob_t *rob,
 	assert(elem == NULL);
 	//Mark next slot as in order - pass the buck
     }
-    while (!__atomic_compare_exchange_n(&rob->ring[sn & mask],
+    while (!atomic_compare_exchange_ptr(&rob->ring[sn & mask],
 				        &elem,//Updated on failure
 				        THE_BUCK,
-				        /*weak=*/true,
 				        __ATOMIC_ACQ_REL,
 				        __ATOMIC_ACQUIRE));
     //Finally make all freed slots available for new acquisition
-#if defined __aarch64__ && !defined __ARM_FEATURE_ATOMICS
-    //For targets without atomic add to memory, e.g. ARMv8.0
-    atomic_snmax_4(&rob->head, sn, __ATOMIC_RELEASE);
-    (void)org_sn;
-#else
-    //For targets with atomic add to memory, e.g. ARMv8.1
-    __atomic_fetch_add(&rob->head, sn - org_sn, __ATOMIC_RELEASE);
-#endif
+    atomic_fetch_add(&rob->head, sn - org_sn, __ATOMIC_RELEASE);
 }

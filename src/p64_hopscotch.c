@@ -692,12 +692,11 @@ write_elem(struct bucket *bkt,
 	new.bk.bmc.count += home_bkt;
 	new.bk.elem = elem;
     }
-    while (UNLIKELY(!lockfree_compare_exchange_pp((ptrpair_t*)bkt,
-						  &old.pp,
-						  new.pp,
-						  /*weak=*/false,
-						  rls ? __ATOMIC_RELEASE : __ATOMIC_RELAXED,
-						  __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_n((ptrpair_t*)bkt,
+					       &old.pp,
+					       new.pp,
+					       rls ? __ATOMIC_RELEASE : __ATOMIC_RELAXED,
+					       __ATOMIC_RELAXED)));
     return true;
 }
 

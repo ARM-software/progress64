@@ -15,7 +15,6 @@
 
 #include "common.h"
 #include "arch.h"
-#include "lockfree.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
 

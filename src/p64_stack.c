@@ -12,7 +12,7 @@
 #include "build_config.h"
 #include "arch.h"
 #include "err_hnd.h"
-#include "lockfree.h"
+#include "atomic.h"
 
 #define TAG_INCREMENT 4
 
@@ -66,10 +66,10 @@ atomic_load_stk(p64_stack_t *stk, int mo)
     p64_stack_t old;
     do
     {
-        old.tag = __atomic_load_n(&stk->tag, mo);
-        old.head = __atomic_load_n(addr_dep(&stk->head, old.tag), __ATOMIC_RELAXED);
+        old.tag = atomic_load_n(&stk->tag, mo);
+        old.head = atomic_load_n(addr_dep(&stk->head, old.tag), __ATOMIC_RELAXED);
     }
-    while (__atomic_load_n(addr_dep(&stk->tag, old.head), __ATOMIC_RELAXED) != old.tag);
+    while (atomic_load_n(addr_dep(&stk->tag, old.head), __ATOMIC_RELAXED) != old.tag);
     return old;
 }
 
@@ -84,7 +84,7 @@ enqueue_tag(p64_stack_t *stk, p64_stack_elem_t *elem)
     do
     {
 #ifdef __ARM_FEATURE_ATOMICS
-	old.pp = casp((__int128 *)stk, 0, 0, __ATOMIC_RELAXED);
+	old.pp = atomic_icas_n((ptrpair_t *)stk, __ATOMIC_RELAXED);
 #else
 	old.st = atomic_load_stk(stk, __ATOMIC_RELAXED);
 #endif
@@ -92,13 +92,12 @@ enqueue_tag(p64_stack_t *stk, p64_stack_elem_t *elem)
 	neu.st.head = elem;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (EXTRACHK(__atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != old.st.tag) ||
-	   !lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
-					       &old.pp,
-					       neu.pp,
-					       /*weak=*/true,
-					       __ATOMIC_RELEASE,
-					       __ATOMIC_RELAXED));
+    while (EXTRACHK(atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != old.st.tag) ||
+	   !atomic_compare_exchange_n((ptrpair_t *)stk,
+				      &old.pp,
+				      neu.pp,
+				      __ATOMIC_RELEASE,
+				      __ATOMIC_RELAXED));
 }
 
 //Call-back function invoked when object is guaranteed not to be referenced
@@ -113,15 +112,14 @@ callback_smr(void *ptr)
     p64_stack_elem_t *old;
     do
     {
-	old = __atomic_load_n(&stk->head, __ATOMIC_RELAXED);
+	old = atomic_load_ptr(&stk->head, __ATOMIC_RELAXED);
 	elem->next = old;
     }
-    while (UNLIKELY(!__atomic_compare_exchange_n(&stk->head,
-						 &old,//Updated on failure
-						 elem,
-						 /*weak=*/true,
-						 __ATOMIC_RELEASE,
-						 __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_ptr(&stk->head,
+					         &old,//Updated on failure
+					         elem,
+					         __ATOMIC_RELEASE,
+					         __ATOMIC_RELAXED)));
 }
 
 static void
@@ -150,7 +148,7 @@ enqueue_llsc(p64_stack_t *stk, p64_stack_elem_t *elem)
     p64_stack_elem_t *old, *head;
     do
     {
-	head = __atomic_load_n(&stk->head, __ATOMIC_RELAXED);
+	head = atomic_load_ptr(&stk->head, __ATOMIC_RELAXED);
 	//Perform write outside of exclusives section
 	elem->next = head;
 	old = ldxptr(&stk->head, __ATOMIC_RELAXED);
@@ -218,13 +216,12 @@ dequeue_tag(p64_stack_t *stk)
 	neu.st.head = old.st.head->next;
 	neu.st.tag = old.st.tag + TAG_INCREMENT;
     }
-    while (UNLIKELY(EXTRACHK(__atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != old.st.tag) ||
-	   !lockfree_compare_exchange_pp_frail((ptrpair_t *)&stk->head,
-					       &old.pp,//Updated on failure
-					       neu.pp,
-					       /*weak=*/true,
-					       __ATOMIC_RELAXED,
-					       __ATOMIC_RELAXED)));
+    while (UNLIKELY(EXTRACHK(atomic_load_n(&stk->tag, __ATOMIC_RELAXED) != old.st.tag) ||
+	   !atomic_compare_exchange_n((ptrpair_t *)stk,
+				      &old.pp,//Updated on failure
+				      neu.pp,
+				      __ATOMIC_RELAXED,
+				      __ATOMIC_RELAXED)));
 
     return old.st.head;
 }
@@ -257,12 +254,11 @@ dequeue_smr(p64_stack_t *stk)
 	//CAS below would fail because 'stk->head' has changed
 	neu = old->next;
     }
-    while (UNLIKELY(!__atomic_compare_exchange_n(&stk->head,
-						 &old,
-						 neu,
-						 /*weak=*/true,
-						 __ATOMIC_RELAXED,
-						 __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_ptr(&stk->head,
+					         &old,
+					         neu,
+					         __ATOMIC_RELAXED,
+					         __ATOMIC_RELAXED)));
     p64_hazptr_release(&hp);
     return old;
 }
