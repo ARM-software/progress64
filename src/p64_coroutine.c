@@ -3,7 +3,6 @@
 //SPDX-License-Identifier:        BSD-3-Clause
 
 #include <assert.h>
-#include <stdio.h>
 #include <stdlib.h>
 
 #include "p64_coroutine.h"
@@ -66,6 +65,9 @@ p64_coro_spawn(p64_coroutine_t *cr,
     }
     //Ensure stack pointer is 16B aligned
     uintptr_t sp = ((uintptr_t)stkbt + stksz) & ~(uintptr_t)15;
+#ifdef __x86_64__
+    sp -= 8; //Hack to ensure stack pointer (rsp) later is 16-byte aligned
+#endif
     //Save user entrypoint and va_list pointer in wrapper args
     struct wrapper_args wargs;
     va_list args;

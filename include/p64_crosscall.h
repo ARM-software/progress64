@@ -1,11 +1,11 @@
-//Copyright (c) 2024, ARM Limited. All rights reserved.
+//Copyright (c) 2024-2025, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
-//The cross jump function switches between different stackful contexts
+//The cross-call function switches between different stackful contexts
 
-#ifndef P64_CROSSJUMP_H
-#define P64_CROSSJUMP_H
+#ifndef P64_CROSSCALL_H
+#define P64_CROSSCALL_H
 
 #include <assert.h>
 #include <stddef.h>
@@ -18,13 +18,14 @@ typedef struct
     uintptr_t fp;
 } p64_crosscall_t;
 
+__attribute__((always_inline))
 static inline intptr_t
 p64_cross_call(intptr_t arg, p64_crosscall_t *out, p64_crosscall_t *in)
 {
-#ifdef __aarch64__
 static_assert(offsetof(p64_crosscall_t, pc) == 0, "offsetof(p64_crosscall_t, pc) == 0");
 static_assert(offsetof(p64_crosscall_t, sp) == 8, "offsetof(p64_crosscall_t, sp) == 8");
 static_assert(offsetof(p64_crosscall_t, fp) == 16, "offsetof(p64_crosscall_t, fp) == 16");
+#ifdef __aarch64__
     register intptr_t         x0 __asm("x0") = arg;
     register p64_crosscall_t *x1 __asm("x1") = out;
     register p64_crosscall_t *x2 __asm("x2") = in;
@@ -74,8 +75,13 @@ static_assert(offsetof(p64_crosscall_t, fp) == 16, "offsetof(p64_crosscall_t, fp
 		     :
 		     : "rax", "rbx", "rcx", /*rdx*/ /*rsi*/ /*rdi*/ /*rsp*/ /*rbp*/
 		       "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
+#if defined __AVX__ || defined __AVX2__
+		       "ymm0", "ymm1", "ymm2", "ymm3", "ymm4", "ymm5", "ymm6", "ymm7",
+		       "ymm8", "ymm9", "ymm10", "ymm11", "ymm12", "ymm13", "ymm14", "ymm15",
+#elif defined __SSE__ || defined __SSE2__
 		       "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7",
 		       "xmm8", "xmm9", "xmm10", "xmm11", "xmm12", "xmm13", "xmm14", "xmm15",
+#endif
 		       "cc", "memory");
     return rdi;//arg from other side
 #endif
