@@ -451,14 +451,14 @@ p64_mbtrie_free(p64_mbtrie_t *mbt)
 //Compare-and-swap helper
 //'old' and 'new' passed by value, no update on failure
 static inline bool
-cas(void **loc, void *old, void *new, int mo)
+cmpxchg(void **loc, void *old, void *new, int mo_succ, int mo_fail)
 {
     return __atomic_compare_exchange_n(loc,//'*loc' updated on success
 				       &old,//Local 'old' updated on failure
 				       new,
 				       /*weak=*/false,
-				       MO_LOAD(mo) | MO_STORE(mo),//XXX
-				       MO_LOAD(mo));
+				       mo_succ,
+				       mo_fail);
 }
 
 //Attempt to swing a location from 'cur' to 'new', updating reference counters
@@ -471,7 +471,7 @@ swing_slot(p64_mbtrie_t *mbt,
 {
     //Increment refcnt of 'new' before making it shared
     increment_refcnt(new, 1);
-    if (cas(slotp, cur, new, __ATOMIC_RELEASE))
+    if (cmpxchg(slotp, cur, new, __ATOMIC_RELEASE, __ATOMIC_RELAXED))
     {
 	//'cur' removed from shared, decrement its refcnt
 	decrement_refcnt(mbt, cur, 1);
@@ -503,7 +503,7 @@ check_remains(void **slotp, void *cur)
 	    return true;//Slot content preserved
 	}
 	//Collapse-in-progress bit set, clear it, releasing our updates
-	if (cas(slotp, cur2, CLR_COLLAPSE(cur2), __ATOMIC_RELEASE))
+	if (cmpxchg(slotp, cur2, CLR_COLLAPSE(cur2), __ATOMIC_RELEASE, __ATOMIC_RELAXED))
 	{
 	    //Collapse aborted
 	    return true;//Slot content preserved
@@ -624,7 +624,7 @@ collapse_vec(p64_mbtrie_t *mbt,
 	}
 	assert(!IS_COLLAPSE(cur));
 	//Attempt to acquire mutex and set collapse bit
-	if (!cas(slotp, cur, SET_MUTEX(SET_COLLAPSE(cur)), __ATOMIC_ACQUIRE))
+	if (!cmpxchg(slotp, cur, SET_MUTEX(SET_COLLAPSE(cur)), __ATOMIC_ACQUIRE, __ATOMIC_ACQUIRE))
 	{
 	    //CAS failed, someone else took mutex or modified slot
 	    break;//Nothing for us to do
@@ -642,7 +642,7 @@ collapse_vec(p64_mbtrie_t *mbt,
 	assert(!IS_VECTOR(elem));
 	//Replace sub-vector with element
 	increment_refcnt(elem, 1);
-	if (!cas(slotp, SET_MUTEX(SET_COLLAPSE(cur)), elem, __ATOMIC_RELAXED))
+	if (!cmpxchg(slotp, SET_MUTEX(SET_COLLAPSE(cur)), elem, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
 	{
 	    //CAS failed, collapse-in-progress bit cleared by other thread
 	    __atomic_store_n(slotp, cur, __ATOMIC_RELEASE);
@@ -685,7 +685,7 @@ update_vec(p64_mbtrie_t *mbt,
 		break;
 	    }
 	    //Attempt to insert sub-vector as indirection node
-	    if (cas(slotp, cur, SET_VECTOR(vec), __ATOMIC_RELEASE))
+	    if (cmpxchg(slotp, cur, SET_VECTOR(vec), __ATOMIC_RELEASE, __ATOMIC_RELAXED))
 	    {
 		//CAS succeeded, sub-vector inserted
 		//Leaf node successfully replaced, one less reference
