@@ -38,6 +38,7 @@ qsbr
 reassemble
 reorder
 ringbuf
+rplock
 rwlock
 rwlock_r
 rwsync
