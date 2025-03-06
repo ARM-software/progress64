@@ -513,13 +513,17 @@ p64_hazptr_acquire_mask(void **pptr,
 		return NULL;
 	    }
 	}
-	//Step 2b: Initialise hazard pointer with reference
-	__atomic_store_n(*hp, masked_ptr, __ATOMIC_RELAXED);
+	//Atomic operations tagged memory_order_seq_cst not only order memory the
+	//same way as release/acquire ordering, but also establish a single total
+	//modification order of all atomic operations that are so tagged.
 
-	__atomic_thread_fence(__ATOMIC_SEQ_CST);//A: Synchronizes with B
+	//Step 2b: Initialise hazard pointer with reference
+	//This is also a store-release (which we don't need)
+	__atomic_store_n(*hp, masked_ptr, __ATOMIC_SEQ_CST);
 
 	//Step 3: Verify reference by re-reading and comparing
-	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_ACQUIRE) == ptr))
+	//This is also a load-acquire
+	if (LIKELY(__atomic_load_n(pptr, __ATOMIC_SEQ_CST) == ptr))
 	{
 	    return ptr;//Success
 	}
@@ -647,7 +651,6 @@ collect_refs(userptr_t refs[],
 	     uint32_t nthreads,
 	     uint32_t maxrefs)
 {
-    __atomic_thread_fence(__ATOMIC_SEQ_CST);//B: Synchronizes with A
     uint32_t nrefs = 0;
     uint32_t nrefs_rounded = roundup(maxrefs);
     uint32_t t;
@@ -659,6 +662,8 @@ collect_refs(userptr_t refs[],
 	ASSUME(maxrefs != 0);
 	for (uint32_t i = 0; i < maxrefs; i++)
 	{
+	    //Read the hazard pointers atomically but using relaxed semantics
+	    //since we don't care about any ordering vs. the SEQ_CST write
 	    userptr_t ptr0 = __atomic_load_n(hp0, __ATOMIC_RELAXED);
 	    userptr_t ptr1 = __atomic_load_n(hp1, __ATOMIC_RELAXED);
 	    hp0++;
