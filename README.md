@@ -15,6 +15,7 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | buckrob | reorder buffer using pass-the-buck algorithm | non-blocking (1)
 | counter | shared counters | reader obstruction-free, writer wait-free
 | cuckooht | hash table - cuckoo with cellar, one-level move | non-blocking (1)
+| deque | Michael double ended queue | lock-free
 | hashtable | hash table - separate chaining with linked lists | lock-free
 | hazardptr | safe object reclamation using hazard pointers | reader lock-free, writer blocking/non-blocking
 | hopscotch | hash table - hopscotch with cellar | non-blocking (1)

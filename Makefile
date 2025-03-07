@@ -16,7 +16,7 @@ endif
 ################################################################################
 
 #List of executable files to build
-TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock mcslock lfring qsbr tfrwlock tfrwlock_r pfrwlock stack lfstack msqueue counter mbtrie buckring buckrob skiplock mcas hemlock coroutine fiber blkring linklist verify mcqueue rplock
+TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock mcslock lfring qsbr tfrwlock tfrwlock_r pfrwlock stack lfstack msqueue counter mbtrie buckring buckrob skiplock mcas hemlock coroutine fiber blkring linklist verify mcqueue rplock deque
 #The following targets require pthreads and Linux support
 ifeq ($(UNAME),Linux)
 TARGETS += bm_ringbuf bm_smr bm_mbtrie bm_rob bm_hashtab bm_mcas bm_coroutine bm_fiber bm_lock bm_skiplock
@@ -27,6 +27,8 @@ OBJECTS_libprogress64.a += p64_linklist.o ver_linklist.o
 OBJECTS_libprogress64.a += p64_mcqueue.o ver_mcqueue.o
 OBJECTS_libprogress64.a += p64_rplock.o ver_rplock.o
 OBJECTS_rplock = rplock.o
+OBJECTS_libprogress64.a += p64_deque.o ver_deque.o
+OBJECTS_deque = deque.o
 OBJECTS_mcqueue = mcqueue.o
 OBJECTS_hashtable = hashtable.o
 OBJECTS_timer = timer.o

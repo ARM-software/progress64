@@ -93,6 +93,7 @@ static struct ver_funcs ver_nop =
 extern struct ver_funcs ver_lfstack;
 extern struct ver_funcs ver_msqueue;
 extern struct ver_funcs ver_mcqueue;
+extern struct ver_funcs ver_deque1, ver_deque2, ver_deque3;
 extern struct ver_funcs ver_clhlock;
 extern struct ver_funcs ver_mcslock;
 extern struct ver_funcs ver_spinlock;
@@ -113,6 +114,7 @@ static struct ver_funcs *ver_table[] =
     &ver_lfstack,
     &ver_msqueue,
     &ver_mcqueue,
+    &ver_deque1, &ver_deque2, &ver_deque3,
     &ver_clhlock,
     &ver_mcslock,
     &ver_spinlock,

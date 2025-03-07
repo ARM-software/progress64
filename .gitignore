@@ -15,6 +15,7 @@ clhlock
 core
 coroutine
 counter
+deque
 fiber
 hashtable
 hemlock
