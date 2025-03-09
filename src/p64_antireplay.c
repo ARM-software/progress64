@@ -8,7 +8,7 @@
 #include "p64_antireplay.h"
 #include "build_config.h"
 
-#include "lockfree.h"
+#include "atomic.h"
 #include "common.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
@@ -72,8 +72,7 @@ p64_antireplay_test(p64_antireplay_t *ar,
 		    p64_antireplay_sn_t sn)
 {
     uint32_t index = sn_to_index(ar, sn);
-    p64_antireplay_sn_t old = __atomic_load_n(&ar->snv[index],
-					      __ATOMIC_RELAXED);
+    p64_antireplay_sn_t old = atomic_load_n(&ar->snv[index], __ATOMIC_RELAXED);
     if (sn > old)
     {
 	return p64_ar_pass;
@@ -93,8 +92,7 @@ p64_antireplay_test_and_set(p64_antireplay_t *ar,
 			    p64_antireplay_sn_t sn)
 {
     uint32_t index = sn_to_index(ar, sn);
-    p64_antireplay_sn_t old = lockfree_fetch_umax_8(&ar->snv[index],
-						    sn, __ATOMIC_RELAXED);
+    p64_antireplay_sn_t old = atomic_fetch_umax(&ar->snv[index], sn, __ATOMIC_RELAXED);
     if (sn > old)
     {
 	return p64_ar_pass;

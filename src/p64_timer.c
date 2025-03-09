@@ -11,7 +11,7 @@
 #include "build_config.h"
 
 #include "arch.h"
-#include "lockfree.h"
+#include "atomic.h"
 #include "common.h"
 #include "err_hnd.h"
 
@@ -74,7 +74,7 @@ expire_one_timer(p64_tick_t now,
     do
     {
 	//Explicit reloading => smaller code
-	exp = __atomic_load_n(ptr, __ATOMIC_RELAXED);
+	exp = atomic_load_n(ptr, __ATOMIC_RELAXED);
 	if (!(exp <= now))//exp > now
 	{
 	    //If timer does not expire anymore it means some thread has
@@ -82,12 +82,11 @@ expire_one_timer(p64_tick_t now,
 	    return;
 	}
     }
-    while (!__atomic_compare_exchange_n(ptr,
-					&exp,
-					P64_TIMER_TICK_INVALID,
-					/*weak=*/true,
-					__ATOMIC_ACQUIRE,
-					__ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n(ptr,
+				      &exp,
+				      P64_TIMER_TICK_INVALID,
+				      __ATOMIC_ACQUIRE,
+				      __ATOMIC_RELAXED));
     uint32_t tim = ptr - &g_timer.expirations[0];
     g_timer.timers[tim].cb(tim, exp, g_timer.timers[tim].arg);
 }
@@ -183,7 +182,7 @@ update_earliest(p64_tick_t exp)
     do
     {
 	//Explicit reloading => smaller code
-	old = __atomic_load_n(&g_timer.earliest, __ATOMIC_RELAXED);
+	old = atomic_load_n(&g_timer.earliest, __ATOMIC_RELAXED);
 	if (exp >= old)
 	{
 	    //Our expiration time is same or later => no update
@@ -191,19 +190,18 @@ update_earliest(p64_tick_t exp)
 	}
 	//Else our expiration time is earlier than the previous 'earliest'
     }
-    while (UNLIKELY(!__atomic_compare_exchange_n(&g_timer.earliest,
-						 &old,
-						 exp,
-						 /*weak=*/true,
-						 __ATOMIC_RELEASE,
-						 __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_n(&g_timer.earliest,
+					       &old,
+					       exp,
+					       __ATOMIC_RELEASE,
+					       __ATOMIC_RELAXED)));
 }
 
 void
 p64_timer_expire(void)
 {
-    p64_tick_t now = __atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
-    p64_tick_t earliest = __atomic_load_n(&g_timer.earliest, __ATOMIC_RELAXED);
+    p64_tick_t now = atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
+    p64_tick_t earliest = atomic_load_n(&g_timer.earliest, __ATOMIC_RELAXED);
     if (earliest <= now)
     {
 	//There exists at least one timer that is due for expiration
@@ -212,7 +210,7 @@ p64_timer_expire(void)
 	PREFETCH_FOR_READ((char*)&g_timer.expirations[0] + 2 * CACHE_LINE);
 	PREFETCH_FOR_READ((char*)&g_timer.expirations[0] + 3 * CACHE_LINE);
 	//Reset 'earliest'
-	__atomic_store_n(&g_timer.earliest, P64_TIMER_TICK_INVALID,
+	atomic_store_n(&g_timer.earliest, P64_TIMER_TICK_INVALID,
 			 __ATOMIC_RELAXED);
 	//We need our g_timer.earliest reset to be visible before we start to
 	//scan the timer array
@@ -233,7 +231,7 @@ p64_timer_tick_set(p64_tick_t tck)
 	report_error("timer", "invalid tick", tck);
 	return;
     }
-    p64_tick_t old = __atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
+    p64_tick_t old = atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
     do
     {
 	if (tck <= old)
@@ -242,18 +240,17 @@ p64_timer_tick_set(p64_tick_t tck)
 	    return;
 	}
     }
-    while (UNLIKELY(!__atomic_compare_exchange_n(&g_timer.current,
-						 &old,//Updated on failure
-						 tck,
-						 /*weak=*/true,
-						 __ATOMIC_RELAXED,
-						 __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_n(&g_timer.current,
+					       &old,//Updated on failure
+					       tck,
+					       __ATOMIC_RELAXED,
+					       __ATOMIC_RELAXED)));
 }
 
 p64_tick_t
 p64_timer_tick_get(void)
 {
-    return __atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
+    return atomic_load_n(&g_timer.current, __ATOMIC_RELAXED);
 }
 
 p64_timer_t
@@ -267,9 +264,9 @@ p64_timer_alloc(p64_timer_cb cb,
     } old, neu;
     do
     {
-	old.fl.count = __atomic_load_n(&g_timer.freelist.count, __ATOMIC_ACQUIRE);
+	old.fl.count = atomic_load_n(&g_timer.freelist.count, __ATOMIC_ACQUIRE);
 	//count will be read before head, torn read will be detected by CAS
-	old.fl.head = __atomic_load_n(&g_timer.freelist.head, __ATOMIC_ACQUIRE);
+	old.fl.head = atomic_load_n(&g_timer.freelist.head, __ATOMIC_ACQUIRE);
 	if (UNLIKELY(old.fl.head == NULL))
 	{
 	    return P64_TIMER_NULL;
@@ -277,18 +274,17 @@ p64_timer_alloc(p64_timer_cb cb,
 	neu.fl.head = old.fl.head->arg;//Dereferencing old.head => need acquire
 	neu.fl.count = old.fl.count + 1;
     }
-    while (UNLIKELY(!lockfree_compare_exchange_pp((ptrpair_t*)&g_timer.freelist,
-						  &old.pp,
-						  neu.pp,
-						  /*weak=*/true,
-						  __ATOMIC_RELAXED,
-						  __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_n((ptrpair_t*)&g_timer.freelist,
+					       &old.pp,
+					       neu.pp,
+					       __ATOMIC_RELAXED,
+					       __ATOMIC_RELAXED)));
     uint32_t idx = old.fl.head - g_timer.timers;
     g_timer.expirations[idx] = P64_TIMER_TICK_INVALID;
     g_timer.timers[idx].cb = cb;
     g_timer.timers[idx].arg = arg;
     //Update high watermark of allocated timers
-    lockfree_fetch_umax_4(&g_timer.hiwmark, idx + 1, __ATOMIC_RELEASE);
+    (void)atomic_fetch_umax(&g_timer.hiwmark, idx + 1, __ATOMIC_RELEASE);
     return idx;
 }
 
@@ -300,7 +296,7 @@ p64_timer_free(p64_timer_t idx)
 	report_error("timer", "invalid timer", idx);
 	return;
     }
-    if (__atomic_load_n(&g_timer.expirations[idx], __ATOMIC_ACQUIRE) !=
+    if (atomic_load_n(&g_timer.expirations[idx], __ATOMIC_ACQUIRE) !=
 	P64_TIMER_TICK_INVALID)
     {
 	report_error("timer", "cannot free active timer", idx);
@@ -320,12 +316,11 @@ p64_timer_free(p64_timer_t idx)
 	neu.fl.head = tim;
 	neu.fl.count = old.fl.count + 1;
     }
-    while (UNLIKELY(!lockfree_compare_exchange_pp((ptrpair_t*)&g_timer.freelist,
-						  &old.pp,
-						  neu.pp,
-						  /*weak=*/true,
-						  __ATOMIC_RELEASE,
-						  __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_n((ptrpair_t*)&g_timer.freelist,
+					       &old.pp,
+					       neu.pp,
+					       __ATOMIC_RELEASE,
+					       __ATOMIC_RELAXED)));
 }
 
 static inline bool
@@ -343,7 +338,7 @@ update_expiration(p64_timer_t idx,
     do
     {
 	//Explicit reloading => smaller code
-	old = __atomic_load_n(&g_timer.expirations[idx], __ATOMIC_RELAXED);
+	old = atomic_load_n(&g_timer.expirations[idx], __ATOMIC_RELAXED);
 	if (active ?
 		old == P64_TIMER_TICK_INVALID ://Timer inactive/expired
 		old != P64_TIMER_TICK_INVALID) //Timer already active
@@ -351,11 +346,11 @@ update_expiration(p64_timer_t idx,
 	    return false;
 	}
     }
-    while (UNLIKELY(!__atomic_compare_exchange_n(&g_timer.expirations[idx],
-						 &old,
-						 exp,
-						 /*weak=*/true,
-						 mo, __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_n(&g_timer.expirations[idx],
+					       &old,
+					       exp,
+					       mo,
+					       __ATOMIC_RELAXED)));
     if (exp != P64_TIMER_TICK_INVALID)
     {
 	update_earliest(exp);

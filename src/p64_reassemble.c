@@ -15,13 +15,9 @@
 #include "os_abstraction.h"
 
 #include "common.h"
-#include "lockfree.h"
+#include "atomic.h"
 #include "arch.h"
 #include "err_hnd.h"
-
-#ifdef __aarch64__
-#define lockfree_compare_exchange_16 lockfree_compare_exchange_16_frail
-#endif
 
 //totsize=65535 => totsize_oct=8192 => 14 bits required
 #define OCT_SIZEMAX ((1U << 14U) - 1U)
@@ -189,14 +185,18 @@ restart: (void)0;
 
 struct fraglist
 {
-    struct
+    union
     {
-	uint32_t earliest;
-	unsigned accsize:14;
-	unsigned totsize:14;
-	unsigned aba:3;
-	unsigned closed:1;
-    } a;
+	struct
+	{
+	    uint32_t earliest;
+	    unsigned accsize:14;
+	    unsigned totsize:14;
+	    unsigned aba:3;
+	    unsigned closed:1;
+	};
+	uint64_t ui64;
+    };
     p64_fragment_t *head; //A list of related fragments awaiting reassembly
 #ifdef __arm__
     //Put spin lock in 32-bit word after 32-bit pointer
@@ -206,17 +206,19 @@ struct fraglist
 
 #ifdef __arm__
 //When writing a fraglist entry keep the lock taken
-#define FL_NULL (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 0, .head = NULL, .lock = 1 }
-#define FL_NULL_CLOSED (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 1, .head = NULL, .lock = 1 }
+#define FL_NULL (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 0, .head = NULL, .lock = 1 }
+#define FL_NULL_CLOSED (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 1, .head = NULL, .lock = 1 }
 #else
-#define FL_NULL (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 0, .head = NULL }
-#define FL_NULL_CLOSED (struct fraglist) { .a.earliest = 0, .a.accsize = 0, .a.totsize = OCT_SIZEMAX, .a.aba = 0, .a.closed = 1, .head = NULL }
+#define FL_NULL (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 0, .head = NULL }
+#define FL_NULL_CLOSED (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 1, .head = NULL }
 #endif
 
 struct fragtbl
 {
-    struct idx_size
+    union idx_size
     {
+	struct
+	{
 #if __SIZEOF_POINTER__ == 8
 	uint32_t idx;
 	uint32_t shift;//size = 1U << (32 - shift)
@@ -227,6 +229,8 @@ struct fragtbl
 #else
 #error
 #endif
+	};
+	uintptr_t ui;
     } i_s;
     struct fraglist *base;
 };
@@ -265,20 +269,20 @@ read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
     __atomic_load(&re->ft[idx % 2], &ft, __ATOMIC_ACQUIRE);
     return ft;
 #else
-    struct idx_size i_s;
+    union idx_size i_s;
     struct fraglist *fl;
     uint32_t i = idx % 2;
     do
     {
 	if (UNLIKELY(!re->use_hp))
 	{
-	    fl = __atomic_load_n(&re->ft[i].base, __ATOMIC_ACQUIRE);
+	    fl = atomic_load_ptr(&re->ft[i].base, __ATOMIC_ACQUIRE);
 	}
 	else
 	{
 	    fl = p64_hazptr_acquire(&re->ft[i].base, hpp);
 	}
-	__atomic_load(&re->ft[i].i_s, &i_s, __ATOMIC_RELAXED);
+	i_s.ui = atomic_load_n(&re->ft[i].i_s.ui, __ATOMIC_RELAXED);
 	if (fl == NULL || i_s.idx != idx)
 	{
 	    //Slot cleared or overwritten with new fragment table
@@ -290,7 +294,7 @@ read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
 	//it using a hazard pointer
 	smp_fence(LoadLoad);
     }
-    while (fl != __atomic_load_n(&re->ft[i].base, __ATOMIC_RELAXED));
+    while (fl != atomic_load_ptr(&re->ft[i].base, __ATOMIC_RELAXED));
     return (struct fragtbl) { i_s, fl };
 #endif
 }
@@ -313,9 +317,7 @@ write_fragtbl(struct fragtbl *vec, uint32_t idx, struct fragtbl ft)
     } old, neu;
     uint32_t i = idx % 2;
     neu.ft = ft;
-    old.i128 = lockfree_exchange_16((__int128 *)&vec[i],
-				    neu.i128,
-				    __ATOMIC_ACQ_REL);
+    old.i128 = atomic_exchange_n((__int128 *)&vec[i], neu.i128, __ATOMIC_ACQ_REL);
     return old.ft;
 #endif
 }
@@ -478,16 +480,16 @@ insert_frags(p64_reassemble_t *re,
     {
 	struct fraglist st;
 #ifndef __arm__
-	__int128 ui;
+	__int128 ui128;
 #endif
     } old, neu;
 restart:
 #ifdef __arm__
     p64_spinlock_acquire(&fl->lock);
 #endif
-    __atomic_load(&fl->a, &old.st.a, __ATOMIC_RELAXED);
-    __atomic_load(&fl->head, &old.st.head, __ATOMIC_RELAXED);
-    if (UNLIKELY(old.st.a.closed))
+    old.st.ui64 = atomic_load_n(&fl->ui64, __ATOMIC_RELAXED);
+    old.st.head = atomic_load_ptr(&fl->head, __ATOMIC_RELAXED);
+    if (UNLIKELY(old.st.closed))
     {
 	//Fraglist slot has been closed, caller must retry with next table
 	return frag;
@@ -499,34 +501,33 @@ restart:
     //Merge lists of fragments, insert previous head fragment at end of new list
     *last = old.st.head;
     neu.st.head = frag;
-    neu.st.a.aba = old.st.a.aba + 1;
-    neu.st.a.closed = 0;
+    neu.st.aba = old.st.aba + 1;
+    neu.st.closed = 0;
     //Use min to implement saturating add, don't overflow the allocated bits
-    neu.st.a.accsize = umin(OCT_SIZEMAX, old.st.a.accsize + fragsize);
+    neu.st.accsize = umin(OCT_SIZEMAX, old.st.accsize + fragsize);
     //Replace previous totsize if smaller
-    neu.st.a.totsize = umin(old.st.a.totsize, totsize);
+    neu.st.totsize = umin(old.st.totsize, totsize);
     //Check if we have all fragments
-    if (neu.st.a.accsize < neu.st.a.totsize || false_positive)
+    if (neu.st.accsize < neu.st.totsize || false_positive)
     {
 	//Still missing fragment, write back updated fraglist
 	if (old.st.head != NULL)
 	{
-	    neu.st.a.earliest = min_earliest(old.st.a.earliest, earliest, now);
+	    neu.st.earliest = min_earliest(old.st.earliest, earliest, now);
 	}
 	else //old is null fraglist, earliest field not valid
 	{
-	    neu.st.a.earliest = earliest;
+	    neu.st.earliest = earliest;
 	}
 #ifdef __arm__
 	*fl = neu.st;
 	p64_spinlock_release(&fl->lock);
 #else
-	if (!lockfree_compare_exchange_16((__int128 *)fl,
-					  &old.ui,
-					  neu.ui,
-					  /*weak=*/false,
-					  __ATOMIC_RELEASE,
-					  __ATOMIC_RELAXED))
+	if (!atomic_compare_exchange_n((__int128 *)fl,
+				       &old.ui128,
+				       neu.ui128,
+				       __ATOMIC_RELEASE,
+				       __ATOMIC_RELAXED))
 	{
 	    //CAS failed, restart from beginning
 	    PREFETCH_FOR_WRITE(fl);
@@ -544,12 +545,11 @@ restart:
 	p64_spinlock_release(&fl->lock);
 #else
 	neu.st = FL_NULL;
-	if (!lockfree_compare_exchange_16((__int128 *)fl,
-					  &old.ui,
-					  neu.ui,
-					  /*weak=*/false,
-					  __ATOMIC_ACQUIRE,//due to old.st.head
-					  __ATOMIC_RELAXED))
+	if (!atomic_compare_exchange_n((__int128 *)fl,
+				       &old.ui128,
+				       neu.ui128,
+				       __ATOMIC_ACQUIRE,//due to old.st.head
+				       __ATOMIC_RELAXED))
 	{
 	    //CAS failed, restart from beginning
 	    PREFETCH_FOR_WRITE(fl);
@@ -640,7 +640,7 @@ p64_reassemble_insert(p64_reassemble_t *re,
     //Ensure single fragment is a proper list
     frag->nextfrag = NULL;
     //Get current fragment table
-    uint32_t cur = __atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
+    uint32_t cur = atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
     //Insert fragment into current (or later) table
     struct fragtbl ft = { .base = NULL };
     split_and_insert_frags(re, cur, &ft, &hp, frag);
@@ -695,25 +695,25 @@ expire_slot(p64_reassemble_t *re,
     {
 	struct fraglist st;
 #ifndef __arm__
-	__int128 ui;
+	__int128 ui128;
 #endif
     } old, neu;
 #ifdef __arm__
     p64_spinlock_acquire(&fl->lock);
 #endif
-    __atomic_load(&fl->a, &old.st.a, __ATOMIC_RELAXED);
-    __atomic_load(&fl->head, &old.st.head, __ATOMIC_RELAXED);
+    old.st.ui64 = atomic_load_n(&fl->ui64, __ATOMIC_RELAXED);
+    old.st.head = atomic_load_ptr(&fl->head, __ATOMIC_RELAXED);
 #ifndef __arm__
     do
 #endif
     {
 	if (old.st.head == NULL ||
-	    (int32_t)(old.st.a.earliest - time) >= 0)
+	    (int32_t)(old.st.earliest - time) >= 0)
 	{
 	    //Null fraglist or no stale fragments
 	    return false;
 	}
-	if (old.st.a.closed)
+	if (old.st.closed)
 	{
 	    //Found closed slot
 	    return true;
@@ -727,12 +727,11 @@ expire_slot(p64_reassemble_t *re,
 #endif
     }
 #ifndef __arm__
-    while (!lockfree_compare_exchange_16((__int128 *)fl,
-					 &old.ui,//Updated on failure
-					 neu.ui,
-					 /*weak=*/false,
-					 __ATOMIC_ACQUIRE,
-					 __ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n((__int128 *)fl,
+				      &old.ui128,//Updated on failure
+				      neu.ui128,
+				      __ATOMIC_ACQUIRE,
+				      __ATOMIC_RELAXED));
 #endif
     //CAS succeeded, we own the fraglist
     //Find the stale fragments
@@ -771,7 +770,7 @@ p64_reassemble_expire(p64_reassemble_t *re,
     //Read the current fragment table
     do
     {
-	cur = __atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
+	cur = atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
 	ft = read_fragtbl(re, cur, &hp);
     }
     while (ft.base == NULL);
@@ -816,7 +815,7 @@ migrate_slot(p64_reassemble_t *re,
     {
 	struct fraglist st;
 #ifndef __arm__
-	__int128 ui;
+	__int128 ui128;
 #endif
     } old, neu;
     //Clear slots in destination table
@@ -837,8 +836,8 @@ migrate_slot(p64_reassemble_t *re,
 #endif
     //Read fraglist from source slot
     //Non-atomic read, later CAS will verify atomicity
-    __atomic_load(&slot->head, &old.st.head,__ATOMIC_ACQUIRE);
-    __atomic_load(&slot->a, &old.st.a, __ATOMIC_RELAXED);
+    old.st.head = atomic_load_ptr(&slot->head, __ATOMIC_ACQUIRE);
+    old.st.ui64 = atomic_load_n(&slot->ui64, __ATOMIC_RELAXED);
 #ifndef __arm__
     do
 #endif
@@ -851,14 +850,13 @@ migrate_slot(p64_reassemble_t *re,
 #endif
     }
 #ifndef __arm__
-    while (!lockfree_compare_exchange_16((__int128 *)slot,
-					 (__int128 *)&old,
-					 neu.ui,
-					 /*weak=*/true,
-					 __ATOMIC_ACQUIRE,
-					 __ATOMIC_ACQUIRE));
+    while (!atomic_compare_exchange_n((__int128 *)slot,
+				      &old.ui128,
+				      neu.ui128,
+				      __ATOMIC_ACQUIRE,
+				      __ATOMIC_ACQUIRE));
 #endif
-    assert(old.st.a.closed == 0);
+    assert(old.st.closed == 0);
     if (old.st.head != NULL)
     {
 	//Split and write fragments to destination table
@@ -881,7 +879,7 @@ p64_reassemble_extend(p64_reassemble_t *re)
     }
     bool success = false;
     //Read the current fragment table => 'old'
-    uint32_t cur = __atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
+    uint32_t cur = atomic_load_n(&re->cur, __ATOMIC_ACQUIRE);
     struct fragtbl old = re->ft[cur % 2];
     if (LIKELY(old.i_s.shift != 0))
     {
@@ -895,7 +893,7 @@ p64_reassemble_extend(p64_reassemble_t *re)
 	    //Write new fragtable to next position so that threads can start to
 	    //use it when their slot in the old fragtable has been closed
 	    //The slots in the new fragtable are initially uninitialised
-	    struct fragtbl neu = { { cur + 1, SIZE_TO_SHIFT(new_size) }, base };
+	    struct fragtbl neu = { { { cur + 1, SIZE_TO_SHIFT(new_size) } }, base };
 	    assert(SHIFT_TO_SIZE(neu.i_s.shift) == new_size);
 	    struct fragtbl prv = write_fragtbl(re->ft, cur + 1, neu);
 	    //Verify that the fragtbl slot was unused
@@ -907,16 +905,16 @@ p64_reassemble_extend(p64_reassemble_t *re)
 	    for (uint32_t i = 0; i < old_size; i++)
 	    {
 		migrate_slot(re, old, &neu, &hp, i);
-		assert(old.base[i].a.closed == 1);
+		assert(old.base[i].closed == 1);
 	    }
 	    if (UNLIKELY(re->use_hp))
 	    {
 		p64_hazptr_release(&hp);
 	    }
 	    //Make new table current
-	    __atomic_store_n(&re->cur, cur + 1, __ATOMIC_RELEASE);
+	    atomic_store_n(&re->cur, cur + 1, __ATOMIC_RELEASE);
 	    //Remove old fragment table
-	    prv = write_fragtbl(re->ft, cur, (struct fragtbl){ { 0, 0}, NULL});
+	    prv = write_fragtbl(re->ft, cur, (struct fragtbl){ { { 0, 0} }, NULL});
 	    assert(prv.base == old.base);
 	    //Retire old fragtable, memory will be reclaimed when all threads
 	    //have stopped referencing it

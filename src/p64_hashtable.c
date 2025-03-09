@@ -18,7 +18,7 @@
 #include "build_config.h"
 
 #include "common.h"
-#include "lockfree.h"
+#include "atomic.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
 
@@ -43,7 +43,7 @@ atomic_load_acquire(struct p64_hashelem **pptr,
     }
     else
     {
-	return __atomic_load_n(pptr, __ATOMIC_ACQUIRE);
+	return atomic_load_ptr(pptr, __ATOMIC_ACQUIRE);
     }
 }
 
@@ -378,7 +378,7 @@ remove_node(p64_hashelem_t *prnt,
 {
     assert(this == REM_MARK(this));
     //Set our REMOVE mark (it may already be set)
-    __atomic_fetch_or((uintptr_t *)&this->next, MARK_REMOVE, __ATOMIC_RELAXED);
+    atomic_fetch_or(&this->next, MARK_REMOVE, __ATOMIC_RELAXED);
     //Now nobody may update our next pointer
     //And other threads may help to remove us
     //Swing our parent's next pointer
@@ -387,12 +387,11 @@ remove_node(p64_hashelem_t *prnt,
     union heui old = {.he.next = this, .he.hash = hash };
     //New prnt->next should not have REMOVAL mark
     union heui neu = {.he.next = REM_MARK(this->next), .he.hash = this->hash };
-    if (lockfree_compare_exchange_pp((ptrpair_t *)prnt,
-				       &old.pp,
-				       neu.pp,
-				       /*weak=*/false,
-				       __ATOMIC_RELAXED,
-				       __ATOMIC_RELAXED))
+    if (atomic_compare_exchange_n((ptrpair_t *)prnt,
+				  &old.pp,
+				  neu.pp,
+				  __ATOMIC_RELAXED,
+				  __ATOMIC_RELAXED))
     {
 	return true;
     }
@@ -415,12 +414,11 @@ insert_node(p64_hashelem_t *prnt,
     assert(he->next == NULL);
     union heui old = {.he.next = NULL, .he.hash = 0 };
     union heui neu = {.he.next = he, .he.hash = hash };
-    if (lockfree_compare_exchange_pp((ptrpair_t *)prnt,
-				       &old.pp,
-				       neu.pp,
-				       /*weak=*/false,
-				       __ATOMIC_RELEASE,
-				       __ATOMIC_RELAXED))
+    if (atomic_compare_exchange_n((ptrpair_t *)prnt,
+				  &old.pp,
+				  neu.pp,
+				  __ATOMIC_RELEASE,
+				  __ATOMIC_RELAXED))
     {
 	//CAS succeded, node inserted
 	return NULL;

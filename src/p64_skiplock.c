@@ -10,7 +10,6 @@
 #include "build_config.h"
 
 #include "atomic.h"
-#include "lockfree.h"
 #include "common.h"
 #include "err_hnd.h"
 
@@ -87,12 +86,11 @@ p64_skiplock_release(p64_skiplock_t *sl, uint32_t tkt)
 	    new.sl.mask = 0;
 	}
     }
-    while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)sl,
-					       &old.pp,
-					       new.pp,
-					       /*weak=*/true,
-					       __ATOMIC_RELEASE,
-					       __ATOMIC_RELAXED));
+    while (!atomic_compare_exchange_n((ptrpair_t *)sl,
+				       &old.pp,
+				       new.pp,
+				       __ATOMIC_RELEASE,
+				       __ATOMIC_RELAXED));
 }
 
 void
@@ -127,10 +125,9 @@ p64_skiplock_skip(p64_skiplock_t *sl, uint32_t tkt)
 	new = old;
 	new.sl.mask |= ONE << ourbit;
     }
-    while (UNLIKELY(!lockfree_compare_exchange_pp_frail((ptrpair_t *)sl,
-						        &old.pp,
-						        new.pp,
-						        /*weak=*/true,
-						        __ATOMIC_RELAXED,
-						        __ATOMIC_RELAXED)));
+    while (UNLIKELY(!atomic_compare_exchange_n((ptrpair_t *)sl,
+					        &old.pp,
+					        new.pp,
+					        __ATOMIC_RELAXED,
+					        __ATOMIC_RELAXED)));
 }

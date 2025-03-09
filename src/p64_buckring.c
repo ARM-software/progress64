@@ -18,7 +18,6 @@
 #include "common.h"
 #include "err_hnd.h"
 #include "atomic.h"
-#include "../src/lockfree.h" //For MO_LOAD()
 
 //Use atomic_fetch_and/atomic_fetch_or varient instead of atomic_blend variant
 //Performance is similar but atomic_blend variant perhaps slightly faster
@@ -203,7 +202,7 @@ atomic_blend(uintptr_t *loc,
 					       &old,//Updated on failure
 					       neu,
 					       mm,
-					       MO_LOAD(mm))));
+					       __ATOMIC_RELAXED)));
     return old;
 }
 #endif
