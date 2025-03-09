@@ -16,19 +16,12 @@
 #if defined __aarch64__
 
 #include "lockfree/aarch64.h"
-#define lockfree_compare_exchange_pp_frail lockfree_compare_exchange_16_frail
-#define lockfree_compare_exchange_pp lockfree_compare_exchange_16
 
 #elif defined __arm__
-
-#define lockfree_compare_exchange_pp_frail __atomic_compare_exchange_8
-#define lockfree_compare_exchange_pp __atomic_compare_exchange_8
 
 #elif defined __x86_64__
 
 #include "lockfree/x86-64.h"
-#define lockfree_compare_exchange_pp_frail lockfree_compare_exchange_16
-#define lockfree_compare_exchange_pp lockfree_compare_exchange_16
 
 #else
 
@@ -50,7 +43,7 @@ ALWAYS_INLINE
 static inline uint32_t
 lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo)
 {
-    uint32_t old = __atomic_load_n(var, __ATOMIC_RELAXED);
+    uint32_t old = atomic_load_n(var, __ATOMIC_RELAXED);
     do
     {
 	if (val <= old)
@@ -58,12 +51,11 @@ lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo)
 	    return old;
 	}
     }
-    while (!__atomic_compare_exchange_n(var,
-					&old,
-					val,
-					/*weak=*/true,
-					MO_LOAD(mo) | MO_STORE(mo),//XXX
-					MO_LOAD(mo)));
+    while (!atomic_compare_exchange_n(var,
+				      &old,
+				      val,
+				      MO_LOAD(mo) | MO_STORE(mo),//XXX
+				      MO_LOAD(mo)));
     return old;
 }
 #endif
@@ -74,7 +66,7 @@ ALWAYS_INLINE
 static inline uint64_t
 lockfree_fetch_umax_8(uint64_t *var, uint64_t val, int mo)
 {
-    uint64_t old = __atomic_load_n(var, __ATOMIC_RELAXED);
+    uint64_t old = atomic_load_n(var, __ATOMIC_RELAXED);
     do
     {
 	if (val <= old)
@@ -82,12 +74,11 @@ lockfree_fetch_umax_8(uint64_t *var, uint64_t val, int mo)
 	    return old;
 	}
     }
-    while (!__atomic_compare_exchange_n(var,
-					&old,
-					val,
-					/*weak=*/true,
-					MO_LOAD(mo) | MO_STORE(mo),//XXX
-					MO_LOAD(mo)));
+    while (!atomic_compare_exchange_n(var,
+				      &old,
+				      val,
+				      MO_LOAD(mo) | MO_STORE(mo),//XXX
+				      MO_LOAD(mo)));
     return old;
 }
 #endif
