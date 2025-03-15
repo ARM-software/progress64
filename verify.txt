@@ -1,0 +1,45 @@
+Build with: make verify ATOMICS=yes VERIFY=yes
+Verify with: ./verify <datatype>
+CLI options:
+-a                Analyze memory orderings and detect data races
+-p <permutation>  Verify specified permutation
+-u <number>       Specify upper bound for range [0..number - 1] of permutations to verify
+-m                Truncate (mask) addresses to 32 bits (default 64 bits) when displaying
+-r <seed>         Seed for random permutations (0 is invalid)
+-v                Verbose output
+-w                Warnings become failures
+
+After the selected permutations have been verified, a histogram over the number
+of steps required to complete verification is printed. This is followed by
+counters for interrupted (too many steps) and failed (some inconsistency or error
+detected) permutations.
+Finally detected synchronize-with relations and detected data races are listed.
+
+Example:
+$ ./verify -a -m -u0x100 -r1 linklist1
+Verifying linklist1
+Verifying permutation 0x1
+Histogram over number of steps:
+18: 15
+19: 34
+20: 58
+21: 34
+22: 12
+23: 38
+24: 32
+25: 12
+26: 18
+27: 0
+28: 1
+29: 2
+succeeded: 256
+interrupted: 0
+failed: 0
+total: 256 (0x100)
+load @ src/p64_linklist.c:31 synchronizes-with store @ src/p64_linklist.c:142 (count 338)
+load @ src/p64_linklist.c:79 synchronizes-with store @ src/p64_linklist.c:142 (count 112)
+load @ src/p64_linklist.c:31 synchronizes-with store @ src/p64_linklist.c:43 (count 6)
+load @ src/p64_linklist.c:119 synchronizes-with store @ src/p64_linklist.c:142 (count 128)
+load @ src/p64_linklist.c:142 synchronizes-with store @ src/p64_linklist.c:142 (count 136)
+load @ src/p64_linklist.c:79 synchronizes-with store @ src/p64_linklist.c:43 (count 9)
+No data races detected

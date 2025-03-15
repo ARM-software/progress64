@@ -17,53 +17,67 @@
 #include "p64_coroutine.h"
 #include "verify.h"
 #include "build_config.h"
+#include "atomic.h"
 
+//Number of coroutines (threads)
 #define NUMCOROS 2
-#define NUMSTEPS 64
+//Number of steps before thread (coroutine) execution is interrupted
+#define NUMSTEPS 96
+//Coroutine stack size, use prime factor to decrease risk of aliasing between coroutines
 #define STKSIZE (17 * 1024)
+//Coroutine return value
 #define RET_DONE 0
+//Coroutine commands
 #define RES_INIT 0
 #define RES_EXEC 1
 #define RES_FINI 2
 
-uint32_t verify_id;//For use by datatype implementations
+//For use by verification module implementations that use TLS
+//As all coroutines execute in the same host thread, they will also share TLS
+//We need to complement TLS with a thread identifer of the currently running coroutine
+uint32_t verify_id;
 
+//User attempted to interrupt exeuction (e.g. CTRL-C)
 static volatile bool user_interrupt = false;
+//CLI flags
 static bool VERBOSE = false;
 static bool WARNERR = false;
+//Our coroutines and their stacks
 static p64_coroutine_t CORO[NUMCOROS];
 static _Alignas(64) char STACKS[NUMCOROS][STKSIZE];
+//Special purpose indexes into HISTO array
 #define INTERRUPTED NUMSTEPS
 #define FAILED (NUMSTEPS + 1)
 static uint64_t HISTO[NUMSTEPS + 2];
 
+//A test module called "test"
+//It implements a simple SPSC ring buffer
 static void
-ver_nop_init(uint32_t numthreads)
+ver_test_init(uint32_t numthreads)
 {
     (void)numthreads;
 }
 
 static void
-ver_nop_fini(uint32_t numthreads)
+ver_test_fini(uint32_t numthreads)
 {
     (void)numthreads;
 }
 
-#include "atomic.h"
-
 static void
-ver_nop_exec(uint32_t id)
+ver_test_exec(uint32_t id)
 {
-#if 1
     static _Alignas(CACHE_LINE) uint32_t head;
     static _Alignas(CACHE_LINE) uint32_t tail;
+    static uint32_t ring[16];
+    static const uint32_t mask = 15;
     if (id == 0)
     {
 	//Produce (enqueue) at tail
 	uint32_t t = atomic_load_n(&tail, __ATOMIC_RELAXED);
 	uint32_t h = atomic_load_n(&head, __ATOMIC_ACQUIRE);//A0: Synchronize with A1
 	(void)h;
-	//Write ring[t & mask]
+	regular_store_n(&ring[t & mask], 242);
 	atomic_store_n(&tail, t + 1, __ATOMIC_RELEASE);//B0: Synchronize with B1
     }
     else //id == 1
@@ -71,23 +85,17 @@ ver_nop_exec(uint32_t id)
 	//Consume (dequeue) from head
 	uint32_t h = atomic_load_n(&head, __ATOMIC_RELAXED);
 	uint32_t t = atomic_load_n(&tail, __ATOMIC_ACQUIRE);//B1: Synchronize with B0
-	(void)t;
-	//Read ring[h & mask]
-	atomic_store_n(&head, h + 1, __ATOMIC_RELEASE);//A1: Synchronize with A0
+	if (t - head > 0)
+	{
+	    VERIFY_ASSERT(regular_load_n(&ring[h & mask]) == 242);
+	    atomic_store_n(&head, h + 1, __ATOMIC_RELEASE);//A1: Synchronize with A0
+	}
     }
-#endif
-#if 0
-    for (;;)
-    {
-	//VERIFY_SUSPEND(V_OP, "nop", NULL, 0, 0, 0);
-	VERIFY_YIELD();
-    }
-#endif
 }
 
-static struct ver_funcs ver_nop =
+static struct ver_funcs ver_test =
 {
-    "nop", ver_nop_init, ver_nop_exec, ver_nop_fini
+    "test", ver_test_init, ver_test_exec, ver_test_fini
 };
 
 extern struct ver_funcs ver_lfstack;
@@ -107,10 +115,10 @@ extern struct ver_funcs ver_ringbuf_mpmc, ver_ringbuf_nbenbd, ver_ringbuf_nbelfd
 extern struct ver_funcs ver_hopscotch1;
 extern struct ver_funcs ver_linklist1, ver_linklist2, ver_linklist3, ver_linklist4;
 
-//List of supported datatypes
+//Table of registered verification modules
 static struct ver_funcs *ver_table[] =
 {
-    &ver_nop,
+    &ver_test,
     &ver_lfstack,
     &ver_msqueue,
     &ver_mcqueue,
@@ -131,33 +139,36 @@ static struct ver_funcs *ver_table[] =
 };
 
 //Coroutine main function
-//Will invoke the specified datatype
+//It will invoke the specified verification module
 static intptr_t
 coroutine(va_list *args)
 {
-    //Spawn phase, read arguments
+    //Spawn phase, read arguments (must match p64_coro_spawn() arguments)
     const struct ver_funcs *vf = va_arg(*args, struct ver_funcs *);
     int id = va_arg(*args, int);
     if (id == 0)
     {
+	//Only thread 0 executes the init function
 	vf->init(NUMCOROS);
     }
     //Initialization complete, suspend
-    (void)p64_coro_suspend(0);//Parameter is returned from spawn() call
+    (void)p64_coro_suspend(0);//Parameter 0 is returned from spawn call
     //Execution started
     vf->exec(id);
     //Execution complete, return RET_DONE
     for (;;)
     {
 	intptr_t r = p64_coro_suspend((intptr_t)RET_DONE);
-	if (r == RES_FINI)
+	if (id == 0 && r == RES_FINI)
 	{
+	    //Only thread 0 executes the fini function
 	    vf->fini(NUMCOROS);
 	}
     }
     return 0;
 }
 
+//Return string representing read/write operation returned by thread
 static const char *
 rw_str(uint32_t fmt)
 {
@@ -167,10 +178,11 @@ rw_str(uint32_t fmt)
 	case V_READ  : return "r-";
 	case V_WRITE : return "-w";
 	case V_RW    : return "rw";
-	default      : return "??";
+	default      : return "??";//Needed to silence compiler
     }
 }
 
+//Return string reprsenting memory ordering by operation returned by thread
 static const char *
 memo_str(int mo)
 {
@@ -182,29 +194,34 @@ memo_str(int mo)
 	case __ATOMIC_RELEASE : return "rls";
 	case __ATOMIC_ACQ_REL : return "acq_rls";
 	case __ATOMIC_SEQ_CST : return "seq_cst";
-	default : return "?";
+	default               : return "?";
     }
 }
 
+//Does the memory ordering represent an acquire operation?
 static bool
 is_acq(int mo)
 {
     return mo == __ATOMIC_ACQUIRE || mo == __ATOMIC_ACQ_REL || mo == __ATOMIC_SEQ_CST;
 }
 
+//Does the memory ordering represent a release operation?
 static bool
 is_rls(int mo)
 {
     return mo == __ATOMIC_RELEASE || mo == __ATOMIC_ACQ_REL || mo == __ATOMIC_SEQ_CST;
 }
 
+//Print human readable version of a thread operation
+//'mask' is used to truncate (64-bit) addresses to 32 bits to make them more readable
 static void
 print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr_t mask)
 {
     printf("Step %2d: thread %u, ", step, id);
-    if (fl != NULL && fl->file != NULL)
+    if (fl != NULL)
     {
-	printf("file %s line %"PRIuPTR" ", fl->file, fl->line);
+	assert(fl->file != NULL);
+	printf("file %s line %3"PRIuPTR" ", fl->file, fl->line);
 	if (fl->fmt & V_OP)
 	{
 	    uint32_t datasize = fl->fmt & 0xff;
@@ -233,8 +250,10 @@ print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr
 			}
 		    }
 		}
-		else //datasize > 8
+		else //datasize > 8 (ought to be 16)
 		{
+		    //Print 128-bit values as two 64-bit hex values separated
+		    //by a quote character (')
 		    if (fl->fmt & V_A1)
 		    {
 			printf(",%#"PRIxPTR"'%016"PRIxPTR,
@@ -255,6 +274,8 @@ print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr
 	    {
 		if (datasize <= 8)
 		{
+		    //TODO what if result is not a pointer? We shouldn't apply
+		    //the 32-bit mask
 		    printf("=%#"PRIxPTR, (intptr_t)(fl->res & mask));
 		}
 		else //datasize > 8
@@ -269,22 +290,23 @@ print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr
     }
     else
     {
+	//NULL return value signifies end of execution
 	printf("done\n");
     }
 }
 
+//Step a thread (coroutine) through the init/fini function
 static bool
 exec_coroutine(p64_coroutine_t *cr,
 	       intptr_t arg,
-	       intptr_t r,
 	       intptr_t mask)
 {
     for (;;)
     {
-	r = p64_coro_resume(cr, arg);
+	intptr_t r = p64_coro_resume(cr, arg);
 	if (r == 0)
 	{
-	    return true;
+	    return true;//Thread completed init/fini successfully
 	}
 	struct ver_file_line *fl = (struct ver_file_line *)r;
 	if (VERBOSE || (fl->fmt & V_ABORT) != 0)
@@ -293,9 +315,8 @@ exec_coroutine(p64_coroutine_t *cr,
 	}
 	if ((fl->fmt & V_ABORT) != 0)
 	{
-	    return false;
+	    return false;//Thread aborted execution
 	}
-	r = 0;
     }
 }
 
@@ -308,13 +329,27 @@ struct fileline
     uint64_t count;
 };
 
-static struct fileline syncs[257];
-static struct fileline races[257];
+#define HTAB_SIZE 257
+static struct fileline syncs[HTAB_SIZE];
+static struct fileline races[HTAB_SIZE];
 
+//Add a (file,line,file,line) tuple to a hash table
 static void
 fileline_add(struct fileline *fl, const char *file0, uintptr_t line0, const char *file1, uintptr_t line1)
 {
-    uint32_t i = (line0 + 8192 * line1) % 257;
+    uint32_t h = (line0 + 8192 * line1) % HTAB_SIZE;//Compute a very simple hash value
+    uint32_t i = h;
+    while ((fl[i].line0 != 0 || fl[i].line1 != 0) &&
+	    (fl[i].line0 != line0 || fl[i].line1 != line1))
+    {
+	i = (i + 1) % HTAB_SIZE;
+	if (i == h)
+	{
+	    fprintf(stderr, "FileLine hash table too small! (HTAB_SIZE=%u)\n", HTAB_SIZE);
+	    fflush(stderr);
+	    exit(EXIT_FAILURE);
+	}
+    }
     if (fl[i].line0 == 0 && fl[i].line1 == 0)
     {
 	fl[i].file0 = file0;
@@ -329,38 +364,55 @@ fileline_add(struct fileline *fl, const char *file0, uintptr_t line0, const char
     }
 }
 
+//Print all load-acquire/store-release synchronize-with relations
 static void
 print_syncs(void)
 {
-    for (uint32_t i = 0; i < 257; i++)
+    uint32_t cnt = 0;
+    for (uint32_t i = 0; i < HTAB_SIZE; i++)
     {
 	if (syncs[i].count != 0)
 	{
-	    printf("%s:%zu synchronizes-with %s:%zu (%lu)\n",
+	    printf("load @ %s:%zu synchronizes-with store @ %s:%zu (count %lu)\n",
 		    syncs[i].file0, syncs[i].line0,
 		    syncs[i].file1, syncs[i].line1,
 		    syncs[i].count);
+	    cnt++;
 	}
     }
-}
-static void
-print_races(void)
-{
-    for (uint32_t i = 0; i < 257; i++)
+    if (cnt == 0)
     {
-	if (races[i].count != 0)
-	{
-	    printf("%s:%zu data-races-with %s:%zu (%lu)\n",
-		    races[i].file0, races[i].line0,
-		    races[i].file1, races[i].line1,
-		    races[i].count);
-	}
+	printf("No synchronize-with relations detected\n");
     }
 }
 
-//Return true if [addr0:size0] is overlapping [addr1:size1]
+//Print all detected data races
+//A data race is defined as a (regular) read of a memory location that was written
+//by a regular write in another thread without any intervening synchronize-with relation
+static void
+print_races(void)
+{
+    uint32_t cnt = 0;
+    for (uint32_t i = 0; i < HTAB_SIZE; i++)
+    {
+	if (races[i].count != 0)
+	{
+	    printf("%s:%zu data-races-with %s:%zu (count %lu)\n",
+		    races[i].file0, races[i].line0,
+		    races[i].file1, races[i].line1,
+		    races[i].count);
+	    cnt++;
+	}
+    }
+    if (cnt == 0)
+    {
+	printf("No data races detected\n");
+    }
+}
+
+//Check if [addr0:size0] overlaps [addr1:size1]
 static bool
-overlap(uintptr_t addr0, uint32_t size0, uintptr_t addr1, uint32_t size1)
+check_overlap(uintptr_t addr0, uint32_t size0, uintptr_t addr1, uint32_t size1)
 {
     //Check if before
     if (addr0 + size0 <= addr1)
@@ -376,20 +428,25 @@ overlap(uintptr_t addr0, uint32_t size0, uintptr_t addr1, uint32_t size1)
     return true;
 }
 
+//Possible statuses of verification (of some permutation)
 enum verify_status { success, interrupted, failed };
 
-struct trace
+//Information about one step of execution
+struct step
 {
     struct ver_file_line fl;
-    uint16_t id;
+    uint16_t id;//Thread id that performed this step
     int16_t syncw;//Synchronizes-with this step
 };
 
+//Analyze memory accesses in order to detect violations of synchronize-with relations
+//E.g. when a regular load matches a regular stor in another thread and there is no
+//intervening synchronize-with relation
 static bool
-analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct trace trace[])
+analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct step trace[])
 {
-    //Check for read operation
-    if ((fl->fmt & V_READ) != 0)
+    //Check for read operation, regular or atomic-load-acquire. Ignore atomic-load-relaxed.
+    if ((fl->fmt & V_READ) != 0 && fl->memo != __ATOMIC_RELAXED)
     {
 	//Try to find matching earlier write
 	assert(fl->fmt & V_AD);
@@ -399,7 +456,7 @@ analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct trace 
 	{
 	    uintptr_t addr_i = (uintptr_t)trace[i].fl.addr;
 	    uint32_t size_i = trace[i].fl.fmt & 0xff;
-	    if ((trace[i].fl.fmt & V_WRITE) && overlap(addr, size, addr_i, size_i))
+	    if ((trace[i].fl.fmt & V_WRITE) && check_overlap(addr, size, addr_i, size_i))
 	    {
 		bool same = trace[i].id == id;
 		if (VERBOSE)
@@ -443,7 +500,7 @@ analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct trace 
 		    return true;
 		}
 		//Else at least one memory access is regular (non-atomic), this could be a problem
-		assert(fl->memo == V_REGULAR || trace[k].fl.memo == V_REGULAR);
+		assert(fl->memo == V_REGULAR || trace[i].fl.memo == V_REGULAR);
 		//Search for synchronize-with between steps-1..i+1
 		for (int32_t j = step - 1; j > i; j--)
 		{
@@ -471,13 +528,14 @@ analyze_memo(uint32_t id, uint32_t step, struct ver_file_line *fl, struct trace 
     return true;
 }
 
+//Verify specific permutation of the specified verification module
 static void
 verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t mask)
 {
-    struct trace trace[NUMSTEPS + 1] = { 0 };
-    enum verify_status status = interrupted;
+    struct step trace[NUMSTEPS + 1] = { 0 };//Set all elements to 0/NULL
+    enum verify_status status = interrupted;//Default status
     intptr_t res[NUMCOROS] = { !RET_DONE, !RET_DONE };
-    uint64_t p = permutation;
+    uint64_t p = permutation;//We need a local copy of the permutation, it might be modified
     uint32_t step = 0;
     if (VERBOSE)
     {
@@ -487,23 +545,29 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
     for (uint32_t id = 0; id < NUMCOROS; id++)
     {
 	verify_id = id;
+	//Spawn coroutine. It will read its arguments, execute the init function of the
+	//verification module and suspend
 	intptr_t r = p64_coro_spawn(&CORO[id], coroutine, STACKS[id], sizeof STACKS[id], vf, id);
 	if (r != 0)
 	{
+	    //The verification module performs operations in init phase
 	    struct ver_file_line *fl = (struct ver_file_line *)r;
 	    if (VERBOSE)
 	    {
 		print_result(fl, 0, -1, mask);
 	    }
-	    if (!exec_coroutine(&CORO[id], RES_INIT, r, mask))
+	    //Continue execute the init phase
+	    if (!exec_coroutine(&CORO[id], RES_INIT, mask))
 	    {
-		printf("Verification of permutation %#lx failed at init\n", permutation);
+		printf("Verification of module %s permutation %#lx failed at init\n",
+			vf->name, permutation);
 		status = failed;
 		goto failure;
 	    }
 	}
+	//Else verification module suspended without doing operations
     }
-    //Execute coroutines according to the permutation
+    //Execute the exec phase according to the permutation
     for (step = 0; step < NUMSTEPS; step++)
     {
 	uint32_t id = p & 1;//Compute which coroutine (thread) to execute next
@@ -512,7 +576,7 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
 	intptr_t ret = p64_coro_resume(&CORO[id], RES_EXEC);
 	trace[step].id = id;
 	trace[step].syncw = -1;//Does not synchronize-with anything (yet)
-	//RET_DONE return means coroutine completed
+	//RET_DONE return means thread completed
 	if (ret == RET_DONE)
 	{
 	    res[id] = RET_DONE;
@@ -532,7 +596,7 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
 	    //Only run the other thread from now
 	    p = (id == 0) ? ~(uint64_t)0 : 0;
 	}
-	else
+	else//Else thread performed some operation
 	{
 	    struct ver_file_line *fl = (struct ver_file_line *)ret;
 	    res[id] = !RET_DONE;
@@ -541,14 +605,26 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
 	    {
 		print_result(fl, id, step, mask);
 	    }
-	    if (analyze)
+	    //Check for misaligned accesses (e.g. dereferencing marked pointer)
+	    if ((fl->fmt & V_AD) != 0 && (fl->fmt & 0xff) != 0)
 	    {
-		if (!analyze_memo(id, step, fl, trace))
+		uint32_t datasize = fl->fmt & 0xff;
+		if ((uintptr_t)fl->addr % datasize != 0)
 		{
-		    printf("Permutation %#lx step %u: Verification failed\n", permutation, step);
+		    printf("ERROR: Misaligned address %p for access size %u!\n", fl->addr, datasize);
 		    status = failed;
 		    step++;//Ensure the last operation is saved in trace
-		    break;
+		    goto failure;
+		}
+	    }
+	    if (analyze)
+	    {
+		//Attempt to detect memory ordering violations (data races)
+		if (!analyze_memo(id, step, fl, trace))
+		{
+		    status = failed;
+		    step++;//Ensure the last operation is saved in trace
+		    goto failure;
 		}
 	    }
 	    //Check for yield to other thread
@@ -559,19 +635,20 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
 		    printf("Yielding to other thread\n");
 		}
 		p &= ~(uint64_t)1;//Clear lsb
-		p |= !id;//Set lsb to other id
+		p |= !id;//Set lsb to other thread id
+		//Don't remove last used thread id!
 	    }
-	    //Else check for error or assertion failed, this aborts current verification
+	    //Else check for error reported by verification module or assertion failed,
+	    //this aborts current verification
 	    else if (fl->fmt & V_ABORT)
 	    {
-		printf("Permutation %#lx step %u: Verification failed\n", permutation, step);
 		status = failed;
 		step++;//Ensure the error/assert info is saved in trace
-		break;
+		goto failure;
 	    }
-	    else
+	    else//One more successful step executed
 	    {
-		//Remove last used id
+		//Remove last used thread id
 		p >>= 1;
 	    }
 	}
@@ -579,17 +656,19 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
     if (status == success)
     {
 	//Resume completed coroutine for it to execute the fini function
-	if (!exec_coroutine(&CORO[0], RES_FINI, 0, mask))
+	if (!exec_coroutine(&CORO[0], RES_FINI, mask))
 	{
 	    //Some failure or error reported
-	    printf("Verification of permutation %#lx failed at fini\n", permutation);
+	    printf("Verification of module %s permutation %#lx failed at fini\n",
+		    vf->name, permutation);
 	    status = failed;
 	    step++;//Ensure the error info is saved in trace
 	    goto failure;
 	}
 	else if (VERBOSE)
 	{
-	    printf("Verification of permutation %#lx complete after %u steps\n", permutation, step);
+	    printf("Verification of module %s permutation %#lx complete after %u steps\n",
+		    vf->name, permutation, step);
 	}
 	assert(step < NUMSTEPS);
 	HISTO[step]++;
@@ -600,12 +679,14 @@ verify(const struct ver_funcs *vf, uint64_t permutation, bool analyze, intptr_t 
 failure:
 	if (status == interrupted)
 	{
-	    printf("Verification of permutation %#lx interrupted after %u steps\n", permutation, step);
-	    status = interrupted;
+	    printf("Verification of module %s permutation %#lx interrupted after %u steps\n",
+		    vf->name, permutation, step);
 	    HISTO[INTERRUPTED]++;
 	}
 	else//status == failed
 	{
+	    printf("Module %s permutation %#lx step %u: Verification failed\n",
+		    vf->name, permutation, step);
 	    HISTO[FAILED]++;
 	}
 	//Print the steps that led to here
@@ -615,6 +696,8 @@ failure:
 	}
     }
 }
+
+//Signal handler for SIGINT (CTRL-C)
 
 static void
 int_handler(int dummy)
@@ -628,9 +711,11 @@ int_handler(int dummy)
 	(void)r;
 	exit(EXIT_FAILURE);
     }
+    //Notify permutation loops that user wants to terminate program
     user_interrupt = true;
 }
 
+//xorshift64 is a simple pseudorandom number generator
 static inline uint64_t
 xorshift64(uint64_t x)
 {
@@ -649,9 +734,9 @@ int main(int argc, char *argv[])
 #endif
     (void)signal(SIGINT, int_handler);
     int64_t permutation = -1;//Steal one permutation
-    uint64_t upper = (uint64_t)1 << 32;//Default upper bound to verify
-    uintptr_t mask = ~(uintptr_t)0;
-    uint64_t random = 0;
+    uint64_t upper = (uint64_t)1 << 32;//Default upper bound of permutations to verify
+    uintptr_t mask = ~(uintptr_t)0;//Address mask used when printing
+    uint64_t random = 0;//RNG seed and enabler (0: no random sequence)
     bool analyze = false;
     int c;
     while ((c = getopt(argc, argv, "amp:r:u:vw")) != -1)
@@ -662,7 +747,7 @@ int main(int argc, char *argv[])
 		analyze = true;
 		break;
 	    case 'm' :
-		mask = (uint32_t)mask;
+		mask = (uint32_t)mask;//Truncate the address mask to 32 bits
 		break;
 	    case 'p' :
 		if (optarg[0] == '0' && optarg[1] == 'x')
@@ -719,12 +804,12 @@ usage:
 			"-m               Mask addresses and values to 32 bits when displaying\n"
 			"-p <permutation> Specify permutation\n"
 			"-r <seed>        Specify seed for random permutations\n"
-			"-u <limit>       Specify upper limit of permutations to sweep\n"
+			"-u <limit>       Specify sweep upper limit of permutation range\n"
 			"-v               Verbose\n"
 			"-w               Warnings become failures\n"
 		       );
-list_datatypes:
-		fprintf(stderr, "Known datatypes:\n");
+list_vermods:
+		fprintf(stderr, "Known verification modules:\n");
 		for (struct ver_funcs **vf = ver_table; *vf != NULL; vf++)
 		{
 		    fprintf(stderr, "%s\n", (*vf)->name);
@@ -746,8 +831,8 @@ list_datatypes:
     }
     if (*vf == NULL)
     {
-	fprintf(stderr, "Unknown datatype %s specified\n", argv[optind]);
-	goto list_datatypes;
+	fprintf(stderr, "Unknown verification module %s specified\n", argv[optind]);
+	goto list_vermods;
     }
 
     if (!VERBOSE)
@@ -757,8 +842,11 @@ list_datatypes:
     if (permutation != -1)
     {
 	verify(*vf, permutation, analyze, mask);
-	print_syncs();
-	print_races();
+	if (analyze)
+	{
+	    print_syncs();
+	    print_races();
+	}
 	return EXIT_SUCCESS;
     }
     else if (random != 0)
@@ -794,8 +882,28 @@ list_datatypes:
 	    }
 	}
     }
+    //Display our statistics
+    //Ignore leading and trailing ranges of zero counts
+    uint32_t first, last;
+    //Find first step with non-zero count
+    for (first = 0; first < NUMSTEPS; first++)
+    {
+	if (HISTO[first] != 0)
+	{
+	    break;
+	}
+    }
+    //Find last step with non-zero count
+    for (last = NUMSTEPS - 1; last > first; last--)
+    {
+	if (HISTO[last] != 0)
+	{
+	    break;
+	}
+    }
+    printf("Histogram over number of steps:\n");
     uint64_t succeeded = 0;
-    for (uint32_t i = 0; i < NUMSTEPS; i++)
+    for (uint32_t i = first; i <= last; i++)
     {
 	succeeded += HISTO[i];
 	printf("%u: %lu\n", i, HISTO[i]);
@@ -803,8 +911,14 @@ list_datatypes:
     printf("succeeded: %lu\n", succeeded);
     printf("interrupted: %lu\n", HISTO[INTERRUPTED]);
     printf("failed: %lu\n", HISTO[FAILED]);
-    print_syncs();
-    print_races();
+    uint64_t total = succeeded + HISTO[INTERRUPTED] + HISTO[FAILED];
+    printf("total: %lu (%#lx)\n", total, total);
+    //Display results of memory ordering analysis
+    if (analyze)
+    {
+	print_syncs();
+	print_races();
+    }
 
     return EXIT_SUCCESS;
 }
