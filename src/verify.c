@@ -217,8 +217,10 @@ is_rls(int mo)
 static void
 print_result(const struct ver_file_line *fl, uint32_t id, uint32_t step, uintptr_t mask)
 {
-    printf("Step %2d: thread %u, ", step, id);
-    if (fl != NULL)
+    printf("Step %2d: thread %u ", step, id);
+    //When replaying the trace, 'fl' will be non-null but 'fl->file' will be NULL
+    //for a thread's final step so we need to check both
+    if (fl != NULL && fl->file != NULL)
     {
 	assert(fl->file != NULL);
 	printf("file %s line %3"PRIuPTR" ", fl->file, fl->line);
