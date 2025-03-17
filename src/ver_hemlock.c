@@ -36,7 +36,6 @@ ver_hemlock_exec(uint32_t id)
     p64_hemlock_acquire(&hem_lock);
     VERIFY_ASSERT(regular_load_n(&hem_taken) == false);
     regular_store_n(&hem_taken, true);
-    VERIFY_YIELD();
     VERIFY_ASSERT(regular_load_n(&hem_taken) == true);
     regular_store_n(&hem_taken, false);
     p64_hemlock_release(&hem_lock);

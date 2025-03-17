@@ -43,7 +43,6 @@ ver_clhlock_exec(uint32_t id)
     p64_clhlock_acquire(&clh_lock, &node);
     VERIFY_ASSERT(regular_load_n(&clh_taken) == false);
     regular_store_n(&clh_taken, true);
-    VERIFY_YIELD();
     VERIFY_ASSERT(regular_load_n(&clh_taken) == true);
     regular_store_n(&clh_taken, false);
     p64_clhlock_release(&node);

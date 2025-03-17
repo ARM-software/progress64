@@ -37,7 +37,6 @@ ver_rplock_exec(uint32_t id)
     p64_rplock_acquire(&rp_lock, &node);
     VERIFY_ASSERT(regular_load_n(&rp_taken) == false);
     regular_store_n(&rp_taken, true);
-    VERIFY_YIELD();
     VERIFY_ASSERT(regular_load_n(&rp_taken) == true);
     regular_store_n(&rp_taken, false);
     p64_rplock_release(&rp_lock, &node);

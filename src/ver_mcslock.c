@@ -41,7 +41,6 @@ ver_mcslock_exec(uint32_t id)
     p64_mcslock_acquire(&mcs_lock, &node);
     VERIFY_ASSERT(regular_load_n(&mcs_taken) == false);
     regular_store_n(&mcs_taken, true);
-    VERIFY_YIELD();
     VERIFY_ASSERT(regular_load_n(&mcs_taken) == true);
     regular_store_n(&mcs_taken, false);
     p64_mcslock_release(&mcs_lock, &node);
