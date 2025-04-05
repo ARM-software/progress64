@@ -12,6 +12,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "p64_coroutine.h"
@@ -377,7 +378,7 @@ print_syncs(void)
     {
 	if (syncs[i].count != 0)
 	{
-	    printf("load @ %s:%zu synchronizes-with store @ %s:%zu (count %lu)\n",
+	    printf(" load @ %s:%zu synchronizes-with store @ %s:%zu (count %lu)\n",
 		    syncs[i].file0, syncs[i].line0,
 		    syncs[i].file1, syncs[i].line1,
 		    syncs[i].count);
@@ -386,7 +387,7 @@ print_syncs(void)
     }
     if (cnt == 0)
     {
-	printf("No synchronize-with relations detected\n");
+	printf(" No synchronize-with relations detected\n");
     }
 }
 
@@ -401,7 +402,7 @@ print_races(void)
     {
 	if (races[i].count != 0)
 	{
-	    printf("%s:%zu data-races-with %s:%zu (count %lu)\n",
+	    printf(" %s:%zu data-races-with %s:%zu (count %lu)\n",
 		    races[i].file0, races[i].line0,
 		    races[i].file1, races[i].line1,
 		    races[i].count);
@@ -410,7 +411,7 @@ print_races(void)
     }
     if (cnt == 0)
     {
-	printf("No data races detected\n");
+	printf(" No data races detected\n");
     }
 }
 
@@ -839,22 +840,20 @@ list_vermods:
 	goto list_vermods;
     }
 
+    struct timespec start_ts, end_ts;
     if (!VERBOSE)
     {
 	printf("Verifying %s\n", (*vf)->name);
     }
     if (permutation != -1)
     {
+	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	verify(*vf, permutation, analyze, mask);
-	if (analyze)
-	{
-	    print_syncs();
-	    print_races();
-	}
-	return EXIT_SUCCESS;
+	clock_gettime(CLOCK_MONOTONIC, &end_ts);
     }
     else if (random != 0)
     {
+	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	for (uint64_t iter = 0; iter < upper; iter++)
 	{
 	    if (!VERBOSE && iter % 100000 == 0)
@@ -864,14 +863,19 @@ list_vermods:
 	    verify(*vf, random, analyze, mask);
 	    if (user_interrupt)
 	    {
-		printf("Interrupted\n");
 		break;
 	    }
 	    random = xorshift64(random);
 	}
+	clock_gettime(CLOCK_MONOTONIC, &end_ts);
+	if (user_interrupt)
+	{
+	    printf("Interrupted\n");
+	}
     }
     else
     {
+	clock_gettime(CLOCK_MONOTONIC, &start_ts);
 	for (uint64_t perm = 0; perm < upper; perm++)
 	{
 	    if (!VERBOSE && perm % 100000 == 0)
@@ -881,9 +885,13 @@ list_vermods:
 	    verify(*vf, perm, analyze, mask);
 	    if (user_interrupt)
 	    {
-		printf("Interrupted\n");
 		break;
 	    }
+	}
+	clock_gettime(CLOCK_MONOTONIC, &end_ts);
+	if (user_interrupt)
+	{
+	    printf("Interrupted\n");
 	}
     }
     //Display our statistics
@@ -910,19 +918,28 @@ list_vermods:
     for (uint32_t i = first; i <= last; i++)
     {
 	succeeded += HISTO[i];
-	printf("%u: %lu\n", i, HISTO[i]);
+	printf(" %u: %lu\n", i, HISTO[i]);
     }
-    printf("succeeded: %lu\n", succeeded);
-    printf("interrupted: %lu\n", HISTO[INTERRUPTED]);
-    printf("failed: %lu\n", HISTO[FAILED]);
+    printf("Summary:\n");
+    printf(" succeeded: %lu\n", succeeded);
+    printf(" interrupted: %lu\n", HISTO[INTERRUPTED]);
+    printf(" failed: %lu\n", HISTO[FAILED]);
     uint64_t total = succeeded + HISTO[INTERRUPTED] + HISTO[FAILED];
-    printf("total: %lu (%#lx)\n", total, total);
+    printf(" total: %lu (%#lx)\n", total, total);
     //Display results of memory ordering analysis
     if (analyze)
     {
+	printf("Synchronization analysis:\n");
 	print_syncs();
 	print_races();
     }
+    uint64_t start_ns = start_ts.tv_sec * 1000000000ULL + start_ts.tv_nsec;
+    uint64_t end_ns = end_ts.tv_sec * 1000000000ULL + end_ts.tv_nsec;
+    uint64_t elapsed_ns = end_ns - start_ns;
+    printf("Elapsed %u.%09u seconds, average %uns\n",
+	    (uint32_t)(elapsed_ns / 1000000000ULL),
+	    (uint32_t)(elapsed_ns % 1000000000ULL),
+	    (uint32_t)(elapsed_ns / total));
 
     return EXIT_SUCCESS;
 }
