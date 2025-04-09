@@ -197,7 +197,7 @@ restart:
 	    neu.e.ptr = elem;
 	    neu.e.idx = tail;//Set idx on enqueue
 	}
-	while (!lockfree_compare_exchange_pp_frail((ptrpair_t *)slot,
+	while (!lockfree_compare_exchange_16((ptrpair_t *)slot,
 						   &old.pp,//Updated on failure
 						   neu.pp,
 						   /*weak=*/true,
