@@ -31,6 +31,7 @@ OBJECTS_libprogress64.a += p64_rplock.o ver_rplock.o
 OBJECTS_rplock = rplock.o
 OBJECTS_libprogress64.a += p64_deque.o ver_deque.o
 OBJECTS_deque = deque.o
+OBJECTS_libprogress64.a += ver_lockaba.o
 OBJECTS_mcqueue = mcqueue.o
 OBJECTS_hashtable = hashtable.o
 OBJECTS_timer = timer.o
