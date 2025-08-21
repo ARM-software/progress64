@@ -914,10 +914,11 @@ list_vermods:
 	}
     }
     printf("Histogram over number of steps:\n");
-    uint64_t succeeded = 0;
+    uint64_t succeeded = 0, total_steps = 0;
     for (uint32_t i = first; i <= last; i++)
     {
 	succeeded += HISTO[i];
+	total_steps += HISTO[i] * i;
 	printf(" %u: %lu\n", i, HISTO[i]);
     }
     printf("Summary:\n");
@@ -925,6 +926,8 @@ list_vermods:
     printf(" interrupted: %lu\n", HISTO[INTERRUPTED]);
     printf(" failed: %lu\n", HISTO[FAILED]);
     uint64_t total = succeeded + HISTO[INTERRUPTED] + HISTO[FAILED];
+    //We are ignoring the steps for interrupted and failed verifications since we
+    //don't have that information
     printf(" total: %lu (%#lx)\n", total, total);
     //Display results of memory ordering analysis
     if (analyze)
@@ -936,10 +939,11 @@ list_vermods:
     uint64_t start_ns = start_ts.tv_sec * 1000000000ULL + start_ts.tv_nsec;
     uint64_t end_ns = end_ts.tv_sec * 1000000000ULL + end_ts.tv_nsec;
     uint64_t elapsed_ns = end_ns - start_ns;
-    printf("Elapsed %u.%09u seconds, average %uns\n",
+    printf("Elapsed %u.%09u seconds, average %uns/permutation, average %uns/step\n",
 	    (uint32_t)(elapsed_ns / 1000000000ULL),
 	    (uint32_t)(elapsed_ns % 1000000000ULL),
-	    (uint32_t)(elapsed_ns / total));
+	    (uint32_t)(elapsed_ns / total),       //No rounding!
+	    (uint32_t)(elapsed_ns / total_steps));//No rounding!
 
     return EXIT_SUCCESS;
 }
