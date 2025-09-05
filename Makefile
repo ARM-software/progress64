@@ -15,6 +15,8 @@ endif
 # Project specific definitions
 ################################################################################
 
+.DELETE_ON_ERROR:
+
 #List of executable files to build
 TARGETS = libprogress64.a hashtable timer rwlock rwlock_r reorder antireplay rwsync rwsync_r reassemble laxrob ringbuf clhlock mcslock lfring qsbr tfrwlock tfrwlock_r pfrwlock stack lfstack msqueue counter mbtrie buckring buckrob skiplock mcas hemlock coroutine fiber blkring linklist verify mcqueue rplock deque
 #The following targets require pthreads and Linux support
