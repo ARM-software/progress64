@@ -105,16 +105,16 @@ bool
 p64_linklist_insert(p64_linklist_t *pred,
 		    p64_linklist_t *elem)
 {
-    if (UNLIKELY(elem == NULL))
-    {
-	report_error("linklist", "insert NULL element", elem);
-	return true;
-    }
     if (UNLIKELY(HAS_MARK(elem)))
     {
 	report_error("linklist", "element has low bit set", elem);
 	//Clear lsb and continue with insertion
 	elem = REM_MARK(elem);
+    }
+    if (UNLIKELY(elem == NULL))
+    {
+	report_error("linklist", "insert NULL element", elem);
+	return true;
     }
     p64_linklist_t *next = atomic_load_ptr(&pred->next, __ATOMIC_ACQUIRE);
     for (;;)
