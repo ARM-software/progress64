@@ -129,7 +129,6 @@ static struct p64_ptr_tag
 atomic_load_ptr_tag(struct p64_ptr_tag *loc, int mo)
 {
     struct p64_ptr_tag pt;
-    __atomic_load(loc, &pt, mo);
 #if defined __aarch64__
     //Use address dependency to force program order of loads
     do
