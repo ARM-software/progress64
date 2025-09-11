@@ -81,27 +81,10 @@ p64_mfree(void *ptr)
 #include <stdbool.h>
 #include <stdio.h>
 #include <sys/auxv.h>
-#ifdef __arm__
-#include <asm/hwcap.h>
-#endif
 
 INIT_FUNCTION
 static void
 p64_check_prequisites(void)
 {
-#ifdef __arm__
-//Test if the ARMv7ve feature integer division is available
-#ifndef __ARM_FEATURE_IDIV
-#error Requires compilation with -march=armv7ve (64-bit atomic read using LDRD)
-#endif
-    long hwcaps = getauxval(AT_HWCAP);
-//Check if LPAE CPU capability is supported
-    if(!(hwcaps & HWCAP_LPAE))
-    {
-	fprintf(stderr, "LDRD is not atomic\n");
-	fflush(stderr);
-	exit(EXIT_FAILURE);
-    }
-#endif
 }
 #endif

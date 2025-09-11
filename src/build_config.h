@@ -15,13 +15,8 @@
 #define USE_WFE
 #endif
 
-#ifdef __arm__
-#define CACHE_LINE 32
-#define MAXTHREADS 16
-#else
 #define CACHE_LINE 64
 #define MAXTHREADS 128
-#endif
 #define MAXTIMERS 8192
 
 #endif

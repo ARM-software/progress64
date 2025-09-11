@@ -657,7 +657,6 @@ comph(const void *he,
 //x86 crc32 intrinsics seem to compute CRC32C (not CRC32)
 #define CRC32C(x, y) __crc32d((x), (y))
 #else
-//E.g. ARMv7 does not have a CRC instruction
 //Use a pseudo RNG instead
 static inline uint32_t
 xorshift32(uint32_t x)

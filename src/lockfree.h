@@ -17,8 +17,6 @@
 
 #include "lockfree/aarch64.h"
 
-#elif defined __arm__
-
 #elif defined __x86_64__
 
 #include "lockfree/x86-64.h"

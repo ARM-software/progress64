@@ -35,7 +35,6 @@
 #if CACHE_LINE >= 64
 #define RB_ALIGNMENT CACHE_LINE
 #else
-//Cache line size might be smaller on e.g. ARMv7
 #define RB_ALIGNMENT 64
 #endif
 

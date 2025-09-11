@@ -198,20 +198,10 @@ struct fraglist
 	uint64_t ui64;
     };
     p64_fragment_t *head; //A list of related fragments awaiting reassembly
-#ifdef __arm__
-    //Put spin lock in 32-bit word after 32-bit pointer
-    p64_spinlock_t lock;
-#endif
 } ALIGNED(2 * sizeof(uint64_t));
 
-#ifdef __arm__
-//When writing a fraglist entry keep the lock taken
-#define FL_NULL (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 0, .head = NULL, .lock = 1 }
-#define FL_NULL_CLOSED (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 1, .head = NULL, .lock = 1 }
-#else
 #define FL_NULL (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 0, .head = NULL }
 #define FL_NULL_CLOSED (struct fraglist) { .earliest = 0, .accsize = 0, .totsize = OCT_SIZEMAX, .aba = 0, .closed = 1, .head = NULL }
-#endif
 
 struct fragtbl
 {
@@ -262,13 +252,6 @@ read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
 	//Not extendable, just do relaxed non-atomic read of first element
 	return re->ft[0];
     }
-#ifdef __arm__
-    (void)hpp;
-    struct fragtbl ft;
-    //64-bit load is atomic
-    __atomic_load(&re->ft[idx % 2], &ft, __ATOMIC_ACQUIRE);
-    return ft;
-#else
     union idx_size i_s;
     struct fraglist *fl;
     uint32_t i = idx % 2;
@@ -296,7 +279,6 @@ read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
     }
     while (fl != atomic_load_ptr(&re->ft[i].base, __ATOMIC_RELAXED));
     return (struct fragtbl) { i_s, fl };
-#endif
 }
 
 //Perform atomic write of specified fragtable
@@ -304,12 +286,6 @@ read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
 static inline struct fragtbl
 write_fragtbl(struct fragtbl *vec, uint32_t idx, struct fragtbl ft)
 {
-#ifdef __arm__
-    struct fragtbl old;
-    //64-bit exchange is atomic
-    __atomic_exchange(&vec[idx & 2], &ft, &old, __ATOMIC_ACQ_REL);
-    return old;
-#else
     union
     {
 	__int128 i128;
@@ -319,7 +295,6 @@ write_fragtbl(struct fragtbl *vec, uint32_t idx, struct fragtbl ft)
     neu.ft = ft;
     old.i128 = atomic_exchange_n((__int128 *)&vec[i], neu.i128, __ATOMIC_ACQ_REL);
     return old.ft;
-#endif
 }
 
 #define VALID_FLAGS (P64_REASSEMBLE_F_HP | P64_REASSEMBLE_F_EXT)
@@ -366,9 +341,6 @@ p64_reassemble_alloc(uint32_t size,
 	    for (uint32_t i = 0; i < size; i++)
 	    {
 		re->ft[0].base[i] = FL_NULL;
-#ifdef __arm__
-		p64_spinlock_init(&re->ft[0].base[i].lock);
-#endif
 	    }
 	    return re;
 	}
@@ -479,14 +451,9 @@ insert_frags(p64_reassemble_t *re,
     union
     {
 	struct fraglist st;
-#ifndef __arm__
 	__int128 ui128;
-#endif
     } old, neu;
 restart:
-#ifdef __arm__
-    p64_spinlock_acquire(&fl->lock);
-#endif
     old.st.ui64 = atomic_load_n(&fl->ui64, __ATOMIC_RELAXED);
     old.st.head = atomic_load_ptr(&fl->head, __ATOMIC_RELAXED);
     if (UNLIKELY(old.st.closed))
@@ -519,10 +486,6 @@ restart:
 	{
 	    neu.st.earliest = earliest;
 	}
-#ifdef __arm__
-	*fl = neu.st;
-	p64_spinlock_release(&fl->lock);
-#else
 	if (!atomic_compare_exchange_n((__int128 *)fl,
 				       &old.ui128,
 				       neu.ui128,
@@ -533,17 +496,12 @@ restart:
 	    PREFETCH_FOR_WRITE(fl);
 	    goto restart;
 	}
-#endif
 	//Fragment(s) inserted
     }
     else
     {
 	//We seem to have all fragments
 	//Write a null element to the fraglist slot
-#ifdef __arm__
-	*fl = FL_NULL;
-	p64_spinlock_release(&fl->lock);
-#else
 	neu.st = FL_NULL;
 	if (!atomic_compare_exchange_n((__int128 *)fl,
 				       &old.ui128,
@@ -555,7 +513,6 @@ restart:
 	    PREFETCH_FOR_WRITE(fl);
 	    goto restart;
 	}
-#endif
 
 	//Sort the fragments
 	frag = sort_frags(frag);//Includes old.st.head fraglist
@@ -694,18 +651,11 @@ expire_slot(p64_reassemble_t *re,
     union
     {
 	struct fraglist st;
-#ifndef __arm__
 	__int128 ui128;
-#endif
     } old, neu;
-#ifdef __arm__
-    p64_spinlock_acquire(&fl->lock);
-#endif
     old.st.ui64 = atomic_load_n(&fl->ui64, __ATOMIC_RELAXED);
     old.st.head = atomic_load_ptr(&fl->head, __ATOMIC_RELAXED);
-#ifndef __arm__
     do
-#endif
     {
 	if (old.st.head == NULL ||
 	    (int32_t)(old.st.earliest - time) >= 0)
@@ -721,18 +671,12 @@ expire_slot(p64_reassemble_t *re,
 	//Found fraglist with at least one stale fragment
 	//Swap in a null fraglist in its place
 	neu.st = FL_NULL;
-#ifdef __arm__
-	*fl = neu.st;
-	p64_spinlock_release(&fl->lock);
-#endif
     }
-#ifndef __arm__
     while (!atomic_compare_exchange_n((__int128 *)fl,
 				      &old.ui128,//Updated on failure
 				      neu.ui128,
 				      __ATOMIC_ACQUIRE,
 				      __ATOMIC_RELAXED));
-#endif
     //CAS succeeded, we own the fraglist
     //Find the stale fragments
     p64_fragment_t *stale = find_stale(&old.st.head, time);
@@ -814,9 +758,7 @@ migrate_slot(p64_reassemble_t *re,
     union
     {
 	struct fraglist st;
-#ifndef __arm__
 	__int128 ui128;
-#endif
     } old, neu;
     //Clear slots in destination table
     uint32_t factor = 1U << (src.i_s.shift - dst->i_s.shift);
@@ -825,37 +767,23 @@ migrate_slot(p64_reassemble_t *re,
     for (uint32_t j = 0; j < factor; j++)
     {
 	dst->base[factor * i + j] = FL_NULL;
-#ifdef __arm__
-	p64_spinlock_init(&dst->base[factor * i + j].lock);
-#endif
     }
     //Compute address of slot in source table
     struct fraglist *slot = &src.base[i];
-#ifdef __arm__
-    p64_spinlock_acquire(&slot->lock);
-#endif
     //Read fraglist from source slot
     //Non-atomic read, later CAS will verify atomicity
     old.st.head = atomic_load_ptr(&slot->head, __ATOMIC_ACQUIRE);
     old.st.ui64 = atomic_load_n(&slot->ui64, __ATOMIC_RELAXED);
-#ifndef __arm__
     do
-#endif
     {
 	//Set closed bit in source slot using CAS, fail if slot has changed
 	neu.st = FL_NULL_CLOSED;
-#ifdef __arm__
-	*slot = neu.st;
-	p64_spinlock_release(&slot->lock);
-#endif
     }
-#ifndef __arm__
     while (!atomic_compare_exchange_n((__int128 *)slot,
 				      &old.ui128,
 				      neu.ui128,
 				      __ATOMIC_ACQUIRE,
 				      __ATOMIC_ACQUIRE));
-#endif
     assert(old.st.closed == 0);
     if (old.st.head != NULL)
     {

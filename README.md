@@ -28,17 +28,16 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 | linklist | Harris single linked list | lock-free
 | mbtrie | multi-bit trie | reader lock-free/wait-free, writer non-blocking (1)
 | qsbr | safe object reclamation using quiescent state based reclamation | reader wait-free, writer blocking
-| reassemble | IP reassembly | lock-free (2), resizeable
+| reassemble | IP reassembly | lock-free, resizeable
 | reorder | 'strict' reorder buffer | non-blocking (1)
-| ringbuf | classic ring buffer, support for user-defined element type | blocking & non-blocking (3), lock-free dequeue
+| ringbuf | classic ring buffer, support for user-defined element type | blocking & non-blocking (2), lock-free dequeue
 | stack | Treiber stack with configurable ABA workaround (lock/tag/smr/llsc) | blocking/lock-free
 | timer | timers | lock-free
 
 "Obstruction-free", "lock-free" and "wait-free" have the standard definitions from computer science.
 
-(1) Non-blocking but not (always) linearizable  
-(2) Blocking (using per-bucket locks) on ARMv7ve due to missing support for 128-bit atomic operations.  
-(3) Non-blocking within a limited window (currently 32 elements)
+(1) Non-blocking but not (always) linearizable
+(2) Non-blocking within a limited window (currently 32 elements)
 
 ### Locks & other blocking functions
 | Name | Description | Properties |
@@ -80,7 +79,6 @@ A secondary purpose is to inform and inspire the use of the C11-based memory mod
 
 ## HW/SW Support
   * Architectures
-    * ARMv7ve (ARMv7a with LPAE/64-bit atomic LDRD/STRD, e.g. Cortex-A7/A15/A17; also ARMv8 in AArch32 state)
     * ARMv8/AArch64 (aka ARM64)
     * x86-64
   * Operating Systems

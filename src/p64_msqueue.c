@@ -129,10 +129,8 @@ static struct p64_ptr_tag
 atomic_load_ptr_tag(struct p64_ptr_tag *loc, int mo)
 {
     struct p64_ptr_tag pt;
-#ifdef __arm__
-    //Armv7ve can do atomic load of ptr+tag (64 bits)
     __atomic_load(loc, &pt, mo);
-#elif defined __aarch64__
+#if defined __aarch64__
     //Use address dependency to force program order of loads
     do
     {
