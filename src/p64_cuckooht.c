@@ -589,11 +589,12 @@ lookup(p64_cuckooht_t *ht,
        bool use_hp,
        bool check_key)
 {
-    uint32_t chgcnt;
+    uint32_t chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
+    uint32_t oldcnt;
     p64_cuckooelem_t *elem;
     do
     {
-	chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
+	uint32_t fence = 0;
 	//Create bit masks with all matching hashes
 	mask_t mask0 = find_sig(bkt0->sigs, hash >> 16);
 	if (LIKELY(mask0 != 0))
@@ -616,11 +617,14 @@ lookup(p64_cuckooht_t *ht,
 		return elem;
 	    }
 	}
+	//store-release(RCsc) prevents earlier loads from moving down
+	atomic_store_n(&fence, 0, __ATOMIC_SEQ_CST);
 	//Re-read the change counter too see if we might have missed
 	//an element which was moved between the buckets
-	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	oldcnt = chgcnt;
     }
-    while (UNLIKELY(atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt));
+    //load-acquire(RCsc) is ordered with the store-release(RCsc) above
+    while (UNLIKELY((chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_SEQ_CST)) != oldcnt));
     //Check cellar bit if any elements which hash to this bucket are
     //present in the cellar
     if ((chgcnt & CELLAR_BIT) != 0)
@@ -714,10 +718,10 @@ write_sig(struct bucket *bkt,
     {
 	//Try to swing (update) sig field
 	if (atomic_compare_exchange_n(&bkt->sigs[idx],
-				      &oldsig,
+				      &oldsig,//Updated on failure
 				      newsig,
-				      __ATOMIC_RELEASE,
-				      __ATOMIC_RELAXED))
+				      __ATOMIC_ACQ_REL,
+				      __ATOMIC_ACQUIRE))
 	{
 	    //Success
 	    return;
@@ -726,8 +730,6 @@ write_sig(struct bucket *bkt,
 	//Some other thread has written sig and possibly also elem fields
 	//after our write to elem
 	//Check if our element is still present
-	smp_fence(StoreLoad);
-	oldsig = atomic_load_n(&bkt->sigs[idx], __ATOMIC_RELAXED);
 	if (atomic_load_ptr(&bkt->elems[idx], __ATOMIC_RELAXED) != elem)
 	{
 	    //No, element not present anymore, don't write sig

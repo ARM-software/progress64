@@ -112,7 +112,7 @@ extern struct ver_funcs ver_hemlock;
 extern struct ver_funcs ver_rplock;
 extern struct ver_funcs ver_barrier;
 extern struct ver_funcs ver_buckring1, ver_buckring2;
-extern struct ver_funcs ver_cuckooht1, ver_cuckooht2;
+extern struct ver_funcs ver_cuckooht1, ver_cuckooht2, ver_cuckooht3;
 extern struct ver_funcs ver_ringbuf_mpmc, ver_ringbuf_nbenbd, ver_ringbuf_nbelfd, ver_ringbuf_spsc;
 extern struct ver_funcs ver_hopscotch1;
 extern struct ver_funcs ver_linklist1, ver_linklist2, ver_linklist3, ver_linklist4;
@@ -135,7 +135,7 @@ static struct ver_funcs *ver_table[] =
     &ver_rplock,
     &ver_barrier,
     &ver_buckring1, &ver_buckring2,
-    &ver_cuckooht1, &ver_cuckooht2,
+    &ver_cuckooht1, &ver_cuckooht2, &ver_cuckooht3,
     &ver_ringbuf_mpmc, &ver_ringbuf_nbenbd, &ver_ringbuf_nbelfd, &ver_ringbuf_spsc,
     &ver_hopscotch1,
     &ver_linklist1, &ver_linklist2, &ver_linklist3, &ver_linklist4,
