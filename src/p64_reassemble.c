@@ -272,12 +272,12 @@ read_fragtbl(p64_reassemble_t *re, uint32_t idx, p64_hazardptr_t *hpp)
 	    return (struct fragtbl) { i_s, NULL };
 	}
 	//Since reading base and idx_size is not atomic, re-read base to
-	//verify it hasn't changed
+	//verify it hasn't changed. An address dependency is used to prevent
+	//the load of base to move before the load of i_s
 	//The memory pointed by base cannot be reused since we have marked
 	//it using a hazard pointer
-	smp_fence(LoadLoad);
     }
-    while (fl != atomic_load_ptr(&re->ft[i].base, __ATOMIC_RELAXED));
+    while (fl != atomic_load_ptr(addr_dep(&re->ft[i].base, i_s.ui), __ATOMIC_RELAXED));
     return (struct fragtbl) { i_s, fl };
 }
 
