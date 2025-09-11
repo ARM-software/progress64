@@ -12,8 +12,7 @@
 #include "build_config.h"
 #include "os_abstraction.h"
 
-#include "arch.h"
-#include "lockfree.h"
+#include "atomic.h"
 #include "common.h"
 #include "err_hnd.h"
 
@@ -97,7 +96,8 @@ before(ringidx_t a, ringidx_t b)
 static inline ringidx_t
 cond_update(ringidx_t *loc, ringidx_t neu)
 {
-    ringidx_t old = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    //B2: read tail, synchronize with B3
+    ringidx_t old = atomic_load_n(loc, __ATOMIC_ACQUIRE);
     do
     {
 	if (before(neu, old))//neu < old
@@ -106,19 +106,19 @@ cond_update(ringidx_t *loc, ringidx_t neu)
 	}
 	//Else neu > old, need to update *loc
     }
-    while (!__atomic_compare_exchange_n(loc,
-					&old,//Updated on failure
-					neu,
-					/*weak=*/true,
-					__ATOMIC_RELEASE,
-					__ATOMIC_RELAXED));
+    //B3: read/write tail, synchronize with B1/B2/B3
+    while (!atomic_compare_exchange_n(loc,
+				      &old,//Updated on failure
+				      neu,
+				      __ATOMIC_ACQ_REL,
+				      __ATOMIC_ACQUIRE));
     return neu;
 }
 
 static inline ringidx_t
 cond_reload(ringidx_t idx, const ringidx_t *loc)
 {
-    ringidx_t fresh = __atomic_load_n(loc, __ATOMIC_RELAXED);
+    ringidx_t fresh = atomic_load_n(loc, __ATOMIC_RELAXED);
     if (before(idx, fresh))
     {
 	//fresh is after idx, use this instead
@@ -141,11 +141,12 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
     intptr_t actual = 0;
     ringidx_t mask = lfr->mask;
     ringidx_t size = mask + 1;
-    ringidx_t tail = __atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
+    ringidx_t tail = atomic_load_n(&lfr->tail, __ATOMIC_RELAXED);
     if (lfr->flags & P64_LFRING_F_SPENQ)
     {
 	//Single-producer
-	ringidx_t head = __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE);
+	//A0: read head, synchronize with A1/A3
+	ringidx_t head = atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE);
 	actual = MIN((intptr_t)(head + size - tail), (intptr_t)nelems);
 	if (actual <= 0)
 	{
@@ -154,17 +155,19 @@ p64_lfring_enqueue(p64_lfring_t *lfr,
 	for (uint32_t i = 0; i < (uint32_t)actual; i++)
 	{
 	    assert(lfr->ring[tail & mask].idx == tail - size);
-	    lfr->ring[tail & mask].ptr = *elems++;
+	    lfr->ring[tail & mask].ptr = regular_load_n(&elems[i]);
 	    lfr->ring[tail & mask].idx = tail;
 	    tail++;
 	}
-	__atomic_store_n(&lfr->tail, tail, __ATOMIC_RELEASE);
+	//B0: write tail, synchronize with B1
+	atomic_store_n(&lfr->tail, tail, __ATOMIC_RELEASE);
 	return (uint32_t)actual;
     }
     //Else lock-free multi-producer
 restart:
+    //A2: read head, synchronize with A1/A3
     while ((uint32_t)actual < nelems &&
-	   before(tail, __atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE) + size))
+	   before(tail, atomic_load_n(&lfr->head, __ATOMIC_ACQUIRE) + size))
     {
 	union
 	{
@@ -173,8 +176,12 @@ restart:
 	} old, neu;
 	void *elem = elems[actual];
 	struct element *slot = &lfr->ring[tail & mask];
-	old.e.ptr = __atomic_load_n(&slot->ptr, __ATOMIC_RELAXED);
-	old.e.idx = __atomic_load_n(&slot->idx, __ATOMIC_RELAXED);
+#ifdef __ARM_FEATURE_ATOMICS
+	old.pp = atomic_icas_n((ptrpair_t *)slot, __ATOMIC_RELAXED);
+#else
+	old.e.ptr = atomic_load_ptr(&slot->ptr, __ATOMIC_RELAXED);
+	old.e.idx = atomic_load_n(&slot->idx, __ATOMIC_RELAXED);
+#endif
 	do
 	{
 	    if (UNLIKELY(old.e.idx != tail - size))
@@ -197,13 +204,11 @@ restart:
 	    neu.e.ptr = elem;
 	    neu.e.idx = tail;//Set idx on enqueue
 	}
-	while (!lockfree_compare_exchange_16((ptrpair_t *)slot,
-						   &old.pp,//Updated on failure
-						   neu.pp,
-						   /*weak=*/true,
-						   __ATOMIC_RELEASE,
-						   __ATOMIC_RELAXED));
-	//Enqueue succeeded
+	while (!atomic_compare_exchange_n((ptrpair_t *)slot,
+					   &old.pp,//Updated on failure
+					   neu.pp,
+					   __ATOMIC_RELAXED,
+					   __ATOMIC_RELAXED));
 	actual++;
 	tail++;//Continue with next slot
     }
@@ -218,7 +223,7 @@ find_tail(p64_lfring_t *lfr, ringidx_t head, ringidx_t tail)
     {
 	//Single-producer enqueue
 	//Just return a freshly read tail pointer
-	tail = __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE);
+	tail = atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE);
 	return tail;
     }
     //Multi-producer enqueue
@@ -226,7 +231,7 @@ find_tail(p64_lfring_t *lfr, ringidx_t head, ringidx_t tail)
     ringidx_t mask = lfr->mask;
     ringidx_t size = mask + 1;
     while (before(tail, head + size) &&
-	__atomic_load_n(&lfr->ring[tail & mask].idx, __ATOMIC_RELAXED) == tail)
+	   atomic_load_n(&lfr->ring[tail & mask].idx, __ATOMIC_RELAXED) == tail)
     {
 	tail++;
     }
@@ -243,8 +248,9 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 {
     ringidx_t mask = lfr->mask;
     intptr_t actual;
-    ringidx_t head = __atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
-    ringidx_t tail = __atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE);
+    ringidx_t head = atomic_load_n(&lfr->head, __ATOMIC_RELAXED);
+    //B1: read tail, synchronize with B3
+    ringidx_t tail = atomic_load_n(&lfr->tail, __ATOMIC_ACQUIRE);
     do
     {
 	actual = MIN((intptr_t)(tail - head), (intptr_t)nelems);
@@ -260,23 +266,23 @@ p64_lfring_dequeue(p64_lfring_t *lfr,
 	}
 	for (uint32_t i = 0; i < (uint32_t)actual; i++)
 	{
-	    elems[i] = lfr->ring[(head + i) & mask].ptr;
+	    elems[i] = atomic_load_n(&lfr->ring[(head + i) & mask].ptr, __ATOMIC_RELAXED);
 	}
-	smp_fence(LoadStore);//Order loads only
 	if (UNLIKELY(lfr->flags & P64_LFRING_F_SCDEQ))
 	{
 	    //Single-consumer
-	    __atomic_store_n(&lfr->head, head + actual, __ATOMIC_RELAXED);
+	    //A1: write head, synchronize with A0/A2
+	    atomic_store_n(&lfr->head, head + actual, __ATOMIC_RELEASE);
 	    break;
 	}
 	//Else lock-free multi-consumer
     }
-    while (!__atomic_compare_exchange_n(&lfr->head,
-					&head,//Updated on failure
-					head + actual,
-					/*weak*/false,
-					__ATOMIC_RELAXED,
-					__ATOMIC_RELAXED));
+    //A3: write head, synchronize with A0/A2
+    while (!atomic_compare_exchange_n(&lfr->head,
+				      &head,//Updated on failure
+				      head + actual,
+				      __ATOMIC_RELEASE,
+				      __ATOMIC_RELAXED));
     *index = (uint32_t)head;
     return (uint32_t)actual;
 }

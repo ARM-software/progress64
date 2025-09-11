@@ -100,6 +100,7 @@ static struct ver_funcs ver_test =
 };
 
 extern struct ver_funcs ver_lfstack;
+extern struct ver_funcs ver_lfring;
 extern struct ver_funcs ver_msqueue;
 extern struct ver_funcs ver_mcqueue;
 extern struct ver_funcs ver_deque1, ver_deque2, ver_deque3;
@@ -122,6 +123,7 @@ static struct ver_funcs *ver_table[] =
 {
     &ver_test,
     &ver_lfstack,
+    &ver_lfring,
     &ver_msqueue,
     &ver_mcqueue,
     &ver_deque1, &ver_deque2, &ver_deque3,
