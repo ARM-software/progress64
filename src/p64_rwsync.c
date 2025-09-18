@@ -1,4 +1,4 @@
-//Copyright (c) 2017, ARM Limited. All rights reserved.
+//Copyright (c) 2017,2025, ARM Limited. All rights reserved.
 //
 //SPDX-License-Identifier:        BSD-3-Clause
 
@@ -11,7 +11,7 @@
 #include "build_config.h"
 
 #include "common.h"
-#include "arch.h"
+#include "atomic.h"
 #include "err_hnd.h"
 
 #define RWSYNC_WRITER 1U
@@ -26,11 +26,14 @@ static inline p64_rwsync_t
 wait_for_no_writer(const p64_rwsync_t *sync, int mo)
 {
     p64_rwsync_t l;
-    if (UNLIKELY(((l = __atomic_load_n(sync, mo)) & RWSYNC_WRITER) != 0))
+    if (UNLIKELY(((l = atomic_load_n(sync, mo)) & RWSYNC_WRITER) != 0))
     {
-	while (((l = LDX(sync, mo)) & RWSYNC_WRITER) != 0)
+	while (((l = atomic_ldx(sync, mo)) & RWSYNC_WRITER) != 0)
 	{
 	    WFE();
+	    //When verifying, we need to force a thread yield in this poll loop
+	    VERIFY_YIELD();
+
 	}
     }
     assert((l & RWSYNC_WRITER) == 0);//No writer in progress
@@ -41,36 +44,38 @@ p64_rwsync_t
 p64_rwsync_acquire_rd(const p64_rwsync_t *sync)
 {
     //Wait for any present writer to go away
-    return wait_for_no_writer(sync, __ATOMIC_ACQUIRE);//B: Synchronize with A
+    //A0: read sync, synchronize with A1
+    return wait_for_no_writer(sync, __ATOMIC_ACQUIRE);
 }
 
 bool
 p64_rwsync_release_rd(const p64_rwsync_t *sync, p64_rwsync_t prv)
 {
-    //Enforce Load/Load order as if we are synchronizing with a store-release
-    //or fence-release in some other thread
-    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+    //B0: load-relaxed(data) (by caller) + fence-acquire, synchronize with B1
+    atomic_thread_fence(__ATOMIC_ACQUIRE);
     //Test if sync is unchanged => success
-    return __atomic_load_n(sync, __ATOMIC_RELAXED) == prv;
+    return atomic_load_n(sync, __ATOMIC_RELAXED) == prv;
 }
 
 void
 p64_rwsync_acquire_wr(p64_rwsync_t *sync)
 {
     p64_rwsync_t l;
-    do
+    for (;;)
     {
+	//Set writer flag (it may already be set)
+	//A2: read (and write) sync, synchronize with A1
+	l = atomic_fetch_or(sync, RWSYNC_WRITER, __ATOMIC_ACQUIRE);
+	if ((l & RWSYNC_WRITER) == 0)
+	{
+	    //Writer flag was clear => now we own rwsync
+	    break;
+	}
 	//Wait for any present writer to go away
 	l = wait_for_no_writer(sync, __ATOMIC_RELAXED);
-	//Attempt to increment, setting writer flag
     }
-    while (!__atomic_compare_exchange_n(sync, &l, l + RWSYNC_WRITER,
-					/*weak=*/true,
-					__ATOMIC_ACQUIRE,//C: Synchronize with A
-					__ATOMIC_RELAXED));
-    //Enforce Store/Store order as if we are synchronizing with a load-acquire
-    //or fence-acquire in some other thread
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    //B1: fence-release + store-relaxed(data) (by caller), synchronize with B0
+    atomic_thread_fence(__ATOMIC_RELEASE);
 }
 
 void
@@ -84,14 +89,15 @@ p64_rwsync_release_wr(p64_rwsync_t *sync)
     }
 
     //Increment, clearing writer flag
-    __atomic_store_n(sync, cur + 1, __ATOMIC_RELEASE);//A: Synchronize with B and C
+    //A1: write sync, synchronize with A0/A2
+    atomic_store_n(sync, cur + 1, __ATOMIC_RELEASE);
 }
 
 #define ATOMIC_COPY(_d, _s, _sz, _type) \
 ({ \
-    _type val = __atomic_load_n((const _type *)(_s), __ATOMIC_RELAXED); \
+    _type val = atomic_load_n((const _type *)(_s), __ATOMIC_RELAXED); \
     _s += sizeof(_type); \
-    __atomic_store_n((_type *)(_d), val, __ATOMIC_RELAXED); \
+    atomic_store_n((_type *)(_d), val, __ATOMIC_RELAXED); \
     _d += sizeof(_type); \
     _sz -= sizeof(_type); \
 })

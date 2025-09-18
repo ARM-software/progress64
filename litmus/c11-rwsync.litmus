@@ -1,0 +1,38 @@
+C c11-rwsync.litmus //Synchronization for rwsync/seqlock with double data
+
+{ [count] = 0; [data0] = 0; [data1] = 0; }
+
+//Reader
+P0 (atomic_int* count, atomic_int* data0, atomic_int* data1)
+{
+    //A0: read count - sychronizes with A1
+    c0 = atomic_load_explicit(count, memory_order_acquire);
+    //B0: Read data (+acquire fence) - synchronizes with B1
+    d0 = atomic_load_explicit(data0, memory_order_relaxed);
+    d1 = atomic_load_explicit(data1, memory_order_relaxed);
+    //Prevent later load from moving up
+    atomic_thread_fence(memory_order_acquire);
+    //Re-read change count
+    c1 = atomic_load_explicit(count, memory_order_relaxed);
+    //If c0!=c1 or (c0&1)!=0 we have inconsistent read so try again
+}
+
+//Writer
+P1 (atomic_int* count, atomic_int* data0, atomic_int* data1)
+{
+    //Update count, odd => update in progress
+    //A2: read (and write) count - synchronizes with A1
+    atomic_fetch_or_explicit(count, 1, memory_order_acquire);//count:=1
+    //B1: (release fence+) write data - synchronizes with B0
+    atomic_thread_fence(memory_order_release);
+    atomic_store_explicit(data0, 242, memory_order_relaxed);//data0:=242
+    atomic_store_explicit(data1, 242, memory_order_relaxed);//data1:=242
+    //Update count, even => update complete, data consistent
+    //A1: write count - synchronizes with A0/A2
+    atomic_store_explicit(count, 2, memory_order_release);//count:=2
+}
+
+//Check if we can see new data with old count OR
+//Check if we can see old data with new count
+exists((0:c0=0 /\ (0:d0=242 \/ 0:d1=242) /\ 0:c1=0) \/
+       (0:c0=2 /\ (0:d0=0 \/ 0:d1=0) /\ 0:c1=2))

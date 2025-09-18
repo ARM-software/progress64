@@ -117,6 +117,7 @@ extern struct ver_funcs ver_ringbuf_mpmc, ver_ringbuf_nbenbd, ver_ringbuf_nbelfd
 extern struct ver_funcs ver_hopscotch1;
 extern struct ver_funcs ver_linklist1, ver_linklist2, ver_linklist3, ver_linklist4;
 extern struct ver_funcs ver_lockaba;
+extern struct ver_funcs ver_rwsync;
 
 //Table of registered verification modules
 static struct ver_funcs *ver_table[] =
@@ -140,6 +141,7 @@ static struct ver_funcs *ver_table[] =
     &ver_hopscotch1,
     &ver_linklist1, &ver_linklist2, &ver_linklist3, &ver_linklist4,
     &ver_lockaba,
+    &ver_rwsync,
     NULL
 };
 
