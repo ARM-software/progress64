@@ -166,6 +166,13 @@
     _res; \
 })
 
+#define atomic_thread_fence(mo) \
+({ \
+    __typeof(mo) _mo = (mo); \
+    __atomic_thread_fence(_mo); \
+    VERIFY_SUSPEND(V_OP, "fence", 0, 0, 0, 0, _mo); \
+})
+
 //atomic_ldx() is load-to-monitor-before-WFE
 //LDX() is defined by arch.h
 #define atomic_ldx(_loc, _mo) \
