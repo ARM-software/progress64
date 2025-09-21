@@ -25,7 +25,6 @@
 
 #include "common.h"
 #include "os_abstraction.h"
-#include "arch.h"
 #include "err_hnd.h"
 #include "atomic.h"
 
@@ -620,7 +619,7 @@ lookup(p64_cuckooht_t *ht,
 	    }
 	}
 	//Yr: load-relaxed(elems) + fence-acquire, synchronize with Yw
-	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	atomic_thread_fence(__ATOMIC_ACQUIRE);
 	//Re-read the change counter too see if we might have missed
 	//an element which was moved between the buckets
     }
@@ -893,7 +892,7 @@ move_elem(p64_cuckooht_t *ht,
     //Else destination slot already updated
     //Now clear source slot
     //Yw: fence-release + store-relaxed(elem), synchronize with Yr
-    __atomic_thread_fence(__ATOMIC_RELEASE);
+    atomic_thread_fence(__ATOMIC_RELEASE);
     clear_src(ht, elem, src_bix, src_idx, dst_bix, dst_idx);
 }
 
@@ -1454,7 +1453,7 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
 	    }
 	}
 	//Yr: read elems+fence-acquire, synchronize with Yw
-	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	atomic_thread_fence(__ATOMIC_ACQUIRE);
 	//Re-read the change counter too see if we might have missed
 	//an element which was moved between the buckets
     }

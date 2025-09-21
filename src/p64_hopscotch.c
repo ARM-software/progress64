@@ -16,7 +16,6 @@
 #include "build_config.h"
 
 #include "common.h"
-#include "arch.h"
 #include "os_abstraction.h"
 #include "err_hnd.h"
 #include "atomic.h"
@@ -457,13 +456,13 @@ lookup(p64_hopscotch_t *ht,
 	    //Need to check that bmc hasn't changed during our check
 	    union bmc fresh;
 	    //Prevent re-load of bmc from moving up
-	    __atomic_thread_fence(__ATOMIC_ACQUIRE);
+	    atomic_thread_fence(__ATOMIC_ACQUIRE);
 	    fresh.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_RELAXED);
 	    if (fresh.count != cur.count)
 	    {
 		//Bmc has changed, restart with fresh bitmap
 		cur = fresh;
-		__atomic_thread_fence(__ATOMIC_ACQUIRE);
+		atomic_thread_fence(__ATOMIC_ACQUIRE);
 	    }
 	}
     }
@@ -939,7 +938,7 @@ remove_bkt_by_ptr(p64_hopscotch_t *ht,
 	}
 	prev_count = cur.count;
 	//Prevent re-load of bmc from moving up
-	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	atomic_thread_fence(__ATOMIC_ACQUIRE);
 	cur.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
     }
     while (cur.count != prev_count);
@@ -1067,7 +1066,7 @@ remove_bkt_by_key(p64_hopscotch_t *ht,
 	}
 	prev_count = cur.count;
 	//Prevent re-load of bmc from moving up
-	__atomic_thread_fence(__ATOMIC_ACQUIRE);
+	atomic_thread_fence(__ATOMIC_ACQUIRE);
 	cur.atom = atomic_load_n(&ht->buckets[bix].bmc.atom, __ATOMIC_ACQUIRE);
     }
     while (cur.count != prev_count);
