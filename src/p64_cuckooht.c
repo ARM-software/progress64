@@ -206,6 +206,7 @@ atomic_load_acquire(p64_cuckooelem_t **pptr,
 		    uintptr_t mask,
 		    bool use_hp)
 {
+    //Zr: read elems, synchronize with Zw
     if (UNLIKELY(use_hp))
     {
 	return p64_hazptr_acquire_mask(pptr, hp, mask);
@@ -549,6 +550,7 @@ search_cellar(p64_cuckooht_t *ht,
     {
 	if (atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_RELAXED) == hash)
 	{
+	    //Wr: load-acquire(cellar.elem), synchronize with Ww
 	    p64_cuckooelem_t *elem =
 		atomic_load_acquire(&ht->cellar[idx].elem,
 				    hazpp,
@@ -589,12 +591,12 @@ lookup(p64_cuckooht_t *ht,
        bool use_hp,
        bool check_key)
 {
-    uint32_t chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
-    uint32_t oldcnt;
+    uint32_t chgcnt;
     p64_cuckooelem_t *elem;
     do
     {
-	uint32_t fence = 0;
+	//Xr: read chgcnt, synchronize with Xw
+	chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
 	//Create bit masks with all matching hashes
 	mask_t mask0 = find_sig(bkt0->sigs, hash >> 16);
 	if (LIKELY(mask0 != 0))
@@ -617,14 +619,12 @@ lookup(p64_cuckooht_t *ht,
 		return elem;
 	    }
 	}
-	//store-release(RCsc) prevents earlier loads from moving down
-	atomic_store_n(&fence, 0, __ATOMIC_SEQ_CST);
+	//Yr: load-relaxed(elems) + fence-acquire, synchronize with Yw
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
 	//Re-read the change counter too see if we might have missed
 	//an element which was moved between the buckets
-	oldcnt = chgcnt;
     }
-    //load-acquire(RCsc) is ordered with the store-release(RCsc) above
-    while (UNLIKELY((chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_SEQ_CST)) != oldcnt));
+    while (UNLIKELY(atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt));
     //Check cellar bit if any elements which hash to this bucket are
     //present in the cellar
     if ((chgcnt & CELLAR_BIT) != 0)
@@ -700,7 +700,8 @@ p64_cuckooht_lookup_vec(p64_cuckooht_t *ht,
 	{
 	    if (ht->cf(result[i], keys[i]) != 0)
 	    {
-		result[i] = p64_cuckooht_lookup(ht, keys[i], hashes[i], NULL);
+		//Key comparison failed
+		result[i] = NULL;
 	    }
 	}
     }
@@ -753,6 +754,7 @@ bucket_insert(struct bucket *bkt,
 	uint32_t i = __builtin_ctzll(mask) >> MASK_SHIFT;
 	sign_t oldsig = atomic_load_n(&bkt->sigs[i], __ATOMIC_RELAXED);
 	p64_cuckooelem_t *old = NULL;
+	//Zw: write elems, synchronize with Zr
 	//Try to grab slot
 	if (atomic_compare_exchange_ptr(&bkt->elems[i],
 					&old,
@@ -840,21 +842,11 @@ clear_src(p64_cuckooht_t *ht,
     //the change counter
     if (atomic_load_ptr(&src_bkt->elems[src_idx], __ATOMIC_RELAXED) == old)
     {
-	//First we increment the change counter to indicate the (imminent)
-	//disappearance of an element
-	//We always increment the change counter of the primary bucket,
-	//regardless which is the source or destination bucket
-	//This allows lookup (and remove) to only read and check the change
-	//counter of one bucket instead of both buckets, this seems to save
-	//some nanoseconds in the lookup
-	bix_t bix = ring_mod(elem->hash, ht->nbkts);
-	atomic_fetch_add(&ht->buckets[bix].chgcnt,
-			   CHGCNT_INC, __ATOMIC_RELAXED);
 	//Then we actually disappear the element
 	if (atomic_compare_exchange_ptr(&src_bkt->elems[src_idx],
 					&old,
 					NULL,
-					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED))
 	{
 	    //Source slot cleared
@@ -877,6 +869,7 @@ move_elem(p64_cuckooht_t *ht,
 {
     assert(!HAS_ANY(elem));
     //Write element to destination slot together with info about source slot
+    struct bucket *src_bkt = &ht->buckets[src_bix];
     struct bucket *dst_bkt = &ht->buckets[dst_bix];
     sign_t oldsig = atomic_load_n(&dst_bkt->sigs[dst_idx], __ATOMIC_RELAXED);
     p64_cuckooelem_t *old = SET_DST(NULL);
@@ -889,9 +882,18 @@ move_elem(p64_cuckooht_t *ht,
 	//Success
 	//Now update corresponding hash field
 	write_sig(dst_bkt, dst_idx, oldsig, elem, elem->hash >> 16);
+	//Release dst_bkt updates by incrementing change counters
+	//We update the change counters of both buckets. This allows lookup
+	//(and remove) to only read and check the change counter of one
+	//(either) bucket, this seems to save/some nanoseconds in the lookup
+	//Xw: store-release(chgcnt), synchronize with Xr
+	atomic_fetch_add(&src_bkt->chgcnt, CHGCNT_INC, __ATOMIC_RELEASE);
+	atomic_fetch_add(&dst_bkt->chgcnt, CHGCNT_INC, __ATOMIC_RELEASE);
     }
     //Else destination slot already updated
     //Now clear source slot
+    //Yw: fence-release + store-relaxed(elem), synchronize with Yr
+    __atomic_thread_fence(__ATOMIC_RELEASE);
     clear_src(ht, elem, src_bix, src_idx, dst_bix, dst_idx);
 }
 
@@ -1057,6 +1059,7 @@ insert_cell(p64_cuckooht_t *ht,
 		atomic_load_n(&ht->cellar[idx].hash, __ATOMIC_RELAXED);
 	    union cellpp old = { .cell.elem = NULL, .cell.hash = oldhash };
 	    union cellpp new = { .cell.elem = elem, .cell.hash = hash };
+	    //Ww: write cellar, synchronize with Wr
 	    if (atomic_compare_exchange_n((ptrpair_t *)&ht->cellar[idx],
 					  &old.pp,
 					  new.pp,
@@ -1069,6 +1072,8 @@ insert_cell(p64_cuckooht_t *ht,
 		old = atomic_load_n(&bkt->chgcnt, __ATOMIC_RELAXED);
 		do
 		{
+		    //FIXME do we really need to increment chgcnt? We are
+		    //inserting, not moving
 		    new = (old + CHGCNT_INC) | CELLAR_BIT;
 		}
 		while (!atomic_compare_exchange_n(&bkt->chgcnt,
@@ -1257,7 +1262,7 @@ bucket_remove(p64_cuckooht_t *ht,
 	if (atomic_compare_exchange_ptr(&bkt->elems[i],
 					&old,
 					NULL,
-					__ATOMIC_RELEASE,
+					__ATOMIC_RELAXED,
 					__ATOMIC_RELAXED))
 	{
 	    //Write invalid signature value
@@ -1302,6 +1307,7 @@ update_cellar(p64_cuckooht_t *ht,
 	new += CHGCNT_INC;
 	//Attempt to update chgcnt, fail if count has changed
     }
+    //FIXME what do we synchronize with here?
     while (!atomic_compare_exchange_n(&ht->buckets[bix].chgcnt,
 				      &old,
 				      new,
@@ -1427,9 +1433,9 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
     bool success = false;
     do
     {
+	//Xr: read chgcnt, synchronize with Xw
 	chgcnt = atomic_load_n(&bkt0->chgcnt, __ATOMIC_ACQUIRE);
-	mask_t mask0 = 0;
-	mask0 = find_elem(bkt0->elems, elem);
+	mask_t mask0 = find_elem(bkt0->elems, elem);
 	if (LIKELY(mask0 != 0))
 	{
 	    success = bucket_remove(ht, bix0, elem, mask0);
@@ -1447,9 +1453,10 @@ p64_cuckooht_remove(p64_cuckooht_t *ht,
 		goto done;
 	    }
 	}
+	//Yr: read elems+fence-acquire, synchronize with Yw
+	__atomic_thread_fence(__ATOMIC_ACQUIRE);
 	//Re-read the change counter too see if we might have missed
 	//an element which was moved between the buckets
-	__atomic_thread_fence(__ATOMIC_ACQUIRE);
     }
     while (atomic_load_n(&bkt0->chgcnt, __ATOMIC_RELAXED) != chgcnt);
     if ((chgcnt & CELLAR_BIT) != 0)

@@ -65,6 +65,7 @@ ver_cuckooht3_fini(uint32_t numthreads)
 {
     bool success;
     (void)numthreads;
+    (void)success;
     success = p64_cuckooht_remove(cht, &cht_elems[0].ce, compute_hash(cht_elems[0].key));
     VERIFY_ASSERT(success == true);
     success = p64_cuckooht_remove(cht, &cht_elems[1].ce, compute_hash(cht_elems[1].key));
@@ -89,6 +90,7 @@ ver_cuckooht3_exec(uint32_t id)
     {
 	//Read the data field to trigger the verifier to find a relevant synchronizes-with edge
 	struct object *obj = (struct object *)elem;
+	(void)obj;
 	VERIFY_ASSERT(regular_load_n(&obj->data) == other);
     }
 }
