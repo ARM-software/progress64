@@ -41,19 +41,25 @@ ALWAYS_INLINE
 static inline uint32_t
 lockfree_fetch_umax_4(uint32_t *var, uint32_t val, int mo)
 {
-    uint32_t old = atomic_load_n(var, __ATOMIC_RELAXED);
+    uint32_t old = __atomic_load_n(var, MO_LOAD(mo));
     do
     {
 	if (val <= old)
 	{
+	    if (HAS_RLS((mo)))
+	    {
+		//Need explicit release fence if we are not writing the location
+		__atomic_thread_fence(__ATOMIC_RELEASE);
+	    }
 	    return old;
 	}
     }
-    while (!atomic_compare_exchange_n(var,
-				      &old,
-				      val,
-				      MO_LOAD(mo) | MO_STORE(mo),//XXX
-				      MO_LOAD(mo)));
+    while (!__atomic_compare_exchange_n(var,
+					&old,
+					val,
+					0,//weak
+					MO_LOAD(mo) | MO_STORE(mo),//XXX
+					MO_LOAD(mo)));
     return old;
 }
 #endif
@@ -64,19 +70,25 @@ ALWAYS_INLINE
 static inline uint64_t
 lockfree_fetch_umax_8(uint64_t *var, uint64_t val, int mo)
 {
-    uint64_t old = atomic_load_n(var, __ATOMIC_RELAXED);
+    uint64_t old = __atomic_load_n(var, MO_LOAD(mo));
     do
     {
 	if (val <= old)
 	{
+	    if (HAS_RLS((mo)))
+	    {
+		//Need explicit release fence if we are not writing the location
+		__atomic_thread_fence(__ATOMIC_RELEASE);
+	    }
 	    return old;
 	}
     }
-    while (!atomic_compare_exchange_n(var,
-				      &old,
-				      val,
-				      MO_LOAD(mo) | MO_STORE(mo),//XXX
-				      MO_LOAD(mo)));
+    while (!__atomic_compare_exchange_n(var,
+					&old,
+					val,
+					0,//weak
+					MO_LOAD(mo) | MO_STORE(mo),//XXX
+					MO_LOAD(mo)));
     return old;
 }
 #endif
