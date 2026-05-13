@@ -195,6 +195,40 @@ nano_delay(uint64_t delay_ns)
     __asm __volatile("isb" ::: "memory");
 }
 
+#if 0
+//A version that relies on features that may only be available from Armv8.7
+//Run-time checks will have to check when this version can be used
+
+//Self-synchronising read of CNTVCTSS_EL0, no need for a preceding speculation barrier
+static inline uint64_t
+counter_read_ss(void)
+{
+    uint64_t cnt;
+    //Need __volatile below since CNTVCTSS_EL0 does not return a constant value
+    __asm __volatile("mrs %0,cntvctss_el0" : "=r" (cnt)); //Requires FEAT_ECV (Armv8.6)
+    return cnt;
+}
+
+void
+nano_delay_v87(uint64_t delay_ns)
+{
+    uint64_t delay_ticks = delay_ns; //From Armv8.6, CNTFRQ_EL0 always return 1GHz (1000000000)
+    if (delay_ticks != 0)
+    {
+	uint64_t start = counter_read_ss();
+	uint64_t end = start + delay_ticks;
+	do
+	{
+	    __asm __volatile("wfet %0" : : "r" (end) : "memory"); //Requires FEAT_WFxT (Armv8.7)
+								  //Spurious wakeups may occur
+	}
+	while (counter_read_ss() - start < delay_ticks);//Handle counter roll-over
+    }
+    //Prevent speculation of subsequent memory accesses
+    __asm __volatile("sb" ::: "memory"); //Requires FEAT_SB (Armv8.5)
+}
+#endif
+
 static inline void
 smp_fence(unsigned int mask)
 {
