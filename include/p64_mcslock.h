@@ -3,6 +3,8 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 //MCS queue lock
+//See 'Algorithms for scalable synchronization on shared-memory multiprocessors'
+//by Mellor-Crummey
 
 #ifndef P64_MCSLOCK_H
 #define P64_MCSLOCK_H
